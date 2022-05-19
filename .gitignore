@@ -1,7 +1,8 @@
 baseline
 github_raw_code
 
-ckpt/*
-log/*
-output/*
+ckpt/**
+log/**
+output/**
 
+__pycache__
