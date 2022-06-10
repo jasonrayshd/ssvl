@@ -6,6 +6,10 @@ from kinetics import VideoClsDataset, VideoMAE
 from ssv2 import SSVideoClsDataset
 
 
+from ego4d import StateChangeDetectionAndKeyframeLocalisation
+from argparse import Namespace
+
+
 class DataAugmentationForVideoMAE(object):
     def __init__(self, args):
         self.input_mean = [0.485, 0.456, 0.406]  # IMAGENET_DEFAULT_MEAN
@@ -55,6 +59,66 @@ def build_pretraining_dataset(args):
 
 
 def build_dataset(is_train, test_mode, args):
+
+    if "Ego4d-statechange" in args.data_set:
+        mode = None
+        
+        if is_train is True:
+            mode = 'train'
+        elif test_mode is True:
+            mode = 'test'
+        else:  
+            mode = 'validation'
+
+        """
+            Used configuration in ego4d dataset (StateChangeDetectionAndKeyframeLocalisation.py)      by Jiachen, 2022.05.19
+
+            DATA.ANN_DIR
+            DATA.VIDEO_DIR_PATH
+            DATA.NO_SC_PATH
+            DATA.CLIP_LEN_SEC
+            DATA.CROP_SIZE: width and height of resized result
+            DATA.SAMPLING_FPS
+        """
+        # Edited by Jiachen Lei, 2022.05.24
+        # Refer to code/ego4d_baseline/state-change-localization-classification/i3d-resnet50/configs/2021-09-18_keyframe_loc_release1-v2_main-experiment.yaml
+
+        ann_dir = os.path.join(args.data_path, "")
+        video_dir_path = os.path.join(args.data_path, "")
+        no_sc_path = os.path.join(args.data_path, "")
+
+        cfg = Namespace(**{
+            "DATA": Namespace(**{
+                "ANN_DIR": ann_dir,
+                "VIDEO_DIR_PATH": video_dir_path,
+                "NO_SC_PATH": no_sc_path,
+                "CLIP_LEN_SEC": 8, # Duration time in second of clip
+                "CROP_SIZE": 224,
+                "SAMPLING_FPS": 2, # Sampled frames per second for training
+            })
+        })
+
+        # cfg is of type namespace
+        dataset = StateChangeDetectionAndKeyframeLocalisation(cfg, mode)
+        """
+            Jiachen 2022.05.25
+            dataset.__getitem__() will return 
+            (1) torch.Tensor, frames of shape (Channels, T, H, W). e.g. Tensor(ch,t,h,w)
+            (2) list, 1-D numpy.ndarray label that indicates whether each frame is pnr or not (if yes, the value is 1 else the value is 0)
+                and boolean value indicates whether stage change occurs in the clip or not
+            (3) float, fps of current sampled frames
+            (4) dict, info of the clip
+
+        """
+
+        if "localization" and "classification" in args.data_set:
+            nb_classes = -1
+            args.two_head = True # make sure two_head is set
+        elif "localization" in args.data_set:
+            nb_classes = 2
+        elif "classification" in args.data_set:
+            nb_classes = 1
+
     if args.data_set == 'Kinetics-400':
         mode = None
         anno_path = None
@@ -85,7 +149,7 @@ def build_dataset(is_train, test_mode, args):
             new_width=320,
             args=args)
         nb_classes = 400
-    
+
     elif args.data_set == 'SSV2':
         mode = None
         anno_path = None

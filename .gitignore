@@ -1,8 +1,7 @@
+__pycache__
 baseline
 github_raw_code
 
 ckpt/**
 log/**
 output/**
-
-__pycache__

@@ -24,6 +24,10 @@ import utils
 import modeling_finetune
 
 
+
+from loss import Ego4dTwoHead_Criterion
+
+
 def get_args():
     parser = argparse.ArgumentParser('VideoMAE fine-tuning and evaluation script for video classification', add_help=False)
     parser.add_argument('--batch_size', default=64, type=int)
@@ -132,6 +136,9 @@ def get_args():
     parser.set_defaults(use_mean_pooling=True)
     parser.add_argument('--use_cls', action='store_false', dest='use_mean_pooling')
 
+    # Finetuning on ego4d
+    parser.add_argument('--two_head', action='store_true', help="whether use two classification heads")
+
     # Dataset parameters
     parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
                         help='dataset path')
@@ -225,7 +232,6 @@ def main(args, ds_init):
     else:
         dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
     dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
-    
 
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -308,6 +314,9 @@ def main(args, ds_init):
         drop_block_rate=None,
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
+
+        # finetune on ego4d
+        two_head = args.two_head,
     )
 
     patch_size = model.patch_embed.patch_size
@@ -332,6 +341,7 @@ def main(args, ds_init):
         if checkpoint_model is None:
             checkpoint_model = checkpoint
         state_dict = model.state_dict()
+        # Remove pretrained classification Head
         for k in ['head.weight', 'head.bias']:
             if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
                 print(f"Removing key {k} from pretrained checkpoint")
@@ -459,6 +469,9 @@ def main(args, ds_init):
         criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
     else:
         criterion = torch.nn.CrossEntropyLoss()
+
+    if args.two_head:
+        criterion = Ego4dTwoHead_Criterion(criterion)
 
     print("criterion = %s" % str(criterion))
 
