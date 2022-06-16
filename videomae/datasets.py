@@ -68,7 +68,7 @@ def build_dataset(is_train, test_mode, args):
         elif test_mode is True:
             mode = 'test'
         else:  
-            mode = 'validation'
+            mode = 'val'
 
         """
             Used configuration in ego4d dataset (StateChangeDetectionAndKeyframeLocalisation.py)      by Jiachen, 2022.05.19
@@ -83,23 +83,26 @@ def build_dataset(is_train, test_mode, args):
         # Edited by Jiachen Lei, 2022.05.24
         # Refer to code/ego4d_baseline/state-change-localization-classification/i3d-resnet50/configs/2021-09-18_keyframe_loc_release1-v2_main-experiment.yaml
 
-        ann_dir = os.path.join(args.data_path, "")
-        video_dir_path = os.path.join(args.data_path, "")
-        no_sc_path = os.path.join(args.data_path, "")
+        ann_dir ="/home/azureuser/code/ego4d_anno"
+        video_dir_path = "/mnt/ego4d/v1/clips"
+        clips_save_path = "/mnt/ego4d/v1/pos"
+        no_sc_path = "/mnt/ego4d/v1/neg"
 
         cfg = Namespace(**{
             "DATA": Namespace(**{
                 "ANN_DIR": ann_dir,
                 "VIDEO_DIR_PATH": video_dir_path,
+                "CLIPS_SAVE_PATH": clips_save_path,
                 "NO_SC_PATH": no_sc_path,
-                "CLIP_LEN_SEC": 8, # Duration time in second of clip
-                "CROP_SIZE": 224,
-                "SAMPLING_FPS": 2, # Sampled frames per second for training
+
+                "CLIP_LEN_SEC": args.clip_len, # Duration time in second of clip
+                "CROP_SIZE": args.input_size,
+                "SAMPLING_FPS": args.sampling_rate, # Sampled frames per second for training
             })
         })
 
         # cfg is of type namespace
-        dataset = StateChangeDetectionAndKeyframeLocalisation(cfg, mode)
+        dataset = StateChangeDetectionAndKeyframeLocalisation(cfg, mode, args=args)
         """
             Jiachen 2022.05.25
             dataset.__getitem__() will return 
@@ -108,18 +111,20 @@ def build_dataset(is_train, test_mode, args):
                 and boolean value indicates whether stage change occurs in the clip or not
             (3) float, fps of current sampled frames
             (4) dict, info of the clip
-
         """
 
-        if "localization" and "classification" in args.data_set:
+        if "localization" in args.data_set and "classification" in args.data_set:
             nb_classes = -1
             args.two_head = True # make sure two_head is set
         elif "localization" in args.data_set:
-            nb_classes = 2
+            nb_classes = cfg.DATA.SAMPLING_FPS * cfg.DATA.CLIP_LEN_SEC + 1
         elif "classification" in args.data_set:
-            nb_classes = 1
+            nb_classes = 2
 
-    if args.data_set == 'Kinetics-400':
+    elif args.data_set == "Epic-kichen":
+        pass
+
+    elif args.data_set == 'Kinetics-400':
         mode = None
         anno_path = None
         if is_train is True:

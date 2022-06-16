@@ -533,3 +533,70 @@ def multiple_samples_collate(batch, fold=False):
         return [inputs], labels, video_idx, extra_data
     else:
         return inputs, labels, video_idx, extra_data
+
+
+
+# Codes below were edited by Jiachen Lei
+def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
+    """
+    Collate function for repeated augmentation. Each instance in the batch has
+    more than one sample.
+    Args:
+        batch (tuple or list): data batch to collate.
+    Returns:
+        (tuple): collated data batch.
+    """
+    inputs, target, fps, info = zip(*batch)
+
+    inputs = [item for sublist in inputs for item in sublist]
+
+    if nb_classes == -1:
+        labels = [item[0] for sublist in target for item in sublist]
+        states = [item[1] for sublist in target for item in sublist]
+        inputs, labels, states = (
+            default_collate(inputs),
+            default_collate(labels),
+            default_collate(states),
+        )
+        if fold:
+            return [inputs], [labels, states], fps, info
+        else:
+            return inputs, [labels, states], fps, info
+
+    elif nb_classes == 2:
+        states = [item for sublist in target for item in sublist]
+        inputs, states = (
+            default_collate(inputs),
+            default_collate(states),
+        )
+        if fold:
+            return [inputs], states, fps, info
+        else:
+            return inputs , states, fps, info
+
+    else:
+        labels = [item for sublist in target for item in sublist]
+        inputs, labels = (
+            default_collate(inputs),
+            default_collate(labels),
+        )
+        if fold:
+            return [inputs], labels, fps, info
+        else:
+            return inputs, labels, fps, info
+
+
+def samples_collate_ego4d(batch):
+
+    inputs, target, fps, info = zip(*batch)
+
+    labels = [item[0] for item in target]
+    states = [item[1] for item in target]
+
+    inputs, labels, states = (
+        default_collate(inputs),
+        default_collate(labels),
+        default_collate(states),
+    )
+
+    return inputs, [labels, states], fps, info

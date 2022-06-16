@@ -45,7 +45,14 @@ class VideoClsDataset(Dataset):
             raise ImportError("Unable to import `decord` which is required to read videos.")
 
         import pandas as pd
-        cleaned = pd.read_csv(self.anno_path, header=None, delimiter=' ')
+        cleaned = pd.read_csv(self.anno_path, delimiter=',')
+
+        # for debug with partial dataset, remember comment these codes and uncomment codes below
+        # self.dataset_samples = os.listdir(self.data_path)
+        # for sample in list(cleaned.values[:, 0]):
+        #     if 
+        # self.label_array = []
+
         self.dataset_samples = list(cleaned.values[:, 0])
         self.label_array = list(cleaned.values[:, 1])
 
@@ -69,6 +76,7 @@ class VideoClsDataset(Dataset):
                 video_transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                            std=[0.229, 0.224, 0.225])
             ])
+
             self.test_seg = []
             self.test_dataset = []
             self.test_label_array = []
@@ -86,6 +94,8 @@ class VideoClsDataset(Dataset):
             scale_t = 1
 
             sample = self.dataset_samples[index]
+            sample = os.path.join(self.data_path, sample)
+ 
             buffer = self.loadvideo_decord(sample, sample_rate_scale=scale_t) # T H W C
             if len(buffer) == 0:
                 while len(buffer) == 0:

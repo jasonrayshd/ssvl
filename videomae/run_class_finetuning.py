@@ -10,7 +10,7 @@ from functools import partial
 from pathlib import Path
 from collections import OrderedDict
 
-from timm.data.mixup import Mixup
+from timm.data.mixup import Mixup, mixup_target
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
@@ -19,13 +19,41 @@ from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValu
 from datasets import build_dataset
 from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
 from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate
+from utils import  multiple_samples_collate, multiple_samples_collate_ego4d, samples_collate_ego4d
 import utils
 import modeling_finetune
 
 
 
 from loss import Ego4dTwoHead_Criterion
+
+
+
+class Ego4d_Compatible_Mixup(Mixup):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __call__(self, x, target):
+        assert len(x) % 2 == 0, 'Batch size should be even when using this'
+        if self.mode == 'elem':
+            lam = self._mix_elem(x)
+        elif self.mode == 'pair':
+            lam = self._mix_pair(x)
+        else:
+            lam = self._mix_batch(x)
+
+        if isinstance(target, torch.Tensor):
+            target = mixup_target(target, self.num_classes, lam, self.label_smoothing, device=x.device)
+        else:
+            label, state = target
+            B, C, T, H, W = x.shape
+            label = mixup_target(label, T+1, lam, self.label_smoothing, device=x.device)
+            state = mixup_target(state, 2, lam, self.label_smoothing, device=x.device)
+            target = [label ,state]
+
+        return x, target
+
 
 
 def get_args():
@@ -137,7 +165,7 @@ def get_args():
     parser.add_argument('--use_cls', action='store_false', dest='use_mean_pooling')
 
     # Finetuning on ego4d
-    parser.add_argument('--two_head', action='store_true', help="whether use two classification heads")
+    parser.add_argument('--clip_len', type=int, default=8, help="time duration of clip, default is 8s")
 
     # Dataset parameters
     parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
@@ -150,8 +178,11 @@ def get_args():
     parser.add_argument('--num_segments', type=int, default= 1)
     parser.add_argument('--num_frames', type=int, default= 16)
     parser.add_argument('--sampling_rate', type=int, default= 4)
-    parser.add_argument('--data_set', default='Kinetics-400', choices=['Kinetics-400', 'SSV2', 'UCF101', 'HMDB51','image_folder'],
+    # parser.add_argument('--data_set', default='Kinetics-400', choices=['Kinetics-400', 'SSV2', 'UCF101', 'HMDB51','image_folder'],
+    #                     type=str, help='dataset')
+    parser.add_argument('--data_set', default='Kinetics-400',
                         type=str, help='dataset')
+
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--log_dir', default=None,
@@ -214,7 +245,7 @@ def main(args, ds_init):
     if ds_init is not None:
         utils.create_ds_config(args)
 
-    print(args)
+    # print(args)
 
     device = torch.device(args.device)
 
@@ -229,9 +260,12 @@ def main(args, ds_init):
     dataset_train, args.nb_classes = build_dataset(is_train=True, test_mode=False, args=args)
     if args.disable_eval_during_finetuning:
         dataset_val = None
+        dataset_test = None
     else:
         dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
-    dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
+        # commented since test set of ego4d is not annotated yet.
+        # dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
+        dataset_test = None
 
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -246,10 +280,12 @@ def main(args, ds_init):
                     'equal num of samples per-process.')
         sampler_val = torch.utils.data.DistributedSampler(
             dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False)
-        sampler_test = torch.utils.data.DistributedSampler(
-            dataset_test, num_replicas=num_tasks, rank=global_rank, shuffle=False)
+        if dataset_test is not None:
+            sampler_test = torch.utils.data.DistributedSampler(
+                dataset_test, num_replicas=num_tasks, rank=global_rank, shuffle=False)
     else:
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+        sampler_test = torch.utils.data.SequentialSampler(dataset_test)
 
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
@@ -258,9 +294,17 @@ def main(args, ds_init):
         log_writer = None
 
     if args.num_sample > 1:
-        collate_func = partial(multiple_samples_collate, fold=False)
+        if "ego4d" in args.data_set.lower():
+            collate_func = partial(multiple_samples_collate_ego4d, fold=False,  nb_classes = args.nb_classes)
+        else:
+            collate_func = partial(multiple_samples_collate, fold=False)
     else:
-        collate_func = None
+        if "ego4d" in args.data_set.lower() and args.nb_classes == -1:
+            # if finetune state classification and localization at the same time on ego4d
+            # then the target will be a list
+            collate_func = samples_collate_ego4d
+        else:
+            collate_func = None
 
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
@@ -297,7 +341,7 @@ def main(args, ds_init):
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
         print("Mixup is activated!")
-        mixup_fn = Mixup(
+        mixup_fn = Ego4d_Compatible_Mixup(
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
@@ -305,7 +349,7 @@ def main(args, ds_init):
     model = create_model(
         args.model,
         pretrained=False,
-        num_classes=args.nb_classes,
+        num_classes=args.nb_classes, # when equals to 1, perform ego4d state classification and localization tasks at the same time
         all_frames=args.num_frames * args.num_segments,
         tubelet_size=args.tubelet_size,
         drop_rate=args.drop,
@@ -314,9 +358,6 @@ def main(args, ds_init):
         drop_block_rate=None,
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
-
-        # finetune on ego4d
-        two_head = args.two_head,
     )
 
     patch_size = model.patch_embed.patch_size
@@ -402,7 +443,7 @@ def main(args, ds_init):
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    print("Model = %s" % str(model_without_ddp))
+    # print("Model = %s" % str(model_without_ddp))
     print('number of params:', n_parameters)
 
     total_batch_size = args.batch_size * args.update_freq * utils.get_world_size()
@@ -470,7 +511,7 @@ def main(args, ds_init):
     else:
         criterion = torch.nn.CrossEntropyLoss()
 
-    if args.two_head:
+    if args.nb_classes == -1:
         criterion = Ego4dTwoHead_Criterion(criterion)
 
     print("criterion = %s" % str(criterion))
@@ -510,13 +551,20 @@ def main(args, ds_init):
             lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
             num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
         )
+
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
                 utils.save_model(
                     args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                     loss_scaler=loss_scaler, epoch=epoch, model_ema=model_ema)
         if data_loader_val is not None:
-            test_stats = validation_one_epoch(data_loader_val, model, device)
+
+            if args.nb_classes == -1:
+                val_criterion = Ego4dTwoHead_Criterion(torch.nn.CrossEntropyLoss())
+            else:
+                val_criterion = torch.nn.CrossEntropyLoss()
+
+            test_stats = validation_one_epoch(data_loader_val, model, device, val_criterion)
             print(f"Accuracy of the network on the {len(dataset_val)} val videos: {test_stats['acc1']:.1f}%")
             if max_accuracy < test_stats["acc1"]:
                 max_accuracy = test_stats["acc1"]
@@ -531,12 +579,14 @@ def main(args, ds_init):
                 log_writer.update(val_acc5=test_stats['acc5'], head="perf", step=epoch)
                 log_writer.update(val_loss=test_stats['loss'], head="perf", step=epoch)
 
-            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+            log_stats = {
+                        #  **{f'train_{k}': v for k, v in train_stats.items()},
                          **{f'val_{k}': v for k, v in test_stats.items()},
                          'epoch': epoch,
                          'n_parameters': n_parameters}
         else:
-            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+            log_stats = {
+                        # **{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,
                          'n_parameters': n_parameters}
         if args.output_dir and utils.is_main_process():

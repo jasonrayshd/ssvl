@@ -8,10 +8,14 @@ from timm.data import Mixup
 from timm.utils import accuracy, ModelEma
 import utils
 
+from loss import Ego4dTwoHead_Criterion
+
 
 def train_class_batch(model, samples, target, criterion):
+    # print("train_class_batch")
     outputs = model(samples)
     loss = criterion(outputs, target)
+
     return loss, outputs
 
 
@@ -33,6 +37,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
+
     if loss_scaler is None:
         model.zero_grad()
         model.micro_steps = 0
@@ -52,13 +57,21 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 if wd_schedule_values is not None and param_group["weight_decay"] > 0:
                     param_group["weight_decay"] = wd_schedule_values[it]
 
-        samples = samples.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
+        samples = samples.to(device, non_blocking=False)
+        if isinstance(targets, torch.Tensor):
+            targets = targets.to(device, non_blocking=False)
+        elif isinstance(targets, list): # ego4d
+            labels, states = targets
+            labels = labels.to(device, non_blocking=False)
+            states = states.to(device, non_blocking=False)
+            targets = [labels, states]
 
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
+            # print(samples.shape, samples.device, targets[0].device, targets[1].device)
 
         if loss_scaler is None:
+            # print("loss scaler is None")
             samples = samples.half()
             loss, output = train_class_batch(
                 model, samples, targets, criterion)
@@ -66,7 +79,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             with torch.cuda.amp.autocast():
                 loss, output = train_class_batch(
                     model, samples, targets, criterion)
-
+        
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -100,8 +113,16 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         torch.cuda.synchronize()
 
+        class_acc = None
         if mixup_fn is None:
-            class_acc = (output.max(-1)[-1] == targets).float().mean()
+            if isinstance(targets, torch.Tensor):
+                class_acc = (output.max(-1)[-1] == targets).float().mean()
+            else:
+                # print(targets[0].shape, targets[1].shape) # shape: (bs num_frames), (bs,)
+                loc_acc = (output[0].max(-1)[-1] == targets[0]).float().mean()
+                cls_acc = (output[1].max(-1)[-1] == targets[1]).float().mean()
+                metric_logger.update(loc_acc = loc_acc)
+                metric_logger.update(cls_acc = cls_acc)
         else:
             class_acc = None
         metric_logger.update(loss=loss_value)
@@ -140,8 +161,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def validation_one_epoch(data_loader, model, device):
-    criterion = torch.nn.CrossEntropyLoss()
+def validation_one_epoch(data_loader, model, device, criterion):
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Val:'
@@ -153,31 +173,50 @@ def validation_one_epoch(data_loader, model, device):
         videos = batch[0]
         target = batch[1]
         videos = videos.to(device, non_blocking=True)
-        target = target.to(device, non_blocking=True)
 
+        if not isinstance(target, list):
+            target = target.to(device, non_blocking=True)
+        else:
+            labels, states = target[0].to(device, non_blocking=True), target[1].to(device, non_blocking=True)
+            target = [labels, states]
         # compute output
         with torch.cuda.amp.autocast():
             output = model(videos)
             loss = criterion(output, target)
 
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
-
         batch_size = videos.shape[0]
         metric_logger.update(loss=loss.item())
-        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-        metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+        if isinstance(target, list):
+            label_acc1, label_acc5 = accuracy(output[0], target[0], topk=(1, 5))
+            state_acc1 = accuracy(output[1], target[1], topk=(1,))[0]
+            metric_logger.meters['loc_acc1'].update(label_acc1.item(), n=batch_size)
+            metric_logger.meters['loc_acc5'].update(label_acc5.item(), n=batch_size)
+            metric_logger.meters['cls_acc1'].update(state_acc1.item(), n=batch_size)
+        else:
+            if output.shape[1] > 5:
+                acc1, acc5 = accuracy(output, target, topk=(1, 5))
+                metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+                metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+            else:
+                acc1 = accuracy(output, target, topk=(1,))[0]
+                metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
-          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
 
+    # print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
+    #     .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+
+    for k, meter in metric_logger.meters.items():
+        info += f"{k}: {meter.global_avg} "
+    info += "\n"
+    print(info)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
 
 @torch.no_grad()
-def final_test(data_loader, model, device, file):
-    criterion = torch.nn.CrossEntropyLoss()
+def final_test(data_loader, model, device, file, criterion):
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
@@ -193,7 +232,12 @@ def final_test(data_loader, model, device, file):
         chunk_nb = batch[3]
         split_nb = batch[4]
         videos = videos.to(device, non_blocking=True)
-        target = target.to(device, non_blocking=True)
+       
+        if isinstance(target, list):
+            target = target.to(device, non_blocking=True)
+        else:
+            labels, states = target[0].to(device, non_blocking=True), target[1].to(device, non_blocking=True)
+            target = [labels, states]
 
         # compute output
         with torch.cuda.amp.autocast():
@@ -201,11 +245,18 @@ def final_test(data_loader, model, device, file):
             loss = criterion(output, target)
 
         for i in range(output.size(0)):
-            string = "{} {} {} {} {}\n".format(ids[i], \
-                                                str(output.data[i].cpu().numpy().tolist()), \
-                                                str(int(target[i].cpu().numpy())), \
-                                                str(int(chunk_nb[i].cpu().numpy())), \
-                                                str(int(split_nb[i].cpu().numpy())))
+            if isinstance(output, list):
+                string = "{} {} {} {} {}\n".format(ids[i], \
+                                                    str(output[0].data[i].cpu().numpy().tolist()), \
+                                                    str(int(target[0][i].cpu().numpy())), \
+                                                    str(int(chunk_nb[i].cpu().numpy())), \
+                                                    str(int(split_nb[i].cpu().numpy())))
+            else:
+                string = "{} {} {} {} {}\n".format(ids[i], \
+                                                    str(output.data[i].cpu().numpy().tolist()), \
+                                                    str(int(target[i].cpu().numpy())), \
+                                                    str(int(chunk_nb[i].cpu().numpy())), \
+                                                    str(int(split_nb[i].cpu().numpy())))
             final_result.append(string)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))

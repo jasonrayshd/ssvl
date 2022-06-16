@@ -12,10 +12,14 @@ import time
 
 import av
 import cv2
+from PIL import Image
 import torch
 import numpy as np
 from tqdm import tqdm
-
+from torchvision import transforms
+import video_transforms as video_transforms 
+import volume_transforms as volume_transforms
+from random_erasing import RandomErasing
 from ego4d_trim import _get_frames
 
 
@@ -24,6 +28,7 @@ Used configuration:      Jiachen, 2022.05.19
 
 DATA.ANN_DIR
 DATA.VIDEO_DIR_PATH
+DATA.CLIPS_SAVE_PATH
 DATA.NO_SC_PATH
 
 DATA.CLIP_LEN_SEC
@@ -32,6 +37,101 @@ DATA.SAMPLING_FPS
 
 """
 
+##### copied from kinetics.py, edited by Jiachen Lei
+def tensor_normalize(tensor, mean, std):
+    """
+    Normalize a given tensor by subtracting the mean and dividing the std.
+    Args:
+        tensor (tensor): tensor to normalize.
+        mean (tensor or list): mean value to subtract.
+        std (tensor or list): std to divide.
+    """
+    if tensor.dtype == torch.uint8:
+        tensor = tensor.float()
+        tensor = tensor / 255.0
+    if type(mean) == list:
+        mean = torch.tensor(mean)
+    if type(std) == list:
+        std = torch.tensor(std)
+    tensor = tensor - mean
+    tensor = tensor / std
+    return tensor
+
+def spatial_sampling(
+    frames,
+    spatial_idx=-1,
+    min_scale=256,
+    max_scale=320,
+    crop_size=224,
+    random_horizontal_flip=True,
+    inverse_uniform_sampling=False,
+    aspect_ratio=None,
+    scale=None,
+    motion_shift=False,
+):
+    """
+    Perform spatial sampling on the given video frames. If spatial_idx is
+    -1, perform random scale, random crop, and random flip on the given
+    frames. If spatial_idx is 0, 1, or 2, perform spatial uniform sampling
+    with the given spatial_idx.
+    Args:
+        frames (tensor): frames of images sampled from the video. The
+            dimension is `num frames` x `height` x `width` x `channel`.
+        spatial_idx (int): if -1, perform random spatial sampling. If 0, 1,
+            or 2, perform left, center, right crop if width is larger than
+            height, and perform top, center, buttom crop if height is larger
+            than width.
+        min_scale (int): the minimal size of scaling.
+        max_scale (int): the maximal size of scaling.
+        crop_size (int): the size of height and width used to crop the
+            frames.
+        inverse_uniform_sampling (bool): if True, sample uniformly in
+            [1 / max_scale, 1 / min_scale] and take a reciprocal to get the
+            scale. If False, take a uniform sample from [min_scale,
+            max_scale].
+        aspect_ratio (list): Aspect ratio range for resizing.
+        scale (list): Scale range for resizing.
+        motion_shift (bool): Whether to apply motion shift for resizing.
+    Returns:
+        frames (tensor): spatially sampled frames.
+    """
+    assert spatial_idx in [-1, 0, 1, 2]
+    if spatial_idx == -1:
+        if aspect_ratio is None and scale is None:
+            frames, _ = video_transforms.random_short_side_scale_jitter(
+                images=frames,
+                min_size=min_scale,
+                max_size=max_scale,
+                inverse_uniform_sampling=inverse_uniform_sampling,
+            )
+            frames, _ = video_transforms.random_crop(frames, crop_size)
+        else:
+            transform_func = (
+                video_transforms.random_resized_crop_with_shift
+                if motion_shift
+                else video_transforms.random_resized_crop
+            )
+            frames = transform_func(
+                images=frames,
+                target_height=crop_size,
+                target_width=crop_size,
+                scale=scale,
+                ratio=aspect_ratio,
+            )
+        if random_horizontal_flip:
+            frames, _ = video_transforms.horizontal_flip(0.5, frames)
+    else:
+        # The testing is deterministic and no jitter should be performed.
+        # min_scale, max_scale, and crop_size are expect to be the same.
+        assert len({min_scale, max_scale, crop_size}) == 1
+        frames, _ = video_transforms.random_short_side_scale_jitter(
+            frames, min_scale, max_scale
+        )
+        frames, _ = video_transforms.uniform_crop(frames, crop_size, spatial_idx)
+    return frames
+
+#####
+
 class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
     """
     Data loader for state change detection and key-frame localization.
@@ -39,7 +139,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
     all the videos using the `train.json`, `test_unnotated.json`, and
     'val.json' provided.
     """
-    def __init__(self, cfg, mode):
+    def __init__(self, cfg, mode, args):
         assert mode in [
             'train',
             'val',
@@ -47,7 +147,22 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         ], "Split `{}` not supported for Keyframe detection.".format(mode)
         self.mode = mode
         self.cfg = cfg
+        self.args = args
+        self.crop_size = args.input_size
+
+        # Added by Jiachen
+        self.rand_erase = False
+        if self.mode in ['train']:
+            self.aug = True
+            if self.args.reprob > 0:
+                self.rand_erase = True
+        
+        # commented by Jiachen for debugging
         self.ann_path = os.path.join(cfg.DATA.ANN_DIR, f'{self.mode}.json')
+
+        # NOTE line below should be modified when start finetuning
+        # self.ann_path = os.path.join(cfg.DATA.ANN_DIR, f'partial_train.json')
+
         ann_err_msg = f"Wrong annotation path provided {self.ann_path}"
         assert os.path.exists(self.ann_path), ann_err_msg
         self.video_dir = self.cfg.DATA.VIDEO_DIR_PATH
@@ -58,27 +173,69 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         self.negative_vid_dir = self.cfg.DATA.NO_SC_PATH
         negative_vid_err_msg = "Wrong negative clips' frame path provided"
         assert os.path.exists(self.negative_vid_dir), negative_vid_err_msg
+
         self._construct_loader()
+        self._init_trans_for_mode()
+
+    def _init_trans_for_mode(self):
+
+        if self.mode == "train":
+            pass
+
+        elif self.mode == 'val':
+            self.data_transform = video_transforms.Compose([
+                video_transforms.Resize(self.args.short_side_size, interpolation='bilinear'),
+                video_transforms.CenterCrop(size=(self.crop_size, self.crop_size)),
+                volume_transforms.ClipToTensor(),
+                video_transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                           std=[0.229, 0.224, 0.225])
+            ])
+
+        elif self.mode == 'test':
+            self.data_resize = video_transforms.Compose([
+                video_transforms.Resize(size=(self.args.short_side_size), interpolation='bilinear')
+            ])
+            self.data_transform = video_transforms.Compose([
+                volume_transforms.ClipToTensor(),
+                video_transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                           std=[0.229, 0.224, 0.225])
+            ])
+
 
     def _construct_loader(self):
         self.package = dict()
+        # NOTE this line should be modified when start finetuning using official json file to
+        # self.ann_data = json.load(open(self.ann_path, 'r'))["clips"]
+
         self.ann_data = json.load(open(self.ann_path, 'r'))
         for count, value in enumerate(
             tqdm(self.ann_data, desc='Preparing data')
-        ):
-            clip_start_sec = value['parent_start_sec']
-            clip_end_sec = value['parent_end_sec']
-            clip_start_frame = value['parent_start_frame']
-            clip_end_frame = value['parent_end_frame']
-            video_id = value['video_uid']
+        ):  
+            # edited by Jiachen Lei
+            clip_start_sec = value['clip_start_sec']
+            clip_end_sec = value['clip_end_sec']
+            clip_start_frame = value['clip_start_frame']
+            clip_end_frame = value['clip_end_frame']
+
+            # Codes below are offcial implementation
+            # clip_start_sec = value['parent_start_sec']
+            # clip_end_sec = value['parent_end_sec']
+            # clip_start_frame = value['parent_start_frame']
+            # clip_end_frame = value['parent_end_frame']
+            
+            video_id = value['clip_uid']
             unique_id = value['unique_id']
             assert count not in self.package.keys()
             if self.mode in ['train', 'val']:
                 state_change = value['state_change']
-                pnr_frame = value['parent_pnr_frame']
+                # edited by Jiachen Lei
+                # pnr_frame = value['parent_pnr_frame'] if "parent_pnr_frame" in value.keys() else value["pnr_frame"]
+                pnr_frame = value['clip_pnr_frame'] if "clip_pnr_frame" in value.keys() else value["pnr_frame"]
             else:
                 state_change = None
                 pnr_frame = None
+
+
             self.package[count] = {
                 'unique_id': unique_id,
                 'pnr_frame': pnr_frame,
@@ -89,6 +246,17 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 'clip_end_frame': int(clip_end_frame),
                 'video_id': video_id,
             }
+
+        if self.mode == "test":
+            self.tmp_package = dict()
+            for cp in range(self.args.test_num_crop):
+                for k, v in self.package.items():
+                    self.tmp_package[cp * len(self.package) + k] = {}
+                    self.tmp_package[cp * len(self.package) + k].update(v)
+                    self.tmp_package[cp * len(self.package) + k]["crop"] = cp
+
+            self.package = self.tmp_package
+
         print(f'Number of clips for {self.mode}: {len(self.package)}')
 
     def __len__(self):
@@ -97,19 +265,159 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
     def __getitem__(self, index):
         info = self.package[index]
         state = info['state']                                          # Indiate whether state change occurs in the clip 
-        self._extract_clip_frames(info)                                # Extract frames from videos, if frames not exist
-
+        try:
+            self._extract_clip_frames(info)                                # Extract frames from videos, if frames not exist
+        except Exception as e:
+            print(f"error occurs while reading {info['video_id']}")
+            raise e
         frames, labels, _ = self._sample_frames_gen_labels(info)       # Sample given number of frames
                                                                        # Return contains two numpy.ndarray that contains sampeld frames and label
-                                                                       # transformations include: 
+                                                                       # original transformations include: 
                                                                        #     (1) random start frame
-                                                                       #     (2) resize to square
+                                                                       #     (2) resize to square (was commented)
 
-        frames = torch.as_tensor(frames).permute(3, 0, 1, 2)
+        if labels.sum() != 0:
+            labels = labels.nonzero()[0].item()
+        else:
+            labels = len(frames)
+        
         clip_len = info['clip_end_sec'] - info['clip_start_sec']
         clip_frame = info['clip_end_frame'] - info['clip_start_frame'] + 1
         fps = clip_frame / clip_len
-        return frames, [labels, state], fps, info
+
+        if self.mode == "train":
+            if self.args.num_sample > 1:
+
+                frame_list = []
+                label_list = []
+                state_list = []
+                for _ in range(self.args.num_sample):
+
+                    new_frames = self._aug_frame(frames)
+
+                    frame_list.append(new_frames)
+                    label_list.append(labels)
+                    state_list.append(state)
+
+                if self.args.nb_classes == -1:
+                    return frame_list, [label_list, state_list], fps, info
+                elif self.args.nb_classes == 2:
+                    return frame_list, state_list, fps, info
+                else:
+                    return frame_list, label_list, fps, info
+
+            else:
+                # frames = torch.as_tensor(frames).permute(3, 0, 1, 2)
+                frames = self._aug_frame(frames)
+
+            if self.args.nb_classes == -1:
+                return frames, [labels, state], fps, info
+            elif self.args.nb_classes == 2:
+                return frames, state, fps, info
+            else:
+                return frames, labels, fps, info
+
+        elif self.mode == "val":
+            frames = self.data_transform(frames)
+
+            if self.args.nb_classes == -1:
+                return frames, [labels, state], fps, info
+            elif self.args.nb_classes == 2:
+                return frames, state, fps, info
+            else:
+                return frames, labels, fps, info
+
+        elif self.mode =="test":
+            assert "crop" in info.keys()
+
+            frames = self.data_resize(frames)
+            H, W, C = frames[0].shape
+            spatial_step = 1.0 * (max(H, W) - self.args.short_side_size) \
+                                 / (self.args.test_num_crop - 1)
+            crop_num = info["crop"]
+            spatial_start = int(crop_num * spatial_step)
+
+            if H >= W:
+                frames = frames[:, spatial_start:spatial_start + self.args.short_side_size, :, :]
+            else:
+                frames = frames[:, :, spatial_start:spatial_start + self.args.short_side_size, :]
+
+            frames = self.data_transform(frames)
+
+            if self.args.nb_classes == -1:
+                return frames, [labels, state], fps, info
+            elif self.args.nb_classes == 2:
+                return frames, state, fps, info
+            else:
+                return frames, labels, fps, info
+
+
+    # _aug_frame edited by Jiachen Lei
+    def _aug_frame(
+        self,
+        buffer,
+    ):
+        """
+            Parameters
+            buffer: np.ndarray
+        
+        """
+        aug_transform = video_transforms.create_random_augment(
+            input_size=(self.crop_size, self.crop_size),
+            auto_augment= self.args.aa,
+            interpolation= self.args.train_interpolation,
+        )
+        # print(f"frame raw shape: {buffer[0].shape}") # H, W, C
+        buffer = [
+            transforms.ToPILImage()(frame) for frame in buffer
+        ]
+
+        buffer = aug_transform(buffer)
+
+        buffer = [transforms.ToTensor()(img) for img in buffer]
+        buffer = torch.stack(buffer) # T C H W
+        buffer = buffer.permute(0, 2, 3, 1) # T H W C 
+
+        # T H W C 
+        buffer = tensor_normalize(
+            buffer, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        )
+        # T H W C -> C T H W.
+        buffer = buffer.permute(3, 0, 1, 2)
+        # Perform data augmentation.
+        scl, asp = (
+            [0.08, 1.0],
+            [0.75, 1.3333],
+        )
+
+        buffer = spatial_sampling(
+            buffer,
+            spatial_idx=-1,
+            min_scale=256,
+            max_scale=320,
+            crop_size=self.crop_size,
+            random_horizontal_flip=False if  self.args.data_set == 'SSV2' else True ,
+            inverse_uniform_sampling=False,
+            aspect_ratio=asp,
+            scale=scl,
+            motion_shift=False
+        )
+
+        if self.rand_erase:
+            erase_transform = RandomErasing(
+                self.args.reprob,
+                mode= self.args.remode,
+                max_count= self.args.recount,
+                num_splits= self.args.recount,
+                device="cpu",
+            )
+            buffer = buffer.permute(1, 0, 2, 3)
+            buffer = erase_transform(buffer)
+            buffer = buffer.permute(1, 0, 2, 3)
+
+        return buffer
+
+
 
     def _extract_clip_frames(self, info):
         """
@@ -121,8 +429,9 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         unique_id = info['unique_id']
         video_path = os.path.join(
             self.video_dir,
-            info['video_id']
+            info['video_id']+".mp4",
         )
+
         if info['pnr_frame'] is not None:
             clip_save_path = os.path.join(self.positive_vid_dir, unique_id)
         else:
@@ -150,6 +459,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             video_path,
             frames_list,
         )
+
         desired_shorter_side = 384
         num_saved_frames = 0
         for frame, frame_count in zip(frames, frames_list):
@@ -219,6 +529,8 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
             First list contains sampled frame index, 
             and the second list contains the relative distances (in frames) between pnr frame and corresponding frame in 1st list.
+
+            if no state change occurs, then elements of the second list are zero
         """ 
         num_frames = clip_end_frame - clip_start_frame
         if num_frames < num_frames_required:
@@ -270,11 +582,14 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         """
         frame = cv2.imread(frame_path)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = cv2.resize(frame,(
-            self.cfg.DATA.CROP_SIZE,
-            self.cfg.DATA.CROP_SIZE
-        ))
-        frame = np.expand_dims(frame, axis=0).astype(np.float32)
+
+        # Commented by Jiachen Lei
+        # frame = cv2.resize(frame,(
+        #     self.cfg.DATA.CROP_SIZE,
+        #     self.cfg.DATA.CROP_SIZE
+        # ))
+        # frame = np.expand_dims(frame, axis=0).astype(np.float32)
+
         return frame
 
     def _sample_frames_gen_labels(self, info):
@@ -291,9 +606,11 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             )
         message = f'Clip path {clip_path} does not exists...'
         assert os.path.isdir(clip_path), message
+        
         num_frames_per_video = (
             self.cfg.DATA.SAMPLING_FPS * self.cfg.DATA.CLIP_LEN_SEC
         )
+
         pnr_frame = info['pnr_frame']
         if self.mode == 'train':
             # Random clipping
@@ -341,8 +658,8 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         frames = list()
         for frame_num in candidate_frame_nums:
             frame_path = os.path.join(clip_path, f'{frame_num}.jpeg')
-            message = f'{frame_path}; {candidate_frame_nums}'
-            assert os.path.isfile(frame_path), message
+            message = f'{frame_path}; {candidate_frame_nums}; {os.listdir("/".join(frame_path.split("/")[:-1]))}'
+            assert os.path.exists(frame_path), message
             frames.append(self._load_frame(frame_path))
         if pnr_frame is not None:
             keyframe_location = np.argmin(keyframe_candidates_list)
@@ -350,28 +667,48 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             hard_labels[keyframe_location] = 1
             labels = hard_labels
         else:
-            labels = keyframe_candidates_list
+            labels = keyframe_candidates_list # all zero
+
         # Calculating the effective fps. In other words, the fps after sampling
         # changes when we are randomly clipping and varying the duration of the
         # clip
         final_clip_length = (random_end_frame/30) - (random_start_frame/30)
         effective_fps = num_frames_per_video / final_clip_length
-        return np.concatenate(frames), np.array(labels), effective_fps
+
+        # Edited by Jiachen Lei
+        # return np.concatenate(frames), np.array(labels), effective_fps
+        return frames, np.array(labels), effective_fps
 
     def get_frames_for(self, video_path, frames_list):
         """
         Code for decoding the video
         """
         frames = list()
-        with av.open(video_path) as container:
-            for frame in _get_frames(
-                frames_list,
-                container,
-                include_audio=False,
-                audio_buffer_frames=0
-            ):
-                frame = frame.to_rgb().to_ndarray()
-                frames.append(frame)
+
+        # Codes by Jiachen Lei, since we only care about frames, audio is ignored
+        cap = cv2.VideoCapture(video_path)
+        assert cap != None, "Fail to open video"
+        ret = cap.set(cv2.CAP_PROP_POS_FRAMES, frames_list[0]-1)
+        assert ret == True, "Fail to set video to given frame"
+        for fidx in frames_list:
+            ret, frame = cap.read()
+            # print(frame)
+            assert ret == True, "Fail to read videos before finish extracting frames"
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame)
+
+        cap.release()
+
+        # Codes below are official implementation
+        # with av.open(video_path) as container:
+        #     for frame in _get_frames(
+        #         frames_list,
+        #         container,
+        #         include_audio=False,
+        #         audio_buffer_frames=0
+        #     ):  
+        #         frame = frame.to_rgb().to_ndarray()
+        #         frames.append(frame)
         return frames
 
 def _debug(**kwargs):

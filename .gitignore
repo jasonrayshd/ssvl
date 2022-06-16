@@ -1,7 +1,12 @@
 __pycache__
 ego4d_baseline
 github_raw_code
+ego4d_anno
+kinetics_anno
+debug
+*.csv
 
-ckpt/**
-log/**
-output/**
+videomae/ckpt/**
+videomae/log/**
+videomae/output/**
+

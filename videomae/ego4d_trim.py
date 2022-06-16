@@ -143,6 +143,7 @@ def _get_frames_pts(
     video_pts_set = set(video_pts_set)  # for O(1) lookup
 
     video_stream = container.streams.video[0]
+    # print(container.streams.video)
     fps: Fraction = video_stream.average_rate
     video_base: Fraction = video_stream.time_base
     video_pt_diff = pts_difference_per_frame(fps, video_base)
@@ -155,7 +156,7 @@ def _get_frames_pts(
     clip_end_sec += max(
         pts_to_time_seconds(include_additional_audio_pts, video_base), 1 / fps
     )
-
+    # print( video_pts_set)
     # --- setup
     streams_to_decode = {"video": 0}
     if (
@@ -171,12 +172,15 @@ def _get_frames_pts(
     # with some buffer room, just in-case the seek is not precise
     seek_pts = max(0, min_pts - 2 * video_pt_diff)
     video_stream.seek(seek_pts)
+    # container.seek(math.floor(pts_to_time_seconds(seek_pts, video_base)), stream=video_stream)
+
     if "audio" in streams_to_decode:
         assert len(container.streams.audio) == 1
         audio_stream = container.streams.audio[0]
         # pyre-fixme[61]: `audio_base` may not be initialized here.
         audio_seek_pts = int(seek_pts * video_base / audio_base)
         audio_stream.seek(audio_seek_pts)
+        # container.seek(audio_seek_pts, stream=audio_stream)
 
     # --- iterate over video
 
@@ -217,7 +221,6 @@ def _get_frames_pts(
                 video frame at time={video_time_sec} (pts={frame.pts})
                 out of range for time [{clip_start_sec}, {clip_end_sec}]
                 """
-
                 yield frame
 
 
@@ -244,6 +247,7 @@ def _get_frames(
     time_pts_set = [
         frame_index_to_pts(f, video_start, video_pt_diff) for f in video_frames
     ]
+
     return _get_frames_pts(time_pts_set, container, include_audio, audio_buffer_pts)
 
 
