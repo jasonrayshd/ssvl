@@ -1,9 +1,3 @@
-# Set the path to save checkpoints
-OUTPUT_DIR='/home/azureuser/code/videomae/output'
-# path to Kinetics set (train.csv/val.csv/test.csv)
-DATA_PATH='/mnt/kinetics/train'
-# path to pretrain model
-MODEL_PATH='/home/azureuser/code/videomae/ckpt/mae/kinetics/k400_videomae_pretrain_base_patch16_224_frame_16x5_tube_mask_ratio_0.9_e800'
 
 # We add repeated_aug (--num_sample = 2) on Kinetics-400 here, 
 # which could better performance while need more time for fine-tuning
@@ -16,11 +10,11 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --master_port 51225 --nnodes=1  --node_rank=$1 --master_addr=$2 \
     run_class_finetuning.py \
     --model vit_base_patch16_224 \
-    --data_set Ego4d-statechange-classification \
-    --nb_classes 2 \
-    --finetune ${MODEL_PATH} \
-    --log_dir ${OUTPUT_DIR} \
-    --output_dir ${OUTPUT_DIR} \
+    --data_set Ego4d-statechange-classification-localization \
+    --nb_classes -1 \
+    --finetune GoogleDrive://k400_videomae_pretrain_base_patch16_224_tubemasking_ratio_0.9_e800 \
+    --log_dir /mnt/shuang/Output/output_ego4d \
+    --output_dir /mnt/shuang/Output/output_ego4d \
     --batch_size 2 \
     --num_sample 1 \
     --input_size 224 \
@@ -35,6 +29,8 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --epochs 75 \
     --enable_deepspeed \
     --dist_eval \
+    --data_path /mnt/ego4d/v1/
+    # --data_path /mnt/shuang/Data/ego4d/data/v1/
     # --test_num_segment 5 \
     # --test_num_crop 3 \
     # --data_path ${DATA_PATH} \

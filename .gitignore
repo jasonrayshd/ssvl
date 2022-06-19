@@ -9,4 +9,5 @@ debug
 videomae/ckpt/**
 videomae/log/**
 videomae/output/**
+wandb
 

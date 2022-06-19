@@ -1,4 +1,5 @@
 import argparse
+from cmath import e
 import datetime
 import numpy as np
 import time
@@ -23,8 +24,7 @@ from utils import  multiple_samples_collate, multiple_samples_collate_ego4d, sam
 import utils
 import modeling_finetune
 
-
-
+import wandb
 from loss import Ego4dTwoHead_Criterion
 
 
@@ -51,7 +51,7 @@ class Ego4d_Compatible_Mixup(Mixup):
             label = mixup_target(label, T+1, lam, self.label_smoothing, device=x.device)
             state = mixup_target(state, 2, lam, self.label_smoothing, device=x.device)
             target = [label ,state]
-
+        
         return x, target
 
 
@@ -222,6 +222,10 @@ def get_args():
 
     parser.add_argument('--enable_deepspeed', action='store_true', default=False)
 
+
+    # Added by Jiachen
+    parser.add_argument('--enable_wandb', action='store_true', default=False)
+
     known_args, _ = parser.parse_known_args()
 
     if known_args.enable_deepspeed:
@@ -240,7 +244,14 @@ def get_args():
 
 
 def main(args, ds_init):
+
     utils.init_distributed_mode(args)
+
+    # codes below should be called after distributed initialization
+    num_tasks = utils.get_world_size()
+    global_rank = utils.get_rank()
+    if global_rank == 0 and args.enable_wandb:
+        wandb.init(project="ego4d-state-change-videomae", config=vars(opts))
 
     if ds_init is not None:
         utils.create_ds_config(args)
@@ -267,8 +278,7 @@ def main(args, ds_init):
         # dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
         dataset_test = None
 
-    num_tasks = utils.get_world_size()
-    global_rank = utils.get_rank()
+
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
     )
@@ -358,6 +368,9 @@ def main(args, ds_init):
         drop_block_rate=None,
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
+
+        # if is ego4d and state change localization task, then the output dimension of feature 
+        keep_dim = True if (args.nb_classes == args.num_frames+1) and ("ego4d" in args.data_set.lower()) else False
     )
 
     patch_size = model.patch_embed.patch_size
@@ -369,6 +382,15 @@ def main(args, ds_init):
         if args.finetune.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.finetune, map_location='cpu', check_hash=True)
+        elif args.finetune.startswith("GoogleDrive://"):
+            from download_ckpt_utils import pretrain_ckpt_lst, download_from
+            ckpt = pretrain_ckpt_lst()
+            pretrain_file_name = args.finetune.split("/")[2]
+
+            if not os.path.exists("./ckpt/"+pretrain_file_name):
+                download_from(ckpt[pretrain_file_name], output="./ckpt/" + pretrain_file_name)
+
+            checkpoint = torch.load("./ckpt/"+pretrain_file_name, map_location="cpu")
         else:
             checkpoint = torch.load(args.finetune, map_location='cpu')
 
@@ -538,12 +560,17 @@ def main(args, ds_init):
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-    max_accuracy = 0.0
+    if args.nb_classes != -1:
+        max_accuracy = 0.0
+    else:
+        max_accuracy = [0.0, 0.0]
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch * args.update_freq)
+
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer,
             device, epoch, loss_scaler, args.clip_grad, model_ema, mixup_fn,
@@ -565,48 +592,77 @@ def main(args, ds_init):
                 val_criterion = torch.nn.CrossEntropyLoss()
 
             test_stats = validation_one_epoch(data_loader_val, model, device, val_criterion)
-            print(f"Accuracy of the network on the {len(dataset_val)} val videos: {test_stats['acc1']:.1f}%")
-            if max_accuracy < test_stats["acc1"]:
+
+            # TODO line below contains bug: KeyErrorKeyError: : 'acc1'
+            print(f"Accuracy of the network on the {len(dataset_val)} val videos: ")
+            for k, v in test_stats.items():
+                print(f"{k}:{v:.3f}%")
+
+            # strategy for saving model
+            if args.nb_classes != -1 and max_accuracy < test_stats["acc1"]:
                 max_accuracy = test_stats["acc1"]
                 if args.output_dir and args.save_ckpt:
                     utils.save_model(
                         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                         loss_scaler=loss_scaler, epoch="best", model_ema=model_ema)
+                print(f"Max accuracy: {max_accuracy[0]:.2f}%")
 
-            print(f'Max accuracy: {max_accuracy:.2f}%')
+            elif args.nb_classes == -1:
+                if max_accuracy[0] < test_stats["loc_acc1"]:
+                    max_accuracy[0] = test_stats["loc_acc1"]
+                    if args.output_dir and args.save_ckpt:
+                        utils.save_model(
+                            args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+                            loss_scaler=loss_scaler, epoch="best_state_loc", model_ema=model_ema)
+                elif max_accuracy[1] < test_stats["cls_acc1"]:
+                    max_accuracy[1] = test_stats["cls_acc1"]
+                    if args.output_dir and args.save_ckpt:
+                        utils.save_model(
+                            args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+                            loss_scaler=loss_scaler, epoch="best_state_cls", model_ema=model_ema)
+
+                print(f'Max localization accuracy: {max_accuracy[0]:.2f}% Max classification accuracy: {max_accuracy[1]:.2f}')
+
             if log_writer is not None:
-                log_writer.update(val_acc1=test_stats['acc1'], head="perf", step=epoch)
-                log_writer.update(val_acc5=test_stats['acc5'], head="perf", step=epoch)
-                log_writer.update(val_loss=test_stats['loss'], head="perf", step=epoch)
+                for k,v in test_stats.items():
+                    _d = {
+                        f"{k}":v
+                    }
+                    log_writer.update(**_d, head="perf", step=epoch)
 
             log_stats = {
-                        #  **{f'train_{k}': v for k, v in train_stats.items()},
+                         **{f'train_{k}': v for k, v in train_stats.items()},
                          **{f'val_{k}': v for k, v in test_stats.items()},
                          'epoch': epoch,
                          'n_parameters': n_parameters}
         else:
             log_stats = {
-                        # **{f'train_{k}': v for k, v in train_stats.items()},
+                        **{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,
                          'n_parameters': n_parameters}
+
+        if global_rank == 0 and args.enable_wandb:
+            wandb.log(log_stats)
+
         if args.output_dir and utils.is_main_process():
             if log_writer is not None:
                 log_writer.flush()
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
-    preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
-    test_stats = final_test(data_loader_test, model, device, preds_file)
+    # preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
+    # test_stats = final_test(data_loader_test, model, device, preds_file)
     torch.distributed.barrier()
-    if global_rank == 0:
-        print("Start merging results...")
-        final_top1 ,final_top5 = merge(args.output_dir, num_tasks)
-        print(f"Accuracy of the network on the {len(dataset_test)} test videos: Top-1: {final_top1:.2f}%, Top-5: {final_top5:.2f}%")
-        log_stats = {'Final top-1': final_top1,
-                    'Final Top-5': final_top5}
-        if args.output_dir and utils.is_main_process():
-            with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-                f.write(json.dumps(log_stats) + "\n")
+
+    # if global_rank == 0:
+    #     print("Start merging results...")
+    #     final_top1 ,final_top5 = merge(args.output_dir, num_tasks)
+    #     print(f"Accuracy of the network on the {len(dataset_test)} test videos: Top-1: {final_top1:.2f}%, Top-5: {final_top5:.2f}%")
+    #     log_stats = {'Final top-1': final_top1,
+    #                 'Final Top-5': final_top5}
+    #     if args.output_dir and utils.is_main_process():
+    #         with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
+    #             f.write(json.dumps(log_stats) + "\n")
 
 
     total_time = time.time() - start_time

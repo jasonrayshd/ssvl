@@ -16,7 +16,8 @@ class Ego4dTwoHead_Criterion(nn.Module):
         if isinstance(target, torch.Tensor):
             return self.criterion(x, target.long())
         else:
-            label, state = target[0].long(), target[1].long()
+
+            label, state = target
 
             loc_loss = self.criterion(loc, label)
             cls_loss = self.criterion(cls, state)

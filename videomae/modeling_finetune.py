@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 
+import einops
 
 def _cfg(url='', **kwargs):
     return {
@@ -198,11 +199,14 @@ class VisionTransformer(nn.Module):
                  init_scale=0.,
                  all_frames=16,
                  tubelet_size=2,
-                 use_mean_pooling=True):
+                 use_mean_pooling=True,
+                 keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
+                 ):
         super().__init__()
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.tubelet_size = tubelet_size
+        self.keep_dim = keep_dim
         self.patch_embed = PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
         num_patches = self.patch_embed.num_patches
@@ -225,19 +229,19 @@ class VisionTransformer(nn.Module):
             for i in range(depth)])
         self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
         self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
-        self.head = nn.Linear(embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+        self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
+
+        self.head = nn.Linear(embed_dim, num_classes)
 
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
 
-        if not isinstance(self.head, nn.Identity):
-            trunc_normal_(self.head.weight, std=.02)
+        trunc_normal_(self.head.weight, std=.02)
         
         self.apply(self._init_weights)
 
-        if not isinstance(self.head, nn.Identity):
-            self.head.weight.data.mul_(init_scale)
-            self.head.bias.data.mul_(init_scale)
+        self.head.weight.data.mul_(init_scale)
+        self.head.bias.data.mul_(init_scale)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -260,9 +264,10 @@ class VisionTransformer(nn.Module):
 
     def reset_classifier(self, num_classes, global_pool=''):
         self.num_classes = num_classes
-        self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+        self.head = nn.Linear(self.embed_dim, num_classes)
 
     def forward_features(self, x):
+        B, C, T, H, W = x.shape
         x = self.patch_embed(x)
         B, _, _ = x.size()
 
@@ -273,15 +278,27 @@ class VisionTransformer(nn.Module):
         for blk in self.blocks:
             x = blk(x)
 
-        x = self.norm(x)
+        if self.keep_dim:
+            num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
+            tubelet_size = self.patch_embed.tubelet_size
+            x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+            x = x.mean(dim=2).squeeze()
+            x = x.flatten(1)
+            x = self.temporal_norm(x)
+            return x
+
         if self.fc_norm is not None:
-            return self.fc_norm(x.mean(1))
+            return self.fc_norm( x.mean(1) )
         else:
-            return x[:, 0]
+            return self.norm(x)[:, 0]
 
     def forward(self, x):
         x = self.forward_features(x)
         x = self.head(x)
+
+        # if self.keep_dim:
+        #     x = x.permute(0, 2, 1)
+
         return x
 
 class Ego4dTwoHead_VisionTransformer(nn.Module):
@@ -306,12 +323,16 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
                 init_scale=0.,
                 all_frames=16,
                 tubelet_size=2,
-                use_mean_pooling=True):
+                use_mean_pooling=True,
+                keep_dim = False,
+                ):
 
         super().__init__()
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.tubelet_size = tubelet_size
+
+        self.num_frames = all_frames
         self.patch_embed = PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
         num_patches = self.patch_embed.num_patches
@@ -333,15 +354,15 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
             for i in range(depth)])
         self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
         self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        self.temporal_norm = norm_layer(embed_dim)
 
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
 
-
         self.apply(self._init_weights)
 
         self.cls_head = nn.Linear(embed_dim, 2)
-        self.loc_head = nn.Linear(embed_dim, all_frames+1) # state change localization has num_frames+1
+        self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
 
         trunc_normal_(self.cls_head.weight, std=.02)
         self.cls_head.weight.data.mul_(init_scale)
@@ -375,24 +396,22 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
     #     self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
     
     def forward_features(self, x):
-        x = self.patch_embed(x)
-
+        # input shape: B, C, T, H, W
+        x = self.patch_embed(x) # patch embedding
         B, _, _ = x.size()
+        # shape: B, T x patch_height x patch_width, hidden_dim
+        # e.g. (32, 16/2 x 224/16 x 224/16, 768) -> (32, 1568, 768)
 
+        # add positional embedding
         if self.pos_embed is not None:
             x = x + self.pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
-
-        x = self.pos_drop(x)
-
+        x = self.pos_drop(x) # dropout
+        # encoder
         for blk in self.blocks:
-            x = blk(x)
+            x = blk(x) 
 
-        x = self.norm(x)
+        return x
 
-        if self.fc_norm is not None:
-            return self.fc_norm(x.mean(1))
-        else:
-            return x[:, 0]
 
     def forward(self, x):
         # NOTE                            Jiachen 2022.05.25
@@ -400,13 +419,23 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
         # the raw tensor frames from __getitem__() shape like: C, T, H, W
         # Thus, if no transformations are used to augment x, the shape of x will be:
         # bs, C, T, H, W
-
+        B, C, T, H, W = x.shape
         x = self.forward_features(x)
         # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
 
-        cls = self.cls_head(x) # cls shape: bs, 2
+        if self.fc_norm is not None:
+            cls = self.cls_head( self.fc_norm(x.mean(1)) )
+        else:
+            cls = self.cls_head( self.norm(x)[:, 0] )
+
+        num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
+        tubelet_size = self.patch_embed.tubelet_size
+        x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+        x = x.mean(dim=2).squeeze()
+        x = self.temporal_norm(x)
+        x = x.flatten(1)
         loc = self.loc_head(x) # shape: bs, frame num
-        # for computing Cross-entropy loss 
+        # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
 
         return loc, cls
 
@@ -421,7 +450,7 @@ def vit_small_patch16_224(pretrained=False, **kwargs):
     return model
 
 @register_model
-def vit_base_patch16_224(pretrained=False, two_head=False, **kwargs):
+def vit_base_patch16_224(pretrained=False, **kwargs):
     if kwargs["num_classes"] == -1: # finish ego4d state change classification and localization tasks at the same time
         model = Ego4dTwoHead_VisionTransformer(
             patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,

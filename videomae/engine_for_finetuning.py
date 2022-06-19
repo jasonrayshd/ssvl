@@ -37,7 +37,6 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
-
     if loss_scaler is None:
         model.zero_grad()
         model.micro_steps = 0
@@ -75,6 +74,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             samples = samples.half()
             loss, output = train_class_batch(
                 model, samples, targets, criterion)
+
         else:
             with torch.cuda.amp.autocast():
                 loss, output = train_class_batch(
@@ -125,6 +125,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 metric_logger.update(cls_acc = cls_acc)
         else:
             class_acc = None
+
         metric_logger.update(loss=loss_value)
         metric_logger.update(class_acc=class_acc)
         metric_logger.update(loss_scale=loss_scale_value)
@@ -206,7 +207,7 @@ def validation_one_epoch(data_loader, model, device, criterion):
 
     # print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
     #     .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
-
+    info = ""
     for k, meter in metric_logger.meters.items():
         info += f"{k}: {meter.global_avg} "
     info += "\n"

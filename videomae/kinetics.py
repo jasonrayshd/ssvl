@@ -450,49 +450,53 @@ class VideoMAE(torch.utils.data.Dataset):
                  temporal_jitter=False,
                  video_loader=False,
                  use_decord=False,
-                 lazy_init=False):
+                 lazy_init=False,
+                 # Edited by Jiachen Lei
+                 use_target=False,
+                 ):
 
         super(VideoMAE, self).__init__()
-        self.root = root
+        # self.root = root
         self.setting = setting
-        self.train = train
-        self.test_mode = test_mode
-        self.is_color = is_color
-        self.modality = modality
+        # self.train = train
+        # self.test_mode = test_mode
+        # self.is_color = is_color
+        # self.modality = modality
         self.num_segments = num_segments
-        self.num_crop = num_crop
+        # self.num_crop = num_crop
         self.new_length = new_length
         self.new_step = new_step
         self.skip_length = self.new_length * self.new_step
         self.temporal_jitter = temporal_jitter
-        self.name_pattern = name_pattern
-        self.video_loader = video_loader
+        # self.name_pattern = name_pattern
+        # self.video_loader = video_loader
         self.video_ext = video_ext
-        self.use_decord = use_decord
+        # self.use_decord = use_decord
         self.transform = transform
         self.lazy_init = lazy_init
 
+        self.use_target = use_target
 
         if not self.lazy_init:
-            self.clips = self._make_dataset(root, setting)
+            self.clips = self._make_dataset(setting)
             if len(self.clips) == 0:
-                raise(RuntimeError("Found 0 video clips in subfolders of: " + root + "\n"
+                raise(RuntimeError("Found 0 video clips in given file :" + setting + "\n"
                                    "Check your data directory (opt.data-dir)."))
 
     def __getitem__(self, index):
 
         directory, target = self.clips[index]
-        if self.video_loader:
-            if '.' in directory.split('/')[-1]:
-                # data in the "setting" file already have extension, e.g., demo.mp4
-                video_name = directory
-            else:
-                # data in the "setting" file do not have extension, e.g., demo
-                # So we need to provide extension (i.e., .mp4) to complete the file name.
-                video_name = '{}.{}'.format(directory, self.video_ext)
 
-            decord_vr = decord.VideoReader(video_name, num_threads=1)
-            duration = len(decord_vr)
+        if '.' in directory.split('/')[-1]:
+            # data in the "setting" file already have extension, e.g., demo.mp4
+            video_name = directory
+        else:
+            # data in the "setting" file do not have extension, e.g., demo
+            # So we need to provide extension (i.e., .mp4) to complete the file name.
+            video_name = '{}.{}'.format(directory, self.video_ext)
+
+        decord_vr = decord.VideoReader(video_name, num_threads=1)
+        duration = len(decord_vr)
 
         segment_indices, skip_offsets = self._sample_train_indices(duration)
 
@@ -500,7 +504,11 @@ class VideoMAE(torch.utils.data.Dataset):
 
         process_data, mask = self.transform((images, None)) # T*C,H,W
         process_data = process_data.view((self.new_length, 3) + process_data.size()[-2:]).transpose(0,1)  # T*C,H,W -> T,C,H,W -> C,T,H,W
-        
+
+        if self.use_target:
+            # TODO process target
+            return (process_data, mask, target)
+
         return (process_data, mask)
 
     def __len__(self):
@@ -514,11 +522,11 @@ class VideoMAE(torch.utils.data.Dataset):
             data = split_f.readlines()
             for line in data:
                 line_info = line.split(' ')
-                # line format: video_path, video_duration, video_label
+                # line format: video_path, video_duration, video_label(number or a target path)
                 if len(line_info) < 2:
                     raise(RuntimeError('Video input format is not correct, missing one or more element. %s' % line))
                 clip_path = os.path.join(line_info[0])
-                target = int(line_info[1])
+                target = int(line_info[1]) if line_info[1].isnumeric() else line_info[1]
                 item = (clip_path, target)
                 clips.append(item)
         return clips
@@ -543,6 +551,7 @@ class VideoMAE(torch.utils.data.Dataset):
         else:
             skip_offsets = np.zeros(
                 self.skip_length // self.new_step, dtype=int)
+
         return offsets + 1, skip_offsets
 
 
@@ -565,3 +574,26 @@ class VideoMAE(torch.utils.data.Dataset):
         except:
             raise RuntimeError('Error occured in reading frames {} from video {} of duration {}.'.format(frame_id_list, directory, duration))
         return sampled_list
+
+
+
+if __name__ == "__main__":
+    dataset = VideoMAE(
+                root="",
+                 setting="",
+
+                video_ext='mp4',
+
+                num_segments=1,
+                new_length=16,
+                new_step=4,
+                transform=None,
+                temporal_jitter=False,
+                #  video_loader=False,
+                #  use_decord=False,
+                lazy_init=True,
+                # Edited by Jiachen Lei
+                use_target=False,
+    )
+
+    print(dataset._sample_train_indices(126))

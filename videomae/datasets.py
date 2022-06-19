@@ -7,6 +7,7 @@ from ssv2 import SSVideoClsDataset
 
 
 from ego4d import StateChangeDetectionAndKeyframeLocalisation
+from epickitchens import Epickitchens
 from argparse import Namespace
 
 
@@ -81,21 +82,26 @@ def build_dataset(is_train, test_mode, args):
             DATA.SAMPLING_FPS
         """
         # Edited by Jiachen Lei, 2022.05.24
-        # Refer to code/ego4d_baseline/state-change-localization-classification/i3d-resnet50/configs/2021-09-18_keyframe_loc_release1-v2_main-experiment.yaml
+        # Refer to official file state-change-localization-classification/i3d-resnet50/configs/2021-09-18_keyframe_loc_release1-v2_main-experiment.yaml
 
-        ann_dir ="/home/azureuser/code/ego4d_anno"
-        video_dir_path = "/mnt/ego4d/v1/clips"
-        clips_save_path = "/mnt/ego4d/v1/pos"
-        no_sc_path = "/mnt/ego4d/v1/neg"
+        # ann_dir = args.data_path
+        # video_dir_path = os.path.join(args.data_path, "clips")
+        # clips_save_path = "/mnt/ego4d/v1/pos"
+        # no_sc_path = "/mnt/ego4d/v1/neg"
 
         cfg = Namespace(**{
             "DATA": Namespace(**{
-                "ANN_DIR": ann_dir,
-                "VIDEO_DIR_PATH": video_dir_path,
-                "CLIPS_SAVE_PATH": clips_save_path,
-                "NO_SC_PATH": no_sc_path,
+                # Data Loading
+                "ANN_DIR": args.data_path,
+                "VIDEO_DIR_PATH": os.path.join(args.data_path, "clips"),
 
-                "CLIP_LEN_SEC": args.clip_len, # Duration time in second of clip
+                "CLIPS_SAVE_PATH": os.path.join(args.data_path, "pos"), # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+                "NO_SC_PATH": os.path.join(args.data_path, "neg"), # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+
+                "SAVE_AS_ZIP": True,                # save frames in zip file for efficient data loading
+
+                # Data Sampling
+                "CLIP_LEN_SEC": args.clip_len,      # Duration time in second of clip
                 "CROP_SIZE": args.input_size,
                 "SAMPLING_FPS": args.sampling_rate, # Sampled frames per second for training
             })

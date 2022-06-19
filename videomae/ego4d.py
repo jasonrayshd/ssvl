@@ -13,6 +13,7 @@ import time
 import av
 import cv2
 from PIL import Image
+from tblib import Frame
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -22,6 +23,9 @@ import volume_transforms as volume_transforms
 from random_erasing import RandomErasing
 from ego4d_trim import _get_frames
 
+import io
+import decord
+from zipfile import ZipFile
 
 """
 Used configuration:      Jiachen, 2022.05.19
@@ -139,7 +143,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
     all the videos using the `train.json`, `test_unnotated.json`, and
     'val.json' provided.
     """
-    def __init__(self, cfg, mode, args):
+    def __init__(self, cfg, mode, args, **kwargs):
         assert mode in [
             'train',
             'val',
@@ -149,6 +153,8 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         self.cfg = cfg
         self.args = args
         self.crop_size = args.input_size
+
+        self.save_as_zip = cfg.DATA.SAVE_AS_ZIP    # save frames in zip file
 
         # Added by Jiachen
         self.rand_erase = False
@@ -222,7 +228,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             # clip_end_sec = value['parent_end_sec']
             # clip_start_frame = value['parent_start_frame']
             # clip_end_frame = value['parent_end_frame']
-            
+
             video_id = value['clip_uid']
             unique_id = value['unique_id']
             assert count not in self.package.keys()
@@ -264,23 +270,23 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         info = self.package[index]
-        state = info['state']                                          # Indiate whether state change occurs in the clip 
+        state = info['state']                                                                   # Indiate whether state change occurs in the clip 
         try:
-            self._extract_clip_frames(info)                                # Extract frames from videos, if frames not exist
+            self._extract_clip_frames(info, save_as_zip=self.save_as_zip)                       # Extract frames from videos, if frames not exist
         except Exception as e:
             print(f"error occurs while reading {info['video_id']}")
             raise e
-        frames, labels, _ = self._sample_frames_gen_labels(info)       # Sample given number of frames
-                                                                       # Return contains two numpy.ndarray that contains sampeld frames and label
-                                                                       # original transformations include: 
-                                                                       #     (1) random start frame
-                                                                       #     (2) resize to square (was commented)
 
+        frames, labels, _ = self._sample_frames_gen_labels(info, from_zip=self.save_as_zip)     # Sample given number of frames
+                                                                                                # Return contains two numpy.ndarray that contains sampeld frames and label
+                                                                                                # original transformations include: 
+                                                                                                #     (1) random start frame
+                                                                                                #     (2) resize to square (was commented)
         if labels.sum() != 0:
             labels = labels.nonzero()[0].item()
         else:
             labels = len(frames)
-        
+
         clip_len = info['clip_end_sec'] - info['clip_start_sec']
         clip_frame = info['clip_end_frame'] - info['clip_start_frame'] + 1
         fps = clip_frame / clip_len
@@ -418,8 +424,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         return buffer
 
 
-
-    def _extract_clip_frames(self, info):
+    def _extract_clip_frames(self, info, save_as_zip=False):
         """
         This method is used to extract and save frames for all the 8 seconds
         clips. If the frames are already saved, it does nothing.
@@ -438,16 +443,22 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             clip_save_path = os.path.join(self.negative_vid_dir, unique_id)
         # We can do do this fps for canonical data is 30.
         num_frames_per_video = 30 * self.cfg.DATA.CLIP_LEN_SEC
-        if os.path.isdir(clip_save_path):
+        if os.path.exists(clip_save_path):
             # The frames for this clip are already saved.
             num_frames = len(os.listdir(clip_save_path))
-            if num_frames < (clip_end_frame - clip_start_frame):
-                print(
-                    f'Deleting {clip_save_path} as it has {num_frames} frames'
-                )
+            if num_frames < (clip_end_frame - clip_start_frame) or \
+                                        ( save_as_zip and not os.path.exists(os.path.join(clip_save_path, "frames.zip"))):
+                if save_as_zip and not os.path.exists(os.path.join(clip_save_path, "frames.zip")) :
+                    print(f"Deleting {clip_save_path} as it does not have a zip file")
+                else:
+                    print(
+                        f'Deleting {clip_save_path} as it has {num_frames} frames'
+                    )
+
                 os.system(f'rm -r {clip_save_path}')
             else:
                 return None
+
         print(f'Saving frames for {clip_save_path}...')
         os.makedirs(clip_save_path)
         start = time.time()
@@ -462,6 +473,14 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
         desired_shorter_side = 384
         num_saved_frames = 0
+
+        if save_as_zip:
+            # if os.path.exists(f"{clip_save_path}/frames.zip"):
+            #     zf = ZipFile(f"{clip_save_path}/frames.zip", mode="a")
+            # else:
+            #     zf = ZipFile(f"{clip_save_path}/frames.zip", mode="w")
+            zf = ZipFile(f"{clip_save_path}/frames.zip", mode="a")
+
         for frame, frame_count in zip(frames, frames_list):
             original_height, original_width, _ = frame.shape
             if original_height < original_width:
@@ -495,9 +514,23 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                     clip_save_path,
                     f'{frame_count}.jpeg'
                 ),
-                cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+                # NOTE: Frames are saved in BGR format
+                cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) 
             )
+
+            if save_as_zip:
+                imgByteArr = io.BytesIO()
+                pil = Image.fromarray(frame)
+                pil.save(imgByteArr, format="jpeg")
+                zf.writestr(f'{frame_count}.jpeg', imgByteArr.getvalue())
+
             num_saved_frames += 1
+
+
+        if save_as_zip:
+            zf.close()
+
         print(f'Time taken: {time.time() - start}; {num_saved_frames} '
             f'frames saved; {clip_save_path}')
         return None
@@ -592,7 +625,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
         return frame
 
-    def _sample_frames_gen_labels(self, info):
+    def _sample_frames_gen_labels(self, info, from_zip=False):
         if info['pnr_frame'] is not None:
             clip_path = os.path.join(
                 self.positive_vid_dir,
@@ -606,7 +639,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             )
         message = f'Clip path {clip_path} does not exists...'
         assert os.path.isdir(clip_path), message
-        
+
         num_frames_per_video = (
             self.cfg.DATA.SAMPLING_FPS * self.cfg.DATA.CLIP_LEN_SEC
         )
@@ -655,12 +688,42 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             num_frames_per_video,
             pnr_frame
         )
+
+        # Start sampling frames given frame index list
         frames = list()
-        for frame_num in candidate_frame_nums:
-            frame_path = os.path.join(clip_path, f'{frame_num}.jpeg')
-            message = f'{frame_path}; {candidate_frame_nums}; {os.listdir("/".join(frame_path.split("/")[:-1]))}'
-            assert os.path.exists(frame_path), message
-            frames.append(self._load_frame(frame_path))
+        retry = 5
+        if not from_zip:
+            # load frames from folder that contains jpeg files
+            for frame_num in candidate_frame_nums:
+                frame_path = os.path.join(clip_path, f'{frame_num}.jpeg')
+                message = f'Failed to read after trying {retry} times, {frame_path}; {candidate_frame_nums}; {os.listdir("/".join(frame_path.split("/")[:-1]))}'
+                # tolerate missed read
+                self.assert_exist_wtolerance(frame_path, message, retry=retry)
+                frames.append(self._load_frame(frame_path))
+
+        else:
+            # load frames from zip file
+            zip_file_path = os.path.join(clip_path, "frames.zip")
+            message = f'Failed to read after trying {retry} times, {zip_file_path}; {candidate_frame_nums};'
+            self.assert_exist_wtolerance(zip_file_path, message, retry=retry)
+
+            with ZipFile( zip_file_path, "r") as zf:
+                # zf.printdir()
+                for frame_num in candidate_frame_nums:
+                    try:
+                        with zf.open(f"{frame_num}.jpeg") as f:
+                            image_data = f.read()
+                            pil = Image.open(io.BytesIO(image_data))
+                            frames.append(np.array(pil))
+                    except Exception as e:
+                        os.system(f"rm {zip_file_path}")
+                        raise Exception(f"Exception occurs while reading frame {frame_num}.jpeg from file {zip_file_path}. Deleted it...\n\
+                                        \rRaw expception: {e} \
+                                        ")
+                        
+
+
+
         if pnr_frame is not None:
             keyframe_location = np.argmin(keyframe_candidates_list)
             hard_labels = np.zeros(len(candidate_frame_nums))
@@ -675,29 +738,47 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         final_clip_length = (random_end_frame/30) - (random_start_frame/30)
         effective_fps = num_frames_per_video / final_clip_length
 
-        # Edited by Jiachen Lei
+        # Commented by Jiachen Lei
         # return np.concatenate(frames), np.array(labels), effective_fps
         return frames, np.array(labels), effective_fps
+
+
+    def assert_exist_wtolerance(self, path, message, retry=5):
+        if not os.path.exists(path):
+            flag = False
+            for i in range(retry):
+                if os.path.exists(path):
+                    flag = True
+            if not flag:
+                assert False, message
+
 
     def get_frames_for(self, video_path, frames_list):
         """
         Code for decoding the video
         """
-        frames = list()
+        # frames = list()
 
         # Codes by Jiachen Lei, since we only care about frames, audio is ignored
-        cap = cv2.VideoCapture(video_path)
-        assert cap != None, "Fail to open video"
-        ret = cap.set(cv2.CAP_PROP_POS_FRAMES, frames_list[0]-1)
-        assert ret == True, "Fail to set video to given frame"
-        for fidx in frames_list:
-            ret, frame = cap.read()
-            # print(frame)
-            assert ret == True, "Fail to read videos before finish extracting frames"
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(frame)
+        # Frames are converted into RGB format
 
-        cap.release()
+        # version 1, write with opencv
+        # cap = cv2.VideoCapture(video_path)
+        # assert cap != None, "Fail to open video"
+        # ret = cap.set(cv2.CAP_PROP_POS_FRAMES, frames_list[0]-1)
+        # assert ret == True, "Fail to set video to given frame"
+        # for fidx in frames_list:
+        #     ret, frame = cap.read()
+        #     # print(frame)
+        #     assert ret == True, "Fail to read videos before finish extracting frames"
+        #     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        #     frames.append(frame)
+
+        # cap.release()
+ 
+        # version 2, write with decord
+        vr = decord.VideoReader(video_path)
+        frames = vr.get_batch(frames_list).asnumpy() # return RGB format numpy.ndarray
 
         # Codes below are official implementation
         # with av.open(video_path) as container:

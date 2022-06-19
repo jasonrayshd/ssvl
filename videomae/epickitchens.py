@@ -5,14 +5,11 @@ import torch.utils.data
 import random
 import logging
 
-
-from epickitchens_record import EpicKitchensVideoRecord
-
 import video_transforms as transform
 import epickitchens_utils as utils
+from epickitchens_record import EpicKitchensVideoRecord
 
-
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def get_start_end_idx(video_size, clip_size, clip_idx, num_clips):
@@ -86,6 +83,32 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
     frames = utils.retry_load_images(img_paths)
     return frames
 
+
+
+"""
+used configuration
+
+EPICKITCHENS.ANNOTATIONS_DIR
+EPICKITCHENS.TRAIN_LIST
+EPICKITCHENS.VAL_LIST
+EPICKITCHENS.TEST_LIST
+# train, val, trian+val
+DATA.TRAIN_JITTER_SCALES
+DATA.TRAIN_CROP_SIZE
+
+# test
+TEST.NUM_SPATIAL_CROPS
+DATA.TEST_CROP_SIZE
+
+DATA.MEAN
+DATA.STD
+
+# slowfast
+MODEL.ARCH
+MODEL.SINGLE_PATHWAY_ARCH
+MODEL.MULTI_PATHWAY_ARCH
+
+"""
 
 
 class Epickitchens(torch.utils.data.Dataset):
@@ -199,7 +222,7 @@ class Epickitchens(torch.utils.data.Dataset):
             )
 
         frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index)
-        
+
         # Perform color normalization.
         frames = frames.float()
         frames = frames / 255.0
