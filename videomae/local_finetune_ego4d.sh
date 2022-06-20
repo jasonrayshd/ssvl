@@ -12,9 +12,12 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --model vit_base_patch16_224 \
     --data_set Ego4d-statechange-classification-localization \
     --nb_classes -1 \
-    --finetune GoogleDrive://k400_videomae_pretrain_base_patch16_224_tubemasking_ratio_0.9_e800 \
-    --log_dir /mnt/shuang/Output/output_ego4d \
-    --output_dir /mnt/shuang/Output/output_ego4d \
+    --log_dir /mnt/output \
+    --output_dir /mnt/output \
+    --data_path /mnt/ego4d/v1/clips \
+    --anno_path /mnt/ego4d/v1/partial_anno \
+    --pos_clip_save_path /mnt/pos \
+    --neg_clip_save_path /mnt/neg \
     --batch_size 2 \
     --num_sample 1 \
     --input_size 224 \
@@ -29,8 +32,4 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --epochs 75 \
     --enable_deepspeed \
     --dist_eval \
-    --data_path /mnt/ego4d/v1/
-    # --data_path /mnt/shuang/Data/ego4d/data/v1/
-    # --test_num_segment 5 \
-    # --test_num_crop 3 \
-    # --data_path ${DATA_PATH} \
+    --debug

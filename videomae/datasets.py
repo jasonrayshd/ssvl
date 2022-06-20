@@ -92,13 +92,13 @@ def build_dataset(is_train, test_mode, args):
         cfg = Namespace(**{
             "DATA": Namespace(**{
                 # Data Loading
-                "ANN_DIR": args.data_path,
-                "VIDEO_DIR_PATH": os.path.join(args.data_path, "clips"),
-
-                "CLIPS_SAVE_PATH": os.path.join(args.data_path, "pos"), # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
-                "NO_SC_PATH": os.path.join(args.data_path, "neg"), # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+                "ANN_DIR": args.anno_path,
+                "VIDEO_DIR_PATH": args.data_path,
+                "CLIPS_SAVE_PATH": args.pos_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+                "NO_SC_PATH": args.neg_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
 
                 "SAVE_AS_ZIP": True,                # save frames in zip file for efficient data loading
+                "READ_BY_CLIPS": args.debug,        # read by clips or full_scale video
 
                 # Data Sampling
                 "CLIP_LEN_SEC": args.clip_len,      # Duration time in second of clip

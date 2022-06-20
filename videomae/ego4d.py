@@ -162,9 +162,9 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             self.aug = True
             if self.args.reprob > 0:
                 self.rand_erase = True
-        
+
         # commented by Jiachen for debugging
-        self.ann_path = os.path.join(cfg.DATA.ANN_DIR, f'{self.mode}.json')
+        self.ann_path = os.path.join(cfg.DATA.ANN_DIR, f'fho_oscc-pnr_{self.mode}.json')
 
         # NOTE line below should be modified when start finetuning
         # self.ann_path = os.path.join(cfg.DATA.ANN_DIR, f'partial_train.json')
@@ -212,24 +212,33 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         self.package = dict()
         # NOTE this line should be modified when start finetuning using official json file to
         # self.ann_data = json.load(open(self.ann_path, 'r'))["clips"]
+        if self.args.debug:
+            self.ann_data = json.load(open(self.ann_path, 'r'))
+        else:
+            self.ann_data = json.load(open(self.ann_path, 'r'))["clips"]
 
-        self.ann_data = json.load(open(self.ann_path, 'r'))
         for count, value in enumerate(
             tqdm(self.ann_data, desc='Preparing data')
         ):  
             # edited by Jiachen Lei
-            clip_start_sec = value['clip_start_sec']
-            clip_end_sec = value['clip_end_sec']
-            clip_start_frame = value['clip_start_frame']
-            clip_end_frame = value['clip_end_frame']
+            # read by clips for debugging or read by full_scale video for training
+            if self.cfg.DATA.READ_BY_CLIPS:
+                try:
+                    clip_start_sec = value['clip_start_sec']
+                    clip_end_sec = value['clip_end_sec']
+                    clip_start_frame = value['clip_start_frame']
+                    clip_end_frame = value['clip_end_frame']
+                    video_id = value['clip_uid']
+                except KeyError as e:
+                    continue
+            else:
+                # Codes below are offcial implementation
+                clip_start_sec = value['parent_start_sec']
+                clip_end_sec = value['parent_end_sec']
+                clip_start_frame = value['parent_start_frame']
+                clip_end_frame = value['parent_end_frame']
+                video_id = value['video_uid']
 
-            # Codes below are offcial implementation
-            # clip_start_sec = value['parent_start_sec']
-            # clip_end_sec = value['parent_end_sec']
-            # clip_start_frame = value['parent_start_frame']
-            # clip_end_frame = value['parent_end_frame']
-
-            video_id = value['clip_uid']
             unique_id = value['unique_id']
             assert count not in self.package.keys()
             if self.mode in ['train', 'val']:
@@ -240,7 +249,6 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             else:
                 state_change = None
                 pnr_frame = None
-
 
             self.package[count] = {
                 'unique_id': unique_id,
@@ -475,10 +483,6 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         num_saved_frames = 0
 
         if save_as_zip:
-            # if os.path.exists(f"{clip_save_path}/frames.zip"):
-            #     zf = ZipFile(f"{clip_save_path}/frames.zip", mode="a")
-            # else:
-            #     zf = ZipFile(f"{clip_save_path}/frames.zip", mode="w")
             zf = ZipFile(f"{clip_save_path}/frames.zip", mode="a")
 
         for frame, frame_count in zip(frames, frames_list):
@@ -526,7 +530,6 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 zf.writestr(f'{frame_count}.jpeg', imgByteArr.getvalue())
 
             num_saved_frames += 1
-
 
         if save_as_zip:
             zf.close()
@@ -720,9 +723,6 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                         raise Exception(f"Exception occurs while reading frame {frame_num}.jpeg from file {zip_file_path}. Deleted it...\n\
                                         \rRaw expception: {e} \
                                         ")
-                        
-
-
 
         if pnr_frame is not None:
             keyframe_location = np.argmin(keyframe_candidates_list)

@@ -221,10 +221,12 @@ def get_args():
                         help='url used to set up distributed training')
 
     parser.add_argument('--enable_deepspeed', action='store_true', default=False)
-
-
-    # Added by Jiachen
-    parser.add_argument('--enable_wandb', action='store_true', default=False)
+    parser.add_argument('--name', type=str, default="temp", help="name of current run")
+    # Added by Jiachen, for ego4d state change pretraining
+    parser.add_argument('--debug', action='store_true', default=False, help="debug or not")
+    parser.add_argument('--anno_path', type=str, default="", help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
+    parser.add_argument('--pos_clip_save_path', type=str, default="", help="save path of positive clips of ego4d state change")
+    parser.add_argument('--neg_clip_save_path', type=str, default="", help="save path of negative clips of ego4d state change")
 
     known_args, _ = parser.parse_known_args()
 
@@ -250,7 +252,8 @@ def main(args, ds_init):
     # codes below should be called after distributed initialization
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
-    if global_rank == 0 and args.enable_wandb:
+    print(global_rank)
+    if global_rank == 0 and not args.debug:
         wandb.init(project="ego4d-state-change-videomae", config=vars(opts))
 
     if ds_init is not None:
@@ -298,8 +301,14 @@ def main(args, ds_init):
         sampler_test = torch.utils.data.SequentialSampler(dataset_test)
 
     if global_rank == 0 and args.log_dir is not None:
+        run_time = time.time()
+        args.name += str(run_time)  # add current time as name for multiple run
+        args.log_dir = os.path.join(args.log_dir, args.name)
+        args.output_dir = os.path.join(args.output_dir, args.name)
         os.makedirs(args.log_dir, exist_ok=True)
+        os.makedirs(args.output_dir, exist_ok=True)
         log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
+
     else:
         log_writer = None
 
@@ -542,6 +551,8 @@ def main(args, ds_init):
         args=args, model=model, model_without_ddp=model_without_ddp,
         optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
 
+    # added by Jiachen
+
     if args.eval:
         preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
         test_stats = final_test(data_loader_test, model, device, preds_file)
@@ -641,7 +652,7 @@ def main(args, ds_init):
                          'epoch': epoch,
                          'n_parameters': n_parameters}
 
-        if global_rank == 0 and args.enable_wandb:
+        if global_rank == 0 and not args.debug:
             wandb.log(log_stats)
 
         if args.output_dir and utils.is_main_process():
@@ -663,7 +674,6 @@ def main(args, ds_init):
     #     if args.output_dir and utils.is_main_process():
     #         with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
     #             f.write(json.dumps(log_stats) + "\n")
-
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
