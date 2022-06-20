@@ -8,8 +8,8 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --data_set Ego4d-statechange-classification-localization \
     --nb_classes -1 \
     --finetune GoogleDrive://k400_videomae_pretrain_base_patch16_224_tubemasking_ratio_0.9_e800 \
-    --log_dir /mnt/shuang/Output/output_ego4d/log \
-    --output_dir /mnt/shuang/Output/output_ego4d/output \
+    --log_dir /mnt/shuang/Output/output_ego4d \
+    --output_dir /mnt/shuang/Output/output_ego4d \
     --data_path /mnt/shuang/Data/ego4d/data/v1/full_scale \
     --anno_apth /mnt/shuang/Data/ego4d/data/v1/annotations \
     --pos_clip_save_path /mnt/shuang/Data/ego4d/preprocessed_data/pos \
