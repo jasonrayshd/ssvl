@@ -230,6 +230,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                     clip_end_frame = value['clip_end_frame']
                     video_id = value['clip_uid']
                 except KeyError as e:
+                    # in debug, part of all clips are downloaded
                     continue
             else:
                 # Codes below are offcial implementation
@@ -244,8 +245,16 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             if self.mode in ['train', 'val']:
                 state_change = value['state_change']
                 # edited by Jiachen Lei
-                # pnr_frame = value['parent_pnr_frame'] if "parent_pnr_frame" in value.keys() else value["pnr_frame"]
-                pnr_frame = value['clip_pnr_frame'] if "clip_pnr_frame" in value.keys() else value["pnr_frame"]
+                if self.cfg.DATA.READ_BY_CLIPS:
+                    if "clip_pnr_frame" in value.keys():
+                        pnr_frame = value['clip_pnr_frame']
+                    else:
+                        pnr_frame = value["pnr_frame"]
+                else:
+                    if "parent_pnr_frame" in value.keys():
+                        pnr_frame = value['parent_pnr_frame']
+                    else:
+                        pnr_frame = value["pnr_frame"]
             else:
                 state_change = None
                 pnr_frame = None
