@@ -392,6 +392,7 @@ def main(args, ds_init):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.finetune, map_location='cpu', check_hash=True)
         elif args.finetune.startswith("GoogleDrive://"):
+            # Download from GoogleDrive provieded by VideoMAE
             from download_ckpt_utils import pretrain_ckpt_lst, download_from
             ckpt = pretrain_ckpt_lst()
             pretrain_file_name = args.finetune.split("/")[2]
@@ -604,7 +605,6 @@ def main(args, ds_init):
 
             test_stats = validation_one_epoch(data_loader_val, model, device, val_criterion)
 
-            # TODO line below contains bug: KeyErrorKeyError: : 'acc1'
             print(f"Accuracy of the network on the {len(dataset_val)} val videos: ")
             for k, v in test_stats.items():
                 print(f"{k}:{v:.3f}%")

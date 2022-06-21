@@ -1,5 +1,8 @@
-# set environment
+#!/bin/bash
+
 conda activate nbase
+echo "Switched to nbase environment"
+echo "Start running python script"
 
 OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --master_port 51225 --nproc_per_node=8 --nnodes=8  --node_rank=$1 --master_addr=$2 \
@@ -14,12 +17,13 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --anno_apth /mnt/shuang/Data/ego4d/data/v1/annotations \
     --pos_clip_save_path /mnt/shuang/Data/ego4d/preprocessed_data/pos \
     --neg_clip_save_path /mnt/shuang/Data/ego4d/preprocessed_data/neg \
-    --name runv1.0
+    --name runvprelim \
     --batch_size 8 \
     --num_sample 2 \
     --input_size 224 \
     --short_side_size 224 \
     --save_ckpt_freq 10 \
+    --save_ckpt \
     --clip_len 8 \
     --sampling_rate 2 \
     --opt adamw \

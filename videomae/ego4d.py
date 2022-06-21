@@ -210,12 +210,10 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
     def _construct_loader(self):
         self.package = dict()
-        # NOTE this line should be modified when start finetuning using official json file to
-        # self.ann_data = json.load(open(self.ann_path, 'r'))["clips"]
-        if self.args.debug:
-            self.ann_data = json.load(open(self.ann_path, 'r'))
-        else:
-            self.ann_data = json.load(open(self.ann_path, 'r'))["clips"]
+        # NOTE ann_data should be list of clips or dictionary of which key "clips" contains a list of clips
+        self.ann_data = json.load(open(self.ann_path, 'r'))
+        if isinstance(self.ann_data, dict):
+            self.ann_data = self.ann_data["clips"]
 
         for count, value in enumerate(
             tqdm(self.ann_data, desc='Preparing data')

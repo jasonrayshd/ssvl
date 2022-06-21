@@ -1,9 +1,8 @@
+#!/bin/bash
 
-# We add repeated_aug (--num_sample = 2) on Kinetics-400 here, 
-# which could better performance while need more time for fine-tuning
-
-# batch_size can be adjusted according to number of GPUs
-# this script is for 64 GPUs (8 nodes x 8 GPUs)
+conda activate nbase
+echo "Switched to nbase environment"
+echo "Start running python script"
 
 OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --nproc_per_node=2 \
