@@ -5,7 +5,7 @@ echo "Switched to nbase environment"
 echo "Start running python script"
 
 OMP_NUM_THREADS=1 python -m torch.distributed.launch \
-    --master_port 51225 --nproc_per_node=8 --nnodes=8  --node_rank=$1 --master_addr=$2 \
+    --master_port $3 --nproc_per_node=8 --nnodes=8  --node_rank=$1 --master_addr=$2 \
     run_class_finetuning.py \
     --model vit_base_patch16_224 \
     --data_set Ego4d-statechange-classification-localization \
