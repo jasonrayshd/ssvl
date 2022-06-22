@@ -1,9 +1,9 @@
 #!/bin/bash
 
-echo "Start running python script"
 OMP_NUM_THREADS=1 python -m torch.distributed.launch \
-    --master_port $3 --nproc_per_node=8 --nnodes=8  --node_rank=$1 --master_addr=$2 \
+    --nnodes=$1 --nproc_per_node=$2 --node_rank=$3 --master_addr=$4 --master_port $5 \
     run_class_finetuning.py \
+    --dist_on_itp \
     --model vit_base_patch16_224 \
     --data_set Ego4d-statechange-classification-localization \
     --nb_classes -1 \
@@ -11,7 +11,7 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --log_dir /mnt/shuang/Output/output_ego4d \
     --output_dir /mnt/shuang/Output/output_ego4d \
     --data_path /mnt/shuang/Data/ego4d/data/v1/full_scale \
-    --anno_apth /mnt/shuang/Data/ego4d/data/v1/annotations \
+    --anno_path /mnt/shuang/Data/ego4d/data/v1/annotations \
     --pos_clip_save_path /mnt/shuang/Data/ego4d/preprocessed_data/pos \
     --neg_clip_save_path /mnt/shuang/Data/ego4d/preprocessed_data/neg \
     --name runvprelim \

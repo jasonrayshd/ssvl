@@ -784,10 +784,10 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         # cap.release()
  
         # version 2, write with decord
-        vr = decord.VideoReader(video_path)
-        frames = vr.get_batch(frames_list).asnumpy() # return RGB format numpy.ndarray
+        # vr = decord.VideoReader(video_path)
+        # frames = vr.get_batch(frames_list).asnumpy() # return RGB format numpy.ndarray
 
-        # Codes below are official implementation
+        # Codes below are official implementation av==8.0.3
         # with av.open(video_path) as container:
         #     for frame in _get_frames(
         #         frames_list,
@@ -797,6 +797,19 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         #     ):  
         #         frame = frame.to_rgb().to_ndarray()
         #         frames.append(frame)
+
+        # official code where av == 6.0.0
+        frames = []
+        container = av.open(video_path)
+        for frame in _get_frames(
+                frames_list,
+                container,
+                include_audio=False,
+                audio_buffer_frames=0
+            ):  
+            frame = frame.to_rgb().to_ndarray()
+            frames.append(frame)
+
         return frames
 
 def _debug(**kwargs):
@@ -852,12 +865,23 @@ def _debug(**kwargs):
 
 if __name__ == "__main__":
 
-    print(
-        _debug(
-            unique_id="",
-            clip_start_frame=np.array(((8-np.random.uniform(5, 8))*30)).astype(np.int32),
-            clip_end_frame=np.array(240).astype(np.int32),
-            num_frames_required=16,
-            pnr_frame=200,
-        )
-    )
+    def get_frame_for(video_path, frames_list):
+        frames = []
+        container = av.open(video_path)
+        for frame in _get_frames(
+                frames_list,
+                container,
+                include_audio=False,
+                audio_buffer_frames=0
+            ):  
+            frame = frame.to_rgb().to_ndarray()
+            frames.append(frame)
+
+        return frames
+
+    video_path = "/mnt/ego4d/v1/full_scale/6c03be74-4692-4e3e-8eab-01f9f8e0d3ba.mp4"
+    frame_list = [8907, 8908, 8909, 8910, 8911, 8912, 8913, 8914, 8915, 8916, 8917, 8918, 8919, 8920, 8921, 8922, 8923, 8924, 8925, 8926, 8927, 8928, 8929, 8930, 8931, 8932, 8933, 8934, 8935, 8936, 8937, 8938, 8939, 8940, 8941]
+
+    frames = get_frame_for(video_path, frame_list)
+
+    print(frames[0].shape)

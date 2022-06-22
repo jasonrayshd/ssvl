@@ -1,8 +1,3 @@
-#!/bin/bash
-
-conda activate nbase
-echo "Switched to nbase environment"
-echo "Start running python script"
 
 OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --nproc_per_node=2 \

@@ -223,7 +223,8 @@ def get_args():
     parser.add_argument('--enable_deepspeed', action='store_true', default=False)
     parser.add_argument('--name', type=str, default="temp", help="name of current run")
     # Added by Jiachen, for ego4d state change pretraining
-    parser.add_argument('--debug', action='store_true', default=False, help="debug or not")
+    parser.add_argument('--debug', action='store_true', help="debug or not")
+    parser.set_defaults(debug=False)
     parser.add_argument('--anno_path', type=str, default="", help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
     parser.add_argument('--pos_clip_save_path', type=str, default="", help="save path of positive clips of ego4d state change")
     parser.add_argument('--neg_clip_save_path', type=str, default="", help="save path of negative clips of ego4d state change")
