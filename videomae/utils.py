@@ -547,12 +547,13 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
         (tuple): collated data batch.
     """
     inputs, target, fps, info = zip(*batch)
-
+    # print(target)
     inputs = [item for sublist in inputs for item in sublist]
 
     if nb_classes == -1:
-        labels = [item[0] for sublist in target for item in sublist]
-        states = [item[1] for sublist in target for item in sublist]
+        labels = [label for sublist in target for label in sublist[0]]
+        states = [state for sublist in target for state in sublist[1]]
+
         inputs, labels, states = (
             default_collate(inputs),
             default_collate(labels),
@@ -561,6 +562,7 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
         if fold:
             return [inputs], [labels, states], fps, info
         else:
+            print(inputs.shape)
             return inputs, [labels, states], fps, info
 
     elif nb_classes == 2:

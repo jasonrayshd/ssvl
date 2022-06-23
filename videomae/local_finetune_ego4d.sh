@@ -13,7 +13,7 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --pos_clip_save_path /mnt/pos \
     --neg_clip_save_path /mnt/neg \
     --batch_size 2 \
-    --num_sample 1 \
+    --num_sample 2 \
     --input_size 224 \
     --short_side_size 224 \
     --save_ckpt_freq 10 \
