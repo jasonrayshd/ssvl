@@ -562,7 +562,6 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
         if fold:
             return [inputs], [labels, states], fps, info
         else:
-            print(inputs.shape)
             return inputs, [labels, states], fps, info
 
     elif nb_classes == 2:
