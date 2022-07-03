@@ -42,19 +42,96 @@ class DataAugmentationForVideoMAE(object):
 
 def build_pretraining_dataset(args):
     transform = DataAugmentationForVideoMAE(args)
-    dataset = VideoMAE(
-        root=None,
-        setting=args.data_path,
-        video_ext='mp4',
-        is_color=True,
-        modality='rgb',
-        new_length=args.num_frames,
-        new_step=args.sampling_rate,
-        transform=transform,
-        temporal_jitter=False,
-        video_loader=True,
-        use_decord=True,
-        lazy_init=False)
+    
+    if "ego4d" in args.data_set:
+        mode = "train"
+        cfg = Namespace(**{
+            "DATA": Namespace(**{
+                # Data Loading
+                "ANN_DIR": args.anno_path,
+                "VIDEO_DIR_PATH": args.data_path,
+                "CLIPS_SAVE_PATH": args.pos_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+                "NO_SC_PATH": args.neg_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+
+                "SAVE_AS_ZIP": True,                # save frames in zip file for efficient data loading
+                "READ_BY_CLIPS": args.debug,        # read by clips or full_scale video
+
+                # Data Sampling
+                "CLIP_LEN_SEC": args.clip_len,      # Duration time in second of clip
+                "CROP_SIZE": args.input_size,
+                "SAMPLING_FPS": args.sampling_rate, # Sampled frames per second for training
+            })
+        })
+        # cfg is of type namespace
+        dataset = StateChangeDetectionAndKeyframeLocalisation(cfg, mode, args=args)
+    
+    elif "epic-kitchen" in args.data_set:
+        mode = "train"
+        """
+        EPICKITCHENS.ANNOTATIONS_DIR
+        EPICKITCHENS.TRAIN_LIST
+        EPICKITCHENS.VAL_LIST
+        EPICKITCHENS.TEST_LIST
+        DATA.MEAN
+        DATA.STD
+        DATA.SAMPLING_RATE
+        DATA.NUM_FRAMES
+
+        # train, val, trian+val
+        DATA.TRAIN_JITTER_SCALES
+        DATA.TRAIN_CROP_SIZE
+
+        # test
+        TEST.NUM_SPATIAL_CROPS
+        TEST.NUM_ENSEMBLE_VIEWS
+
+        DATA.TEST_CROP_SIZE
+        """
+        cfg = cfg = Namespace(**{
+            "EPICKITCHENS": Namespace(**{
+                # Data Loading
+                "ANNOTATIONS_DIR": args.anno_path,
+                "VISUAL_DATA_DIR": "",
+                "TRAIN_LIST": "",
+                "VAL_LIST": "", 
+                "TEST_LIST": "",
+            }),
+            "DATA": Namespace(**{
+                # Data Loading
+                "MEAN": "",
+                "STD": "",
+
+                "TRAIN_JITTER_SCALES": "",
+                "TRAIN_CROP_SIZE": "",
+
+                "TEST_CROP_SIZE": ""
+            }),
+            "TEST": Namespace(**{
+                # Data Loading
+                "NUM_SPATIAL_CROPS": "",
+                "NUM_SPATIAL_CROPS": "",
+                "NUM_ENSEMBLE_VIEWS": "",
+
+            }),
+        })
+        dataset = Epickitchens(cfg, mode, pretrain_transform=transform)
+
+    else:
+        # if not pretrained on ego4d
+        dataset = VideoMAE(
+            root=None,
+            setting=args.data_path,
+            video_ext='mp4',
+            is_color=True,
+            modality='rgb',
+            new_length=args.num_frames,
+            new_step=args.sampling_rate,
+            transform=transform,
+            temporal_jitter=False,
+            video_loader=True,
+            use_decord=True,
+            lazy_init=False)
+
     print("Data Aug = %s" % str(transform))
     return dataset
 
@@ -127,8 +204,70 @@ def build_dataset(is_train, test_mode, args):
         elif "classification" in args.data_set:
             nb_classes = 2
 
-    elif args.data_set == "Epic-kichen":
-        pass
+    elif args.data_set == "epic-kitchen":
+        """
+            Use configuration in epic-kitchen
+
+            # General
+            EPICKITCHENS.ANNOTATIONS_DIR
+            EPICKITCHENS.TRAIN_LIST
+            EPICKITCHENS.VAL_LIST
+            EPICKITCHENS.TEST_LIST
+            DATA.MEAN
+            DATA.STD
+
+            # train, val, trian+val
+            DATA.TRAIN_JITTER_SCALES
+            DATA.TRAIN_CROP_SIZE
+
+            # test
+            TEST.NUM_SPATIAL_CROPS
+            DATA.TEST_CROP_SIZE
+
+            # slowfast
+            MODEL.ARCH
+            MODEL.SINGLE_PATHWAY_ARCH
+            MODEL.MULTI_PATHWAY_ARCH
+        """
+
+        cfg = Namespace(**{
+            "EPICKITCHENS": Namespace(**{
+                # Data Loading
+                "ANNOTATIONS_DIR": args.anno_path,
+                "VISUAL_DATA_DIR": "",
+                "TRAIN_LIST": "",
+                "VAL_LIST": "", 
+                "TEST_LIST": "",
+            }),
+            "DATA": Namespace(**{
+                # Data Loading
+                "MEAN": "",
+                "STD": "",
+
+                "TRAIN_JITTER_SCALES": "",
+                "TRAIN_CROP_SIZE": "",
+
+                "TEST_CROP_SIZE": ""
+            }),
+            "TEST": Namespace(**{
+                # Data Loading
+                "NUM_SPATIAL_CROPS": "",
+                "NUM_SPATIAL_CROPS": "",
+                "NUM_ENSEMBLE_VIEWS": "",
+
+            }),
+        })
+
+        mode = None
+        if is_train is True:
+            mode = 'train' 
+        elif test_mode is True:
+            mode = 'test'
+        else:  
+            mode = 'validation'
+
+        dataset = Epickitchens(cfg, mode)
+        nb_classes = -1 # BUG number of classes has to be set
 
     elif args.data_set == 'Kinetics-400':
         mode = None

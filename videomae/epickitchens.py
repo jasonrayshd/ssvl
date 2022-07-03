@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+from pyrsistent import v
 import torch
 import torch.utils.data
 import random
@@ -62,11 +63,16 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
     return start_frame + index
 
 
-def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60):
+def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60, return_flow=False):
     # Load video by loading its extracted frames
     path_to_video = '{}/{}/rgb_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
                                                  video_record.participant,
                                                  video_record.untrimmed_video_name)
+    
+    path_to_flow = '{}/{}/flow_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
+                                                 video_record.participant,
+                                                 video_record.untrimmed_video_name)
+    
     img_tmpl = "frame_{:010d}.jpg"
     fps, sampling_rate, num_samples = video_record.fps, cfg.DATA.SAMPLING_RATE, cfg.DATA.NUM_FRAMES
     start_idx, end_idx = get_start_end_idx(
@@ -81,27 +87,40 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                                   start_frame=video_record.start_frame)
     img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
     frames = utils.retry_load_images(img_paths)
+
+    if return_flow:
+        u_flow_paths = [os.path.join(path_to_flow, "u", img_tmpl.format(idx.item())) for idx in frame_idx]
+        v_flow_paths = [os.path.join(path_to_flow, "v", img_tmpl.format(idx.item())) for idx in frame_idx]
+        uflows = utils.retry_load_images(u_flow_paths)
+        vflows = utils.retry_load_images(v_flow_paths)
+        return frames, uflows, vflows
+
     return frames
 
 
-
 """
-used configuration
+Used Configuration:
 
-EPICKITCHENS.ANNOTATIONS_DIR
-EPICKITCHENS.TRAIN_LIST
-EPICKITCHENS.VAL_LIST
-EPICKITCHENS.TEST_LIST
+# general
+EPICKITCHENS.ANNOTATIONS_DIR    path to directory that contains annotation file
+EPICKITCHENS.VISUAL_DATA_DIR    path to directory that contains data of different participants
+EPICKITCHENS.TRAIN_LIST         path to pickle file that contains information of training data
+EPICKITCHENS.VAL_LIST           ...
+EPICKITCHENS.TEST_LIST          ...
+DATA.MEAN                       float that represents mean used to normalize dataset
+DATA.STD                        float that represents std used to normalize dataset
+DATA.SAMPLING_RATE              int 
+DATA.NUM_FRAMES                 int 
+
 # train, val, trian+val
 DATA.TRAIN_JITTER_SCALES
 DATA.TRAIN_CROP_SIZE
 
 # test
 TEST.NUM_SPATIAL_CROPS
-DATA.TEST_CROP_SIZE
+TEST.NUM_ENSEMBLE_VIEWS
 
-DATA.MEAN
-DATA.STD
+DATA.TEST_CROP_SIZE
 
 # slowfast
 MODEL.ARCH
@@ -110,10 +129,9 @@ MODEL.MULTI_PATHWAY_ARCH
 
 """
 
-
 class Epickitchens(torch.utils.data.Dataset):
 
-    def __init__(self, cfg, mode):
+    def __init__(self, cfg, mode, pretrain=False, pretrain_transform=None):
 
         assert mode in [
             "train",
@@ -123,6 +141,8 @@ class Epickitchens(torch.utils.data.Dataset):
         ], "Split '{}' not supported for EPIC-KITCHENS".format(mode)
         self.cfg = cfg
         self.mode = mode
+        self.pretrain = pretrain                      # pretrain or not
+        self.pretrain_transform = pretrain_transform  # data transformation for pretraining
         self.target_fps = 60
         # For training or validation mode, one single clip is sampled from every
         # video. For testing, NUM_ENSEMBLE_VIEWS clips are sampled from every
@@ -138,6 +158,7 @@ class Epickitchens(torch.utils.data.Dataset):
         logger.info("Constructing EPIC-KITCHENS {}...".format(mode))
         self._construct_loader()
 
+
     def _construct_loader(self):
         """
         Construct the video loader.
@@ -149,6 +170,7 @@ class Epickitchens(torch.utils.data.Dataset):
         elif self.mode == "test":
             path_annotations_pickle = [os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, self.cfg.EPICKITCHENS.TEST_LIST)]
         else:
+            # train and val
             path_annotations_pickle = [os.path.join(self.cfg.EPICKITCHENS.ANNOTATIONS_DIR, file)
                                        for file in [self.cfg.EPICKITCHENS.TRAIN_LIST, self.cfg.EPICKITCHENS.VAL_LIST]]
 
@@ -221,29 +243,42 @@ class Epickitchens(torch.utils.data.Dataset):
                 "Does not support {} mode".format(self.mode)
             )
 
-        frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index)
-
-        # Perform color normalization.
-        frames = frames.float()
-        frames = frames / 255.0
-        frames = frames - torch.tensor(self.cfg.DATA.MEAN)
-        frames = frames / torch.tensor(self.cfg.DATA.STD)
-        # T H W C -> C T H W.
-        frames = frames.permute(3, 0, 1, 2)
-        # Perform data augmentation.
-        frames = self.spatial_sampling(
-            frames,
-            spatial_idx=spatial_sample_index,
-            min_scale=min_scale,
-            max_scale=max_scale,
-            crop_size=crop_size,
-        )
+        if not self.pretrain:
+            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index)
+        else:
+            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, return_flow=True)
+        
+        if not self.pretrain:
+            # Perform color normalization.
+            frames = frames.float()
+            frames = frames / 255.0
+            frames = frames - torch.tensor(self.cfg.DATA.MEAN)
+            frames = frames / torch.tensor(self.cfg.DATA.STD)
+            # T H W C -> C T H W.
+            frames = frames.permute(3, 0, 1, 2)
+            # Perform data augmentation.
+            frames = self.spatial_sampling(
+                frames,
+                spatial_idx=spatial_sample_index,
+                min_scale=min_scale,
+                max_scale=max_scale,
+                crop_size=crop_size,
+            )
+        else:
+            # frames, flows share the same mask
+            frames, mask = self.pretrain_transform(frames)
+            uflows, _ = self.pretrain_transform(uflows)
+            vflows, _ = self.pretrain_transform(vflows)
 
         label = self._video_records[index].label
-        frames = utils.pack_pathway_output(self.cfg, frames)
+        # commented by jiachen, if use slowfast network, then uncomment this line
+        # frames = utils.pack_pathway_output(self.cfg, frames)
         metadata = self._video_records[index].metadata
-        return frames, label, index, metadata
 
+        if not self.pretrain:
+            return frames, label, index, metadata
+        else:
+            return frames, mask, [uflows, vflows], label, index, metadata
 
     def __len__(self):
         return len(self._video_records)
