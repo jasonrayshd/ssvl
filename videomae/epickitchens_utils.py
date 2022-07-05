@@ -2,13 +2,13 @@ import logging
 import numpy as np
 import time
 import torch
-
+from PIL import Image
 import cv2
 
 logger = logging.getLogger(__name__)
 
 
-def retry_load_images(image_paths, retry=10, backend="pytorch"):
+def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False):
     """
     This function is to load images with support of retrying for failed load.
     Args:
@@ -19,10 +19,16 @@ def retry_load_images(image_paths, retry=10, backend="pytorch"):
         imgs (list): list of loaded images.
     """
     for i in range(retry):
-        imgs = [cv2.imread(image_path) for image_path in image_paths]
+        # edited by jiachen, read image and convert to RGB format
+        if not as_pil:
+            imgs = [cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB) for image_path in image_paths]
+        else:
+            imgs = [Image.open(image_path) for image_path in image_paths]
+
+        # imgs = [cv2.imread(image_path) for image_path in image_paths]
 
         if all(img is not None for img in imgs):
-            if backend == "pytorch":
+            if (as_pil == False ) and backend == "pytorch":
                 imgs = torch.as_tensor(np.stack(imgs))
             return imgs
         else:

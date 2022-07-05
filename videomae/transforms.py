@@ -46,9 +46,12 @@ class GroupCenterCrop(object):
 
 
 class GroupNormalize(object):
-    def __init__(self, mean, std):
+    def __init__(self, mean, std, use_flow=False):
         self.mean = mean
         self.std = std
+        self.use_flow = use_flow
+        # flow image should be the same given normalized images
+        # thus it do not need to be normalized
 
     def __call__(self, tensor_tuple):
         tensor, label = tensor_tuple
@@ -59,7 +62,7 @@ class GroupNormalize(object):
         for t, m, s in zip(tensor, rep_mean, rep_std):
             t.sub_(m).div_(s)
 
-        return (tensor,label)
+        return (tensor, label)
 
 
 class GroupGrayScale(object):
@@ -90,22 +93,30 @@ class GroupScale(object):
 
 class GroupMultiScaleCrop(object):
 
-    def __init__(self, input_size, scales=None, max_distort=1, fix_crop=True, more_fix_crop=True):
+    def __init__(self, input_size, scales=None, max_distort=1, fix_crop=True, more_fix_crop=True, use_flow=False):
         self.scales = scales if scales is not None else [1, 875, .75, .66]
         self.max_distort = max_distort
         self.fix_crop = fix_crop
         self.more_fix_crop = more_fix_crop
+        self.use_flow = use_flow
         self.input_size = input_size if not isinstance(input_size, int) else [input_size, input_size]
         self.interpolation = Image.BILINEAR
 
     def __call__(self, img_tuple):
         img_group, label = img_tuple
-        
+
         im_size = img_group[0].size
 
         crop_w, crop_h, offset_w, offset_h = self._sample_crop_size(im_size)
         crop_img_group = [img.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for img in img_group]
         ret_img_group = [img.resize((self.input_size[0], self.input_size[1]), self.interpolation) for img in crop_img_group]
+
+        if self.use_flow:
+            # then, label is flow images
+            crop_flow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in label]
+            ret_flow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_flow_group]
+            return (ret_img_group, ret_flow_group)
+
         return (ret_img_group, label)
 
     def _sample_crop_size(self, im_size):
@@ -163,30 +174,57 @@ class GroupMultiScaleCrop(object):
 
 class Stack(object):
 
-    def __init__(self, roll=False):
+    def __init__(self, roll=False, use_flow=False):
         self.roll = roll
+        self.use_flow = use_flow
 
     def __call__(self, img_tuple):
         img_group, label = img_tuple
-        
+
         if img_group[0].mode == 'L':
             return (np.concatenate([np.expand_dims(x, 2) for x in img_group], axis=2), label)
         elif img_group[0].mode == 'RGB':
             if self.roll:
-                return (np.concatenate([np.array(x)[:, :, ::-1] for x in img_group], axis=2), label)
+                img_group_np = np.concatenate([np.array(x)[:, :, ::-1] for x in img_group], axis=2)
+                if self.use_flow:
+                    uflows, vflows = label
+                    assert len(uflows) == len(vflows), "Number of optical flow images u v should be equal"
+                    flows = []
+                    for i in range(len(uflows)):
+                        flows.append(np.array(uflows[i])[:, :, ::-1])
+                        flows.append(np.array(vflows[i])[:, :, ::-1])
+                    flow_group_np = np.concatenate(flows, axis=2)
+                    return (img_group_np, flow_group_np)
+                else:
+                    return (img_group_np, label)
+
             else:
-                return (np.concatenate(img_group, axis=2), label)
+                # by default code block below will be executed
+                img_group_np = np.concatenate(img_group, axis=2)
+                if self.use_flow:
+                    uflows, vflows = label
+                    assert len(uflows) == len(vflows), "Number of optical flow images u v should be equal"
+                    flows = []
+                    for i in range(len(uflows)):
+                        flows.append(uflows[i])
+                        flows.append(vflows[i])
+                    flow_group_np = np.concatenate(flows, axis=2)
+
+                    return (img_group_np, flow_group_np)
+                else:
+                    return (img_group_np, label)
 
 
 class ToTorchFormatTensor(object):
     """ Converts a PIL.Image (RGB) or numpy.ndarray (H x W x C) in the range [0, 255]
     to a torch.FloatTensor of shape (C x H x W) in the range [0.0, 1.0] """
-    def __init__(self, div=True):
+    def __init__(self, div=True, use_flow=False):
         self.div = div
+        self.use_flow = use_flow
 
     def __call__(self, pic_tuple):
         pic, label = pic_tuple
-        
+
         if isinstance(pic, np.ndarray):
             # handle numpy array
             img = torch.from_numpy(pic).permute(2, 0, 1).contiguous()
@@ -197,8 +235,8 @@ class ToTorchFormatTensor(object):
             # put it from HWC to CHW format
             # yikes, this transpose takes 80% of the loading time/CPU
             img = img.transpose(0, 1).transpose(0, 2).contiguous()
-        return (img.float().div(255.) if self.div else img.float(), label)
 
+        return (img.float().div(255.) if self.div else img.float(), label.float().div(255.) if self.div and self.use_flow else img.float())
 
 class IdentityTransform(object):
 

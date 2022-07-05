@@ -576,7 +576,6 @@ class VideoMAE(torch.utils.data.Dataset):
         return sampled_list
 
 
-
 if __name__ == "__main__":
     dataset = VideoMAE(
                 root="",

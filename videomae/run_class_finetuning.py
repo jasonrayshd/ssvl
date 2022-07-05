@@ -26,8 +26,7 @@ import modeling_finetune
 
 import wandb
 from loss import Ego4dTwoHead_Criterion
-
-
+import yaml
 
 class Ego4d_Compatible_Mixup(Mixup):
 
@@ -53,7 +52,6 @@ class Ego4d_Compatible_Mixup(Mixup):
             target = [label ,state]
         
         return x, target
-
 
 
 def get_args():
@@ -228,6 +226,7 @@ def get_args():
     parser.add_argument('--anno_path', type=str, default="", help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
     parser.add_argument('--pos_clip_save_path', type=str, default="", help="save path of positive clips of ego4d state change")
     parser.add_argument('--neg_clip_save_path', type=str, default="", help="save path of negative clips of ego4d state change")
+    parser.add_argument('--config', type=str, default="", help="path to configuration file")
 
     known_args, _ = parser.parse_known_args()
 
@@ -245,6 +244,26 @@ def get_args():
 
     return parser.parse_args(), ds_init
 
+
+def parse_yml(path):
+    if not os.path.exists(path):
+        return None
+
+    f = open(path ,"r")
+    config = yaml.safe_load(f)
+    return config
+
+
+def combine(args, config):
+    dict_args = vars(args)
+    for k, v in config.items():
+        if k not in dict_args.keys():
+            print(f"{k} not in terminal arguments")
+        elif dict_args[k] != v:
+            print(f"Conflict between command line arguments and configuration file:\nkey: {k}- command-line:{dict_args[k]} configuration file:{v}\nIgnore value in configuration file")
+
+    config.update(dict_args)
+    return argparse.Namespace(config)
 
 def main(args, ds_init):
 
@@ -693,6 +712,11 @@ def main(args, ds_init):
 
 if __name__ == '__main__':
     opts, ds_init = get_args()
+
+    config = parse_yml(opts.config)
+    if config is not None:
+        opts = combine(opts, config)
+
     if opts.output_dir:
         Path(opts.output_dir).mkdir(parents=True, exist_ok=True)
-    main(opts, ds_init)
+    # main(opts, ds_init)
