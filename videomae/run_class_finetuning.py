@@ -398,9 +398,19 @@ def main(args, ds_init):
             ckpt = pretrain_ckpt_lst()
             pretrain_file_name = args.finetune.split("/")[2]
 
-            if not os.path.exists("./ckpt/"+pretrain_file_name):
+            _retry = 5
+            i = 0
+            if not os.path.exists("./ckpt/"+pretrain_file_name):                
                 download_from(ckpt[pretrain_file_name], output="./ckpt/" + pretrain_file_name)
-
+                while not os.path.exists( "./ckpt/"+pretrain_file_name ) and i < _retry:
+                    print(f"Failed to fetch file, try again in {5*(i+1)}s Attempted:[{i+1}/{_retry}]")
+                    time.sleep(5*(i+1))
+                    download_from(ckpt[pretrain_file_name], output="./ckpt/" + pretrain_file_name)
+                    i += 1
+                    if i == _retry:
+                        print(f"Failed after tried {_retry} times...")
+            else:
+                print("Found cached file in ./ckpt")
             checkpoint = torch.load("./ckpt/"+pretrain_file_name, map_location="cpu")
         else:
             checkpoint = torch.load(args.finetune, map_location='cpu')

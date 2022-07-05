@@ -19,3 +19,7 @@ def pretrain_ckpt_lst():
 def download_from(url, output):
     baseurl = "https://drive.google.com/uc?id="
     gdown.download(baseurl+url, output, quiet=False)
+    
+if __name__ == "__main__":
+    file = "k400_videomae_pretrain_base_patch16_224_tubemasking_ratio_0.9_e800"
+    download_from(pretrain_ckpt_lst()[file], f"./ckpt/{file}")
