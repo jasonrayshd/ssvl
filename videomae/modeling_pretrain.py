@@ -83,7 +83,7 @@ class PretrainVisionTransformerEncoder(nn.Module):
     def forward_features(self, x, mask):
         _, _, T, _, _ = x.shape
         x = self.patch_embed(x)
-        
+
         x = x + self.pos_embed.type_as(x).to(x.device).clone().detach()
 
         B, _, C = x.shape
@@ -124,7 +124,6 @@ class PretrainVisionTransformerDecoder(nn.Module):
         self.head = nn.Linear(embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self._init_weights)
-
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -264,6 +263,7 @@ class PretrainVisionTransformer(nn.Module):
         x = self.decoder(x_full, pos_emd_mask.shape[1]) # [B, N_mask, 3 * 16 * 16]
 
         return x
+
 
 @register_model
 def pretrain_mae_small_patch16_224(pretrained=False, **kwargs):

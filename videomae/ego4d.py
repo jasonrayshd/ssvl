@@ -143,7 +143,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
     all the videos using the `train.json`, `test_unnotated.json`, and
     'val.json' provided.
     """
-    def __init__(self, cfg, mode, args, **kwargs):
+    def __init__(self, cfg, mode, args, pretrain=False, transform=None):
         assert mode in [
             'train',
             'val',
@@ -152,6 +152,8 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         self.mode = mode
         self.cfg = cfg
         self.args = args
+        self.pretrain = pretrain
+        self.pretrain_transform = transform
         self.crop_size = args.input_size
 
         self.save_as_zip = cfg.DATA.SAVE_AS_ZIP    # save frames in zip file
@@ -313,8 +315,12 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 label_list = []
                 state_list = []
                 for _ in range(self.args.num_sample):
+                    if self.pretrain:
+                        new_frames = self.pretrain_transform(frames)
+                        #TODO augment flow
 
-                    new_frames = self._aug_frame(frames)
+                    else:
+                        new_frames = self._aug_frame(frames)
 
                     frame_list.append(new_frames)
                     label_list.append(labels)

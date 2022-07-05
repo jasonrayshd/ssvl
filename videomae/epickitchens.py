@@ -63,7 +63,10 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
     return start_frame + index
 
 
-def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60, return_flow=False):
+def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60, 
+                            use_flow=False, flow_mode="A"
+                            
+                            ):
     # Load video by loading its extracted frames
     path_to_video = '{}/{}/rgb_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
                                                  video_record.participant,
@@ -86,14 +89,19 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                                   start_idx, end_idx, num_samples,
                                   start_frame=video_record.start_frame)
     img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
-    frames = utils.retry_load_images(img_paths)
+    # if use flow, this indicates pretrain is used then return frames of pil format
+    frames = utils.retry_load_images(img_paths, as_pil=use_flow)
 
-    if return_flow:
-        u_flow_paths = [os.path.join(path_to_flow, "u", img_tmpl.format(idx.item())) for idx in frame_idx]
-        v_flow_paths = [os.path.join(path_to_flow, "v", img_tmpl.format(idx.item())) for idx in frame_idx]
-        uflows = utils.retry_load_images(u_flow_paths)
-        vflows = utils.retry_load_images(v_flow_paths)
-        return frames, uflows, vflows
+    if use_flow:
+
+        if flow_mode == "A":
+            u_flow_paths = [os.path.join(path_to_flow, "u", img_tmpl.format(idx.item())) for idx in frame_idx]
+            v_flow_paths = [os.path.join(path_to_flow, "v", img_tmpl.format(idx.item())) for idx in frame_idx]
+            uflows = utils.retry_load_images(u_flow_paths, as_pil=True)
+            vflows = utils.retry_load_images(v_flow_paths, as_pil=True)
+            return frames, uflows, vflows
+        else:
+            raise ValueError(f"Unknown flow mode {flow_mode}, available modes are [A]")
 
     return frames
 
@@ -131,7 +139,7 @@ MODEL.MULTI_PATHWAY_ARCH
 
 class Epickitchens(torch.utils.data.Dataset):
 
-    def __init__(self, cfg, mode, pretrain=False, pretrain_transform=None):
+    def __init__(self, cfg, mode, pretrain=False, pretrain_transform=None, use_flow=False, flow_mode = "A"):
 
         assert mode in [
             "train",
@@ -143,6 +151,9 @@ class Epickitchens(torch.utils.data.Dataset):
         self.mode = mode
         self.pretrain = pretrain                      # pretrain or not
         self.pretrain_transform = pretrain_transform  # data transformation for pretraining
+        self.use_flow = use_flow
+        self.flow_mode = flow_mode                    # mode of loading flow images, different modes will produce different number of flow images
+
         self.target_fps = 60
         # For training or validation mode, one single clip is sampled from every
         # video. For testing, NUM_ENSEMBLE_VIEWS clips are sampled from every
@@ -157,7 +168,6 @@ class Epickitchens(torch.utils.data.Dataset):
 
         logger.info("Constructing EPIC-KITCHENS {}...".format(mode))
         self._construct_loader()
-
 
     def _construct_loader(self):
         """
@@ -178,7 +188,6 @@ class Epickitchens(torch.utils.data.Dataset):
             assert os.path.exists(file), "{} dir not found".format(
                 file
             )
-
         self._video_records = []
         self._spatial_temporal_idx = []
         for file in path_annotations_pickle:
@@ -243,11 +252,15 @@ class Epickitchens(torch.utils.data.Dataset):
                 "Does not support {} mode".format(self.mode)
             )
 
-        if not self.pretrain:
+        # load frames (and flows)
+        if not self.pretrain or not self.use_flow:
+            # if not pretrainning or is pretraining but do not need to use flow images
             frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index)
         else:
-            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, return_flow=True)
-        
+            # load flow images according to given mode
+            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, return_flow=True, flow_mode=self.flow_mode)
+
+        # data augmentation
         if not self.pretrain:
             # Perform color normalization.
             frames = frames.float()
@@ -266,9 +279,9 @@ class Epickitchens(torch.utils.data.Dataset):
             )
         else:
             # frames, flows share the same mask
-            frames, mask = self.pretrain_transform(frames)
-            uflows, _ = self.pretrain_transform(uflows)
-            vflows, _ = self.pretrain_transform(vflows)
+            if self.use_flow:
+                flows = [uflows, vflows]
+            frames, mask = self.pretrain_transform((frames, flows))
 
         label = self._video_records[index].label
         # commented by jiachen, if use slowfast network, then uncomment this line
@@ -276,9 +289,14 @@ class Epickitchens(torch.utils.data.Dataset):
         metadata = self._video_records[index].metadata
 
         if not self.pretrain:
+            # not pretrain, keep the original implementation
             return frames, label, index, metadata
+        elif self.pretrain and not self.use_flow:
+            # if is pretrain but do not need to use flow images
+            return frames, mask, label, index, metadata
         else:
-            return frames, mask, [uflows, vflows], label, index, metadata
+            # pretrain and need flow images
+            return frames, mask, flows, label, index, metadata
 
     def __len__(self):
         return len(self._video_records)

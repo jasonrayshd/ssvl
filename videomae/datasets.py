@@ -12,21 +12,29 @@ from argparse import Namespace
 
 
 class DataAugmentationForVideoMAE(object):
-    def __init__(self, args):
+    def __init__(self, args, use_flow=False):
         self.input_mean = [0.485, 0.456, 0.406]  # IMAGENET_DEFAULT_MEAN
         self.input_std = [0.229, 0.224, 0.225]  # IMAGENET_DEFAULT_STD
-        normalize = GroupNormalize(self.input_mean, self.input_std)
-        self.train_augmentation = GroupMultiScaleCrop(args.input_size, [1, .875, .75, .66])
+
+        # flow image should be the same given normalized images
+        # thus it do not need to be normalized
+        normalize = GroupNormalize(self.input_mean, self.input_std, use_flow=use_flow)
+        # This contains random process and is rewritten for flow image processing
+        self.train_augmentation = GroupMultiScaleCrop(args.input_size, [1, .875, .75, .66], use_flow=use_flow)
+
+        # accpet pil image
         self.transform = transforms.Compose([                            
             self.train_augmentation,
-            Stack(roll=False),
-            ToTorchFormatTensor(div=True),
+            Stack(roll=False, use_flow=use_flow),
+            ToTorchFormatTensor(div=True, use_flow=use_flow),
             normalize,
         ])
         if args.mask_type == 'tube':
             self.masked_position_generator = TubeMaskingGenerator(
                 args.window_size, args.mask_ratio
             )
+        else:
+            raise ValueError(f"Unknown mask type {args.mask_type}")
 
     def __call__(self, images):
         process_data, _ = self.transform(images)
@@ -41,83 +49,87 @@ class DataAugmentationForVideoMAE(object):
 
 
 def build_pretraining_dataset(args):
-    transform = DataAugmentationForVideoMAE(args)
     
     if "ego4d" in args.data_set:
+        transform = DataAugmentationForVideoMAE(args, use_flow=args.use_flow)
         mode = "train"
-        cfg = Namespace(**{
-            "DATA": Namespace(**{
-                # Data Loading
-                "ANN_DIR": args.anno_path,
-                "VIDEO_DIR_PATH": args.data_path,
-                "CLIPS_SAVE_PATH": args.pos_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
-                "NO_SC_PATH": args.neg_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+        # cfg = Namespace(**{
+        #     "DATA": Namespace(**{
+        #         # Data Loading
+        #         "ANN_DIR": args.anno_path,
+        #         "VIDEO_DIR_PATH": args.data_path,
+        #         "CLIPS_SAVE_PATH": args.pos_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+        #         "NO_SC_PATH": args.neg_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
 
-                "SAVE_AS_ZIP": True,                # save frames in zip file for efficient data loading
-                "READ_BY_CLIPS": args.debug,        # read by clips or full_scale video
+        #         "SAVE_AS_ZIP": True,                # save frames in zip file for efficient data loading
+        #         "READ_BY_CLIPS": args.debug,        # read by clips or full_scale video
 
-                # Data Sampling
-                "CLIP_LEN_SEC": args.clip_len,      # Duration time in second of clip
-                "CROP_SIZE": args.input_size,
-                "SAMPLING_FPS": args.sampling_rate, # Sampled frames per second for training
-            })
-        })
+        #         # Data Sampling
+        #         "CLIP_LEN_SEC": args.clip_len,      # Duration time in second of clip
+        #         "CROP_SIZE": args.input_size,
+        #         "SAMPLING_FPS": args.sampling_rate, # Sampled frames per second for training
+        #     })
+        # })
         # cfg is of type namespace
-        dataset = StateChangeDetectionAndKeyframeLocalisation(cfg, mode, args=args)
-    
+        dataset = StateChangeDetectionAndKeyframeLocalisation(args.cfg, mode, args=args, pretrain=True, pretrain_transform=transform)
+
     elif "epic-kitchen" in args.data_set:
+        # NOTE flow images in epic-kitchens are normalized to [0, 255]
+        transform = DataAugmentationForVideoMAE(args, use_flow=args.use_flow)
         mode = "train"
+
         """
-        EPICKITCHENS.ANNOTATIONS_DIR
-        EPICKITCHENS.TRAIN_LIST
-        EPICKITCHENS.VAL_LIST
-        EPICKITCHENS.TEST_LIST
-        DATA.MEAN
-        DATA.STD
-        DATA.SAMPLING_RATE
-        DATA.NUM_FRAMES
+            EPICKITCHENS.ANNOTATIONS_DIR
+            EPICKITCHENS.TRAIN_LIST
+            EPICKITCHENS.VAL_LIST
+            EPICKITCHENS.TEST_LIST
+            DATA.MEAN
+            DATA.STD
+            DATA.SAMPLING_RATE
+            DATA.NUM_FRAMES
 
-        # train, val, trian+val
-        DATA.TRAIN_JITTER_SCALES
-        DATA.TRAIN_CROP_SIZE
+            # train, val, trian+val
+            DATA.TRAIN_JITTER_SCALES
+            DATA.TRAIN_CROP_SIZE
 
-        # test
-        TEST.NUM_SPATIAL_CROPS
-        TEST.NUM_ENSEMBLE_VIEWS
+            # test
+            TEST.NUM_SPATIAL_CROPS
+            TEST.NUM_ENSEMBLE_VIEWS
 
-        DATA.TEST_CROP_SIZE
+            DATA.TEST_CROP_SIZE
         """
-        cfg = cfg = Namespace(**{
-            "EPICKITCHENS": Namespace(**{
-                # Data Loading
-                "ANNOTATIONS_DIR": args.anno_path,
-                "VISUAL_DATA_DIR": "",
-                "TRAIN_LIST": "",
-                "VAL_LIST": "", 
-                "TEST_LIST": "",
-            }),
-            "DATA": Namespace(**{
-                # Data Loading
-                "MEAN": "",
-                "STD": "",
+        # cfg  = Namespace(**{
+        #     "EPICKITCHENS": Namespace(**{
+        #         # Data Loading
+        #         "ANNOTATIONS_DIR": args.anno_path,
+        #         "VISUAL_DATA_DIR": "",
+        #         "TRAIN_LIST": "",
+        #         "VAL_LIST": "", 
+        #         "TEST_LIST": "",
+        #     }),
+        #     "DATA": Namespace(**{
+        #         # Data Loading
+        #         "MEAN": "",
+        #         "STD": "",
 
-                "TRAIN_JITTER_SCALES": "",
-                "TRAIN_CROP_SIZE": "",
+        #         "TRAIN_JITTER_SCALES": "",
+        #         "TRAIN_CROP_SIZE": "",
 
-                "TEST_CROP_SIZE": ""
-            }),
-            "TEST": Namespace(**{
-                # Data Loading
-                "NUM_SPATIAL_CROPS": "",
-                "NUM_SPATIAL_CROPS": "",
-                "NUM_ENSEMBLE_VIEWS": "",
+        #         "TEST_CROP_SIZE": ""
+        #     }),
+        #     "TEST": Namespace(**{
+        #         # Data Loading
+        #         "NUM_SPATIAL_CROPS": "",
+        #         "NUM_SPATIAL_CROPS": "",
+        #         "NUM_ENSEMBLE_VIEWS": "",
 
-            }),
-        })
-        dataset = Epickitchens(cfg, mode, pretrain_transform=transform)
+        #     }),
+        # })
+        dataset = Epickitchens(args.cfg, mode, pretrain=True, pretrain_transform=transform, use_flow=args.use_flow)
 
     else:
-        # if not pretrained on ego4d
+        # if not pretrained on ego4d or epic-kitchens
+        transform = DataAugmentationForVideoMAE(args)
         dataset = VideoMAE(
             root=None,
             setting=args.data_path,
@@ -185,7 +197,7 @@ def build_dataset(is_train, test_mode, args):
         })
 
         # cfg is of type namespace
-        dataset = StateChangeDetectionAndKeyframeLocalisation(cfg, mode, args=args)
+        dataset = StateChangeDetectionAndKeyframeLocalisation(cfg, mode, args=args, pretrain=False)
         """
             Jiachen 2022.05.25
             dataset.__getitem__() will return 
@@ -266,7 +278,7 @@ def build_dataset(is_train, test_mode, args):
         else:  
             mode = 'validation'
 
-        dataset = Epickitchens(cfg, mode)
+        dataset = Epickitchens(cfg, mode, pretrain=False)
         nb_classes = -1 # BUG number of classes has to be set
 
     elif args.data_set == 'Kinetics-400':

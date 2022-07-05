@@ -1,4 +1,5 @@
 import argparse
+from cgi import parse_multipart
 import datetime
 import numpy as np
 import time
@@ -14,6 +15,7 @@ from engine_for_pretraining import train_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
+import yaml
 
 
 def get_args():
@@ -106,14 +108,45 @@ def get_args():
                         help='')
     parser.set_defaults(pin_mem=True)
 
+    # flow images
+    parser.add_argument('--use_flow', action='store_true',
+                        help='use preprocessed flow images as target or not')
+    parser.add_argument('--use_target', action='store_true',
+                        help='use given target or not')
+
+    # configuration file
+    parser.add_argument('--config', default='none', type=str,
+                        help='path to configuration file')
+
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
-
+    
     return parser.parse_args()
+
+
+def parse_yml(path):
+    if not os.path.exists(path):
+        return None
+
+    f = open(path ,"r")
+    config = yaml.safe_load(f)
+    return config
+
+
+def combine(args, config):
+    dict_args = vars(args)
+    for k, v in config.items():
+        if k not in dict_args.keys():
+            print(f"{k} not in terminal arguments")
+        elif dict_args[k] != v:
+            print(f"Conflict between command line arguments and configuration file:\nkey: {k}- command-line:{dict_args[k]} configuration file:{v}\nIgnore value in configuration file")
+
+    config.update(dict_args)
+    return argparse.Namespace(config)
 
 
 def get_model(args):
@@ -258,7 +291,13 @@ def main(args):
 
 
 if __name__ == '__main__':
+    # combine arguments from configuration file and command line
     opts = get_args()
+    config = parse_yml(opts.config)
+    if config is not None:
+        opts = combine(opts, config)
+
     if opts.output_dir:
         Path(opts.output_dir).mkdir(parents=True, exist_ok=True)
+    
     main(opts)

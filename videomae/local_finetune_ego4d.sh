@@ -26,4 +26,5 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --epochs 75 \
     --enable_deepspeed \
     --dist_eval \
-    --debug
+    --debug \
+    --config ./config/finetune_basic_ego4d.yaml

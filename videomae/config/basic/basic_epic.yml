@@ -1,0 +1,18 @@
+# configurations needed in epic-kitchens dataset
+cfg:
+  - EPICKITCHENS:
+    - ANNOTATIONS_DIR:
+    - TRAIN_LIST:
+    - VAL_LIST:
+    - TEST_LIST:
+  - DATA:
+    - MEAN:
+    - STD:
+    - SAMPLING_RATE:
+    - NUM_FRAMES:
+    - TRAIN_JITTER_SCALES:
+    - TRAIN_CROP_SIZE:
+    - TEST_CROP_SIZE:
+  - TEST:
+    - NUM_SPATIAL_CROPS:
+    - NUM_ENSEMBLE_VIEWS:
