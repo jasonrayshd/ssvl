@@ -105,11 +105,15 @@ class PretrainVisionTransformerDecoder(nn.Module):
     """
     def __init__(self, patch_size=16, num_classes=768, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
-                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None, num_patches=196, tubelet_size=2
+                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None, num_patches=196, tubelet_size=2,
+                 use_flow = False
                  ):
         super().__init__()
         self.num_classes = num_classes
-        assert num_classes == 3 * tubelet_size * patch_size ** 2 
+
+        if not use_flow:
+            assert num_classes == 3 * tubelet_size * patch_size ** 2
+
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.patch_size = patch_size
 
@@ -186,6 +190,8 @@ class PretrainVisionTransformer(nn.Module):
                  tubelet_size=2,
                  num_classes=0, # avoid the error from create_fn in timm
                  in_chans=0, # avoid the error from create_fn in timm
+
+                 use_flow=False,
                  ):
         super().__init__()
         self.encoder = PretrainVisionTransformerEncoder(
@@ -222,7 +228,10 @@ class PretrainVisionTransformer(nn.Module):
             drop_path_rate=drop_path_rate, 
             norm_layer=norm_layer, 
             init_values=init_values,
-            tubelet_size=tubelet_size)
+            tubelet_size=tubelet_size,
+
+            use_flow = use_flow,
+            )
 
         self.encoder_to_decoder = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=False)
 
@@ -313,6 +322,7 @@ def pretrain_videomae_base_patch16_224(pretrained=False, **kwargs):
         model.load_state_dict(checkpoint["model"])
     return model
  
+ 
 @register_model
 def pretrain_videomae_large_patch16_224(pretrained=False, **kwargs):
     model = PretrainVisionTransformer(
@@ -328,6 +338,33 @@ def pretrain_videomae_large_patch16_224(pretrained=False, **kwargs):
         mlp_ratio=4, 
         qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), 
+        **kwargs)
+    model.default_cfg = _cfg()
+    if pretrained:
+        checkpoint = torch.load(
+            kwargs["init_ckpt"], map_location="cpu"
+        )
+        model.load_state_dict(checkpoint["model"])
+    return model
+
+
+
+@register_model
+def pretrain_videomae_flowA_base_patch16_224(pretrained=False, **kwargs):
+    model = PretrainVisionTransformer(
+        img_size=224,
+        patch_size=16, 
+        encoder_embed_dim=768, 
+        encoder_depth=12, 
+        encoder_num_heads=12,
+        encoder_num_classes=0,
+        decoder_num_classes=16*16*2*2,
+        decoder_embed_dim=384,
+        decoder_num_heads=6,
+        mlp_ratio=4, 
+        qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        use_flow=True,
         **kwargs)
     model.default_cfg = _cfg()
     if pretrained:

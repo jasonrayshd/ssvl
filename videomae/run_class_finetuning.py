@@ -26,7 +26,7 @@ import modeling_finetune
 
 import wandb
 from loss import Ego4dTwoHead_Criterion
-import yaml
+from config_utils import parse_yml, combine
 
 class Ego4d_Compatible_Mixup(Mixup):
 
@@ -226,8 +226,9 @@ def get_args():
     parser.add_argument('--anno_path', type=str, default="", help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
     parser.add_argument('--pos_clip_save_path', type=str, default="", help="save path of positive clips of ego4d state change")
     parser.add_argument('--neg_clip_save_path', type=str, default="", help="save path of negative clips of ego4d state change")
-    parser.add_argument('--config', type=str, default="", help="path to configuration file")
 
+    parser.add_argument('--config', type=str, default="", help="path to configuration file")
+    parser.add_argument('--overwrite', type=str, default="command-line", help="overwrite command-line argument or arguments from configuration file")
     known_args, _ = parser.parse_known_args()
 
     if known_args.enable_deepspeed:
@@ -243,27 +244,6 @@ def get_args():
         ds_init = None
 
     return parser.parse_args(), ds_init
-
-
-def parse_yml(path):
-    if not os.path.exists(path):
-        return None
-
-    f = open(path ,"r")
-    config = yaml.safe_load(f)
-    return config
-
-
-def combine(args, config):
-    dict_args = vars(args)
-    for k, v in config.items():
-        if k not in dict_args.keys():
-            print(f"{k} not in terminal arguments")
-        elif dict_args[k] != v:
-            print(f"Conflict between command line arguments and configuration file:\nkey: {k}- command-line:{dict_args[k]} configuration file:{v}\nIgnore value in configuration file")
-
-    config.update(dict_args)
-    return argparse.Namespace(config)
 
 def main(args, ds_init):
 
@@ -399,7 +379,7 @@ def main(args, ds_init):
         init_scale=args.init_scale,
 
         # if is ego4d and state change localization task, then the output dimension of feature 
-        keep_dim = True if (args.nb_classes == args.num_frames+1) and ("ego4d" in args.data_set.lower()) else False
+        # keep_dim = True if (args.nb_classes == args.num_frames+1) and ("ego4d" in args.data_set.lower()) else False
     )
 
     patch_size = model.patch_embed.patch_size
@@ -537,6 +517,8 @@ def main(args, ds_init):
             model, args.weight_decay, skip_weight_decay_list,
             assigner.get_layer_id if assigner is not None else None,
             assigner.get_scale if assigner is not None else None)
+
+        print(args)
         model, optimizer, _, _ = ds_init(
             args=args, model=model, model_parameters=optimizer_params, dist_init_required=not args.distributed,
         )
@@ -712,11 +694,10 @@ def main(args, ds_init):
 
 if __name__ == '__main__':
     opts, ds_init = get_args()
-
     config = parse_yml(opts.config)
     if config is not None:
         opts = combine(opts, config)
 
     if opts.output_dir:
         Path(opts.output_dir).mkdir(parents=True, exist_ok=True)
-    # main(opts, ds_init)
+    main(opts, ds_init)

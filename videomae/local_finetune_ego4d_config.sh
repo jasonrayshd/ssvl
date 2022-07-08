@@ -5,5 +5,6 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     run_class_finetuning.py \
     --enable_deepspeed \
     --dist_eval \
+    --overwrite command-line \
+    --config /mnt/code/videomae/config/finetune_basic_ego4d.yml \
     --debug \
-    --config ./config/finetune_basic_ego4d.yaml

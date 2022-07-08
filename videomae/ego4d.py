@@ -316,9 +316,8 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 state_list = []
                 for _ in range(self.args.num_sample):
                     if self.pretrain:
-                        new_frames = self.pretrain_transform(frames)
+                        new_frames, mask = self.pretrain_transform((frames, None))
                         #TODO augment flow
-
                     else:
                         new_frames = self._aug_frame(frames)
 
@@ -335,14 +334,21 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
             else:
                 # frames = torch.as_tensor(frames).permute(3, 0, 1, 2)
-                frames = self._aug_frame(frames)
+                if self.pretrain:
+                    frames, mask = self.pretrain_transform((frames, None))
+                    #TODO augment flow
+                else:
+                    frames = self._aug_frame(frames)
 
-            if self.args.nb_classes == -1:
-                return frames, [labels, state], fps, info
-            elif self.args.nb_classes == 2:
-                return frames, state, fps, info
+            if self.pretrain:
+                pass
             else:
-                return frames, labels, fps, info
+                if self.args.nb_classes == -1:
+                    return frames, [labels, state], fps, info
+                elif self.args.nb_classes == 2:
+                    return frames, state, fps, info
+                else:
+                    return frames, labels, fps, info
 
         elif self.mode == "val":
             frames = self.data_transform(frames)

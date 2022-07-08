@@ -4,7 +4,7 @@ update_freq: 1
 save_ckpt_freq: 10
 
 # Model parameters
-model: 'vit_base_patch16_224'
+model: 'vit_twohead_small_patch16_224'
 tubelet_size: 2
 input_size: 224       # 'videos input size'
 
@@ -64,9 +64,9 @@ mixup_switch_prob: 0.5            # help='Probability of switching to cutmix whe
 mixup_mode: 'batch'               # help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
 
 # Finetuning params
-finetune: 
-model_key: 
-model_prefix: 
+finetune: ''
+model_key: 'model|module'
+model_prefix: ''
 init_scale: 0.001
 use_mean_pooling: true # if false, then use cls
 
@@ -76,7 +76,7 @@ clip_len: 8 # help="time duration of clip, default is 8s")
 # Dataset parameters
 data_path: '/path/to/list_kinetics-400'
 eval_data_path: null
-nb_classes: --1
+nb_classes: -1
 imagenet_default_mean_and_std: true
 num_segments: 1
 num_frames: 16
@@ -86,45 +86,45 @@ data_set: 'Ego4d-statechange-classification-localization'
 
 output_dir: ''      # help='path where to save, empty for no saving')
 log_dir: null       # help='path where to tensorboard log')
-device: 'cuda'      # help='device to use for training / testing')
-seed: 0
+# device: 'cuda'      # help='device to use for training / testing')
+# seed: 0
 resume: ''          # help='resume from checkpoint')
 auto_resume: true
 
 save_ckpt: true
 start_epoch: 0      # help='start epoch')
-eval: false         # help='Perform evaluation only')
-dist_eval: true    # help='Enabling distributed evaluation')
+# eval: false         # help='Perform evaluation only')
+# dist_eval: true    # help='Enabling distributed evaluation')
 num_workers: 2
-pin_mem: true
+# pin_mem: true
 
-# distributed training parameters
-world_size: 1             # help='number of distributed processes')
-local_rank: -1
-dist_on_itp: false
-dist_url: 'env://'        # help='url used to set up distributed training')
+# # distributed training parameters
+# world_size: 1             # help='number of distributed processes')
+# local_rank: -1
+# dist_on_itp: false
+# dist_url: 'env://'        # help='url used to set up distributed training')
+# enable_deepspeed: true
 
-enable_deepspeed: true
-name: "temp"              # help="name of current run"
+# name: "temp"              # help="name of current run"
+
 # Added by Jiachen, for ego4d state change pretraining
-debug: true
-anno_path: ""             # help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
-pos_clip_save_path: ""    # help="save path of positive clips of ego4d state change")
-neg_clip_save_path: ""    # help="save path of negative clips of ego4d state change")
-
+# debug: true
+# anno_path: ""             # help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
+# pos_clip_save_path: ""    # help="save path of positive clips of ego4d state change")
+# neg_clip_save_path: ""    # help="save path of negative clips of ego4d state change")
 
 cfg:
-  - DATA: 
+  DATA: 
     # Data Loading
-    - ANN_DIR: "/mnt/shared/random/ego4d/v1/partial_anno"
-    - VIDEO_DIR_PATH: "/mnt/shared/random/ego4d/v1/clips"
-    - CLIPS_SAVE_PATH: "/mnt/shared/random/ego4d/v1/pos"  # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
-    - NO_SC_PATH: "/mnt/shared/random/ego4d/v1/neg"        # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+    ANN_DIR: "/mnt/ego4d/v1/partial_anno"
+    VIDEO_DIR_PATH: "/mnt/ego4d/v1/clips"
+    CLIPS_SAVE_PATH: "/mnt/ego4d/v1/pos"  # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+    NO_SC_PATH: "/mnt/ego4d/v1/neg"        # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
 
-    - SAVE_AS_ZIP: True                # save frames in zip file for efficient data loading
-    - READ_BY_CLIPS: True                  # read by clips or full_scale video
+    SAVE_AS_ZIP: True                # save frames in zip file for efficient data loading
+    READ_BY_CLIPS: True                  # read by clips or full_scale video
 
     # Data Sampling
-    - CLIP_LEN_SEC: 8 # Duration time in second of clip
-    - CROP_SIZE: 224
-    - SAMPLING_FPS: 2 # Sampled frames per second for training
+    CLIP_LEN_SEC: 8 # Duration time in second of clip
+    CROP_SIZE: 224
+    SAMPLING_FPS: 2 # Sampled frames per second for training

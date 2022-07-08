@@ -1,8 +1,9 @@
+# configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 64
+batch_size: 4
 epochs: 800
-save_ckpt_freq: 50
+save_ckpt_freq: 10
 
 # Model parameters
 model: "pretrain_videomae_base_patch16_224"
@@ -15,7 +16,7 @@ normlize_target: True     #help='normalized the target patch pixels
 
 # Optimizer parameters
 opt: "adamw"               # help='Optimizer, default: "adamw"
-opt_eps: 1e-8             # help='Optimizer Epsilon (default: 1e-8)
+opt_eps: 1.0e-8             # help='Optimizer Epsilon (default: 1e-8)
 opt_betas: null           # type=float, nargs='+  metavar='BETA help='Optimizer Betas (default: None, use opt default)
 clip_grad: null           # type=float, None, metavar='NORM help='Clip gradient norm (default: None, no clipping)
 momentum: 0.9             # metavar='M help='SGD momentum (default: 0.9)
@@ -42,23 +43,25 @@ num_frames: 16
 sampling_rate: 4
 output_dir: ""                              # help='path where to save, empty for no saving
 log_dir: null,                              # help='path where to tensorboard log
-device: 'cuda'                              # help='device to use for training / testing
-seed: 0
+# device: 'cuda'                              # help='device to use for training / testing
+# seed: 0
 resume: ""                                  # help='resume from checkpoint
 auto_resume: true                           # 
 
 start_epoch: 0                              # help='start epoch
-num_workers: 10
+num_workers: 2
 pin_mem: true
 # flow images
 use_flow: false                             # help='use preprocessed flow images as target or not
-use_target: false                           # help='use given target or not
+flow_based_recons: false                    # help='use given target or not
 
 # configuration file
-config: ""                                  # help='path to configuration file
+# config: ""                                  # help='path to configuration file
 
 # distributed training parameters
-world_size: 1                               # help='number of distributed processes
-local_rank: -1
-dist_on_itp: false                          # action='store_true
-dist_url: 'env://'                          # help='url used to set up distributed training
+# world_size: 1                               # help='number of distributed processes
+# local_rank: -1
+# dist_on_itp: false                          # action='store_true
+# dist_url: 'env://'                          # help='url used to set up distributed training
+
+data_set: "epic-kitchen"

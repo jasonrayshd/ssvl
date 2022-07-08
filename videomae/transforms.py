@@ -113,9 +113,14 @@ class GroupMultiScaleCrop(object):
 
         if self.use_flow:
             # then, label is flow images
-            crop_flow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in label]
-            ret_flow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_flow_group]
-            return (ret_img_group, ret_flow_group)
+            uflow, vflow = label
+            crop_uflow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in uflow]
+            ret_uflow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_uflow_group]
+            
+            crop_vflow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in vflow]
+            ret_vflow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_vflow_group]
+
+            return (ret_img_group, [ret_uflow_group, ret_vflow_group])
 
         return (ret_img_group, label)
 
@@ -181,39 +186,30 @@ class Stack(object):
     def __call__(self, img_tuple):
         img_group, label = img_tuple
 
+        img_group_np = self._stack(img_group)
+
+        if self.use_flow:
+            uflows, vflows = label
+            assert len(uflows) == len(vflows), "Number of optical flow images u v should be equal"
+
+            uflow_group_np = self._stack(uflows)
+            vflow_group_np = self._stack(vflows)
+
+            flow_group_np = np.stack([uflow_group_np, vflow_group_np], axis=3) # H, W, C, 2
+
+            return (img_group_np, flow_group_np)
+
+        return (img_group_np, label)
+
+    def _stack(self, img_group):
         if img_group[0].mode == 'L':
-            return (np.concatenate([np.expand_dims(x, 2) for x in img_group], axis=2), label)
+            return np.concatenate([np.expand_dims(x, 2) for x in img_group], axis=2)
         elif img_group[0].mode == 'RGB':
             if self.roll:
                 img_group_np = np.concatenate([np.array(x)[:, :, ::-1] for x in img_group], axis=2)
-                if self.use_flow:
-                    uflows, vflows = label
-                    assert len(uflows) == len(vflows), "Number of optical flow images u v should be equal"
-                    flows = []
-                    for i in range(len(uflows)):
-                        flows.append(np.array(uflows[i])[:, :, ::-1])
-                        flows.append(np.array(vflows[i])[:, :, ::-1])
-                    flow_group_np = np.concatenate(flows, axis=2)
-                    return (img_group_np, flow_group_np)
-                else:
-                    return (img_group_np, label)
-
             else:
-                # by default code block below will be executed
                 img_group_np = np.concatenate(img_group, axis=2)
-                if self.use_flow:
-                    uflows, vflows = label
-                    assert len(uflows) == len(vflows), "Number of optical flow images u v should be equal"
-                    flows = []
-                    for i in range(len(uflows)):
-                        flows.append(uflows[i])
-                        flows.append(vflows[i])
-                    flow_group_np = np.concatenate(flows, axis=2)
-
-                    return (img_group_np, flow_group_np)
-                else:
-                    return (img_group_np, label)
-
+            return img_group_np
 
 class ToTorchFormatTensor(object):
     """ Converts a PIL.Image (RGB) or numpy.ndarray (H x W x C) in the range [0, 255]
@@ -225,18 +221,27 @@ class ToTorchFormatTensor(object):
     def __call__(self, pic_tuple):
         pic, label = pic_tuple
 
-        if isinstance(pic, np.ndarray):
+        img = self._totensor(pic)
+
+        if self.use_flow:
+            flow = torch.from_numpy(label).permute(3, 2, 0, 1).contiguous()
+            return (img.float().div(255.) if self.div else img.float(), flow.float().div(255.) if self.div else flow.float())
+
+        return (img.float().div(255.) if self.div else img.float(), label)
+
+    def _totensor(self, img):
+        if isinstance(img, np.ndarray):
             # handle numpy array
-            img = torch.from_numpy(pic).permute(2, 0, 1).contiguous()
+            img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
         else:
             # handle PIL Image
-            img = torch.ByteTensor(torch.ByteStorage.from_buffer(pic.tobytes()))
-            img = img.view(pic.size[1], pic.size[0], len(pic.mode))
+            img = torch.ByteTensor(torch.ByteStorage.from_buffer(img.tobytes()))
+            img = img.view(img.size[1], img.size[0], len(img.mode))
             # put it from HWC to CHW format
             # yikes, this transpose takes 80% of the loading time/CPU
             img = img.transpose(0, 1).transpose(0, 2).contiguous()
 
-        return (img.float().div(255.) if self.div else img.float(), label.float().div(255.) if self.div and self.use_flow else img.float())
+        return img
 
 class IdentityTransform(object):
 

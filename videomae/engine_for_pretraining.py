@@ -107,6 +107,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
                 # calculate the predict label
                 mean = torch.as_tensor(IMAGENET_DEFAULT_MEAN).to(device)[None, :, None, None, None]
                 std = torch.as_tensor(IMAGENET_DEFAULT_STD).to(device)[None, :, None, None, None]
+
                 unnorm_videos = videos * std + mean  # in [0, 1]
 
                 if normlize_target:
@@ -131,9 +132,27 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
         else:
             # target will be processed in dataset code
             # reconstruct entire given flow images
-            labels = batch[2] # bs, ch, h, w
-            labels = labels[bool_masked_pos]
+            labels = batch[2] # bs, 2, flow nubmers, h, w
+            B, _, N, H, W = labels.shape
+            _, _, T, H, W = videos.shape
+            assert N%T == 0, "Number of flows to be predicted should be divisible by number of frames"
+            # print(labels.shape)
 
+            labels = rearrange(labels, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
+
+            tublet_size = 2
+            bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
+            bool_masked_pos_label = bool_masked_pos_label.repeat(1, N//(T//tublet_size), 1, 1)
+            bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
+            # print(bool_masked_pos_label.shape)
+            # print(labels.shape)
+
+            labels = labels[bool_masked_pos_label]
+            labels = rearrange(labels, '(b t p0 n) d -> b (t n) (p0 d)', b=B, t=N//tublet_size, p0=tublet_size)
+
+            labels = labels.to(device, non_blocking=True)
+            # print(f"final label: {labels.shape}")
+ 
         with torch.cuda.amp.autocast():
             outputs = model(videos, bool_masked_pos)
             if flow_based_recons:

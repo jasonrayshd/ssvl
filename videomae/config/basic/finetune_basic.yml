@@ -1,10 +1,10 @@
-batch_size: 64
-epochs: 30 
+batch_size: 2
+epochs: 75 
 update_freq: 1
-save_ckpt_freq: 100
+save_ckpt_freq: 10
 
 # Model parameters
-model: 'vit_base_patch16_224'
+model: 'vit_twohead_small_patch16_224'
 tubelet_size: 2
 input_size: 224       # 'videos input size'
 
@@ -20,7 +20,7 @@ model_ema_force_cpu: false
 # Optimizer parameters
 opt: 'adamw'            # metavar='OPTIMIZER help='Optimizer (default: "adamw"')
 opt_eps: 1.0e-8         # help='Optimizer Epsilon (default: 1e-8)')
-opt_betas: null         # help='Optimizer Betas (default: None, use opt default)')
+opt_betas: [0.9, 0.999]         # help='Optimizer Betas (default: None, use opt default)')
 clip_grad: null         # help='Clip gradient norm (default: None, no clipping)')
 momentum: 0.9           # help='SGD momentum (default: 0.9)')
 weight_decay: 0.05      # help='weight decay (default: 0.05)')
@@ -28,7 +28,7 @@ weight_decay_end: null  # help="""Final value of the
                         # weight decay. We use a cosine schedule for WD and using a larger decay by
                         # the end of training improves performance for ViTs.""")
 
-lr: 1.0e-3              #  help='learning rate (default: 1e-3)')
+lr: 5.0e-4              #  help='learning rate (default: 1e-3)')
 layer_decay: 0.75
 warmup_lr: 1.0e-6       # help='warmup learning rate (default: 1e-6)')
 min_lr: 1.0e-6          # help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
@@ -64,9 +64,9 @@ mixup_switch_prob: 0.5            # help='Probability of switching to cutmix whe
 mixup_mode: 'batch'               # help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
 
 # Finetuning params
-finetune: 
-model_key: 
-model_prefix: 
+finetune: ''
+model_key: 'model|module'
+model_prefix: ''
 init_scale: 0.001
 use_mean_pooling: true # if false, then use cls
 
@@ -76,39 +76,39 @@ clip_len: 8 # help="time duration of clip, default is 8s")
 # Dataset parameters
 data_path: '/path/to/list_kinetics-400'
 eval_data_path: null
-nb_classes: 400
+nb_classes: -1
 imagenet_default_mean_and_std: true
 num_segments: 1
 num_frames: 16
 sampling_rate: 4
 
-data_set: 'Kinetics-400'
+data_set: 'Ego4d-statechange-classification-localization'
 
 output_dir: ''      # help='path where to save, empty for no saving')
-log_dir: null
-                    # help='path where to tensorboard log')
-device: 'cuda'      # help='device to use for training / testing')
-seed: 0
+log_dir: null       # help='path where to tensorboard log')
+# device: 'cuda'      # help='device to use for training / testing')
+# seed: 0
 resume: ''          # help='resume from checkpoint')
 auto_resume: true
 
 save_ckpt: true
 start_epoch: 0      # help='start epoch')
-eval: false         # help='Perform evaluation only')
-dist_eval: false    # help='Enabling distributed evaluation')
-num_workers: 10
-pin_mem: true
+# eval: false         # help='Perform evaluation only')
+# dist_eval: true    # help='Enabling distributed evaluation')
+num_workers: 2
+# pin_mem: true
 
-# distributed training parameters
-world_size: 1             # help='number of distributed processes')
-local_rank: -1
-dist_on_itp: false
-dist_url: 'env://'        # help='url used to set up distributed training')
+# # distributed training parameters
+# world_size: 1             # help='number of distributed processes')
+# local_rank: -1
+# dist_on_itp: false
+# dist_url: 'env://'        # help='url used to set up distributed training')
+# enable_deepspeed: true
 
-enable_deepspeed: false
-name: "temp"              # help="name of current run"
+# name: "temp"              # help="name of current run"
+
 # Added by Jiachen, for ego4d state change pretraining
-debug: false
-anno_path: ""             # help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
-pos_clip_save_path: ""    # help="save path of positive clips of ego4d state change")
-neg_clip_save_path: ""    # help="save path of negative clips of ego4d state change")
+# debug: true
+# anno_path: ""             # help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
+# pos_clip_save_path: ""    # help="save path of positive clips of ego4d state change")
+# neg_clip_save_path: ""    # help="save path of negative clips of ego4d state change")

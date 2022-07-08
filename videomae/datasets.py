@@ -5,11 +5,9 @@ from masking_generator import TubeMaskingGenerator
 from kinetics import VideoClsDataset, VideoMAE
 from ssv2 import SSVideoClsDataset
 
-
 from ego4d import StateChangeDetectionAndKeyframeLocalisation
 from epickitchens import Epickitchens
 from argparse import Namespace
-
 
 class DataAugmentationForVideoMAE(object):
     def __init__(self, args, use_flow=False):
@@ -36,9 +34,13 @@ class DataAugmentationForVideoMAE(object):
         else:
             raise ValueError(f"Unknown mask type {args.mask_type}")
 
-    def __call__(self, images):
-        process_data, _ = self.transform(images)
-        return process_data, self.masked_position_generator()
+    def __call__(self, images, use_flow=False):
+        process_data, flows_or_none = self.transform(images)
+
+        if use_flow:
+            return process_data, flows_or_none, self.masked_position_generator()
+        else:
+            return process_data, self.masked_position_generator()
 
     def __repr__(self):
         repr = "(DataAugmentationForVideoMAE,\n"
@@ -125,7 +127,7 @@ def build_pretraining_dataset(args):
 
         #     }),
         # })
-        dataset = Epickitchens(args.cfg, mode, pretrain=True, pretrain_transform=transform, use_flow=args.use_flow)
+        dataset = Epickitchens(args.cfg, mode, pretrain=True, pretrain_transform=transform, use_flow=args.use_flow, flow_mode=args.flow_mode)
 
     else:
         # if not pretrained on ego4d or epic-kitchens
@@ -178,26 +180,26 @@ def build_dataset(is_train, test_mode, args):
         # clips_save_path = "/mnt/ego4d/v1/pos"
         # no_sc_path = "/mnt/ego4d/v1/neg"
 
-        cfg = Namespace(**{
-            "DATA": Namespace(**{
-                # Data Loading
-                "ANN_DIR": args.anno_path,
-                "VIDEO_DIR_PATH": args.data_path,
-                "CLIPS_SAVE_PATH": args.pos_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
-                "NO_SC_PATH": args.neg_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
 
-                "SAVE_AS_ZIP": True,                # save frames in zip file for efficient data loading
-                "READ_BY_CLIPS": args.debug,        # read by clips or full_scale video
+        # cfg = Namespace(**{
+        #     "DATA": Namespace(**{
+        #         # Data Loading
+        #         "ANN_DIR": args.anno_path,
+        #         "VIDEO_DIR_PATH": args.data_path,
+        #         "CLIPS_SAVE_PATH": args.pos_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+        #         "NO_SC_PATH": args.neg_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
 
-                # Data Sampling
-                "CLIP_LEN_SEC": args.clip_len,      # Duration time in second of clip
-                "CROP_SIZE": args.input_size,
-                "SAMPLING_FPS": args.sampling_rate, # Sampled frames per second for training
-            })
-        })
+        #         "SAVE_AS_ZIP": True,                # save frames in zip file for efficient data loading
+        #         "READ_BY_CLIPS": args.debug,        # read by clips or full_scale video
 
-        # cfg is of type namespace
-        dataset = StateChangeDetectionAndKeyframeLocalisation(cfg, mode, args=args, pretrain=False)
+        #         # Data Sampling
+        #         "CLIP_LEN_SEC": args.clip_len,      # Duration time in second of clip
+        #         "CROP_SIZE": args.input_size,
+        #         "SAMPLING_FPS": args.sampling_rate, # Sampled frames per second for training
+        #     })
+        # })
+
+        dataset = StateChangeDetectionAndKeyframeLocalisation(args.cfg, mode, args=args, pretrain=False)
         """
             Jiachen 2022.05.25
             dataset.__getitem__() will return 
@@ -210,9 +212,9 @@ def build_dataset(is_train, test_mode, args):
 
         if "localization" in args.data_set and "classification" in args.data_set:
             nb_classes = -1
-            args.two_head = True # make sure two_head is set
+            # args.two_head = True # make sure two_head is set
         elif "localization" in args.data_set:
-            nb_classes = cfg.DATA.SAMPLING_FPS * cfg.DATA.CLIP_LEN_SEC + 1
+            nb_classes = args.cfg.DATA.SAMPLING_FPS * args.cfg.DATA.CLIP_LEN_SEC + 1
         elif "classification" in args.data_set:
             nb_classes = 2
 
@@ -242,33 +244,33 @@ def build_dataset(is_train, test_mode, args):
             MODEL.MULTI_PATHWAY_ARCH
         """
 
-        cfg = Namespace(**{
-            "EPICKITCHENS": Namespace(**{
-                # Data Loading
-                "ANNOTATIONS_DIR": args.anno_path,
-                "VISUAL_DATA_DIR": "",
-                "TRAIN_LIST": "",
-                "VAL_LIST": "", 
-                "TEST_LIST": "",
-            }),
-            "DATA": Namespace(**{
-                # Data Loading
-                "MEAN": "",
-                "STD": "",
+        # cfg = Namespace(**{
+        #     "EPICKITCHENS": Namespace(**{
+        #         # Data Loading
+        #         "ANNOTATIONS_DIR": args.anno_path,
+        #         "VISUAL_DATA_DIR": "",
+        #         "TRAIN_LIST": "",
+        #         "VAL_LIST": "", 
+        #         "TEST_LIST": "",
+        #     }),
+        #     "DATA": Namespace(**{
+        #         # Data Loading
+        #         "MEAN": "",
+        #         "STD": "",
 
-                "TRAIN_JITTER_SCALES": "",
-                "TRAIN_CROP_SIZE": "",
+        #         "TRAIN_JITTER_SCALES": "",
+        #         "TRAIN_CROP_SIZE": "",
 
-                "TEST_CROP_SIZE": ""
-            }),
-            "TEST": Namespace(**{
-                # Data Loading
-                "NUM_SPATIAL_CROPS": "",
-                "NUM_SPATIAL_CROPS": "",
-                "NUM_ENSEMBLE_VIEWS": "",
+        #         "TEST_CROP_SIZE": ""
+        #     }),
+        #     "TEST": Namespace(**{
+        #         # Data Loading
+        #         "NUM_SPATIAL_CROPS": "",
+        #         "NUM_SPATIAL_CROPS": "",
+        #         "NUM_ENSEMBLE_VIEWS": "",
 
-            }),
-        })
+        #     }),
+        # })
 
         mode = None
         if is_train is True:
@@ -278,7 +280,7 @@ def build_dataset(is_train, test_mode, args):
         else:  
             mode = 'validation'
 
-        dataset = Epickitchens(cfg, mode, pretrain=False)
+        dataset = Epickitchens(args.cfg, mode, pretrain=False)
         nb_classes = -1 # BUG number of classes has to be set
 
     elif args.data_set == 'Kinetics-400':

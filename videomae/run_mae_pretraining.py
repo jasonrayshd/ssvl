@@ -15,8 +15,8 @@ from engine_for_pretraining import train_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
-import yaml
 
+from config_utils import parse_yml, combine
 
 def get_args():
     parser = argparse.ArgumentParser('VideoMAE pre-training script', add_help=False)
@@ -117,6 +117,8 @@ def get_args():
     # configuration file
     parser.add_argument('--config', default='none', type=str,
                         help='path to configuration file')
+    parser.add_argument('--overwrite', type=str, default="command-line", help="overwrite command-line argument or arguments from configuration file")
+
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -126,27 +128,6 @@ def get_args():
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     
     return parser.parse_args()
-
-
-def parse_yml(path):
-    if not os.path.exists(path):
-        return None
-
-    f = open(path ,"r")
-    config = yaml.safe_load(f)
-    return config
-
-
-def combine(args, config):
-    dict_args = vars(args)
-    for k, v in config.items():
-        if k not in dict_args.keys():
-            print(f"{k} not in terminal arguments")
-        elif dict_args[k] != v:
-            print(f"Conflict between command line arguments and configuration file:\nkey: {k}- command-line:{dict_args[k]} configuration file:{v}\nIgnore value in configuration file")
-
-    config.update(dict_args)
-    return argparse.Namespace(config)
 
 
 def get_model(args):
@@ -178,6 +159,8 @@ def main(args):
     model = get_model(args)
     patch_size = model.encoder.patch_embed.patch_size
     print("Patch size = %s" % str(patch_size))
+
+    # window size for masking
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
@@ -267,7 +250,9 @@ def main(args):
             patch_size=patch_size[0],
             normlize_target=args.normlize_target,
 
-            use_target = args.use_target
+            # whether predict given flow images or recons input based on flow images
+            use_flow = args.use_flow,
+            flow_based_recons = args.flow_based_recons
         )
 
         if args.output_dir:
