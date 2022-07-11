@@ -72,8 +72,8 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
 
-                    use_flow = False, # use preprocessed flow images or not
-                    flow_based_recons = False, # reconstruct input based on predicted flow images or not
+                    use_preprocessed_flow = False, # use preprocessed flow images or not
+                    flow_pretrain = False, # reconstruct input based on predicted flow images or not
                     ):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -82,10 +82,13 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
-    if not flow_based_recons:
-        loss_func = nn.MSELoss()
-    else:
+    flow_based_recons = (flow_pretrain and not use_preprocessed_flow)
+
+    if flow_based_recons:
+        # if predicting flow images but do not use preprocessed flow images
         loss_func = FlowMSELoss()
+    else:
+        loss_func = nn.MSELoss()
 
     for step, batch in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         # assign learning rate & weight decay for each step
@@ -102,7 +105,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
         bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
 
         # use given target or simply reconstruct input video
-        if not use_flow:
+        if not use_preprocessed_flow:
             with torch.no_grad():
                 # calculate the predict label
                 mean = torch.as_tensor(IMAGENET_DEFAULT_MEAN).to(device)[None, :, None, None, None]
@@ -135,7 +138,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             labels = batch[2] # bs, 2, flow nubmers, h, w
             B, _, N, H, W = labels.shape
             _, _, T, H, W = videos.shape
-            assert N%T == 0, "Number of flows to be predicted should be divisible by number of frames"
+            assert T%N == 0, f"Number of flows:{T} to be predicted should be divisible by number of frames:{N}"
             # print(labels.shape)
 
             labels = rearrange(labels, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
@@ -148,7 +151,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             # print(labels.shape)
 
             labels = labels[bool_masked_pos_label]
-            labels = rearrange(labels, '(b t p0 n) d -> b (t n) (p0 d)', b=B, t=N//tublet_size, p0=tublet_size)
+            labels = rearrange(labels, '(b t n) d -> b (t n) d', b=B, t=N//tublet_size)
 
             labels = labels.to(device, non_blocking=True)
             # print(f"final label: {labels.shape}")

@@ -11,3 +11,5 @@ videomae/log/**
 videomae/output/**
 wandb
 
+
+events.out.tfevents*

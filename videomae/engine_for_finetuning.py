@@ -233,8 +233,8 @@ def final_test(data_loader, model, device, file, criterion):
         chunk_nb = batch[3]
         split_nb = batch[4]
         videos = videos.to(device, non_blocking=True)
-       
-        if isinstance(target, list):
+
+        if not isinstance(target, list):
             target = target.to(device, non_blocking=True)
         else:
             labels, states = target[0].to(device, non_blocking=True), target[1].to(device, non_blocking=True)
@@ -243,6 +243,7 @@ def final_test(data_loader, model, device, file, criterion):
         # compute output
         with torch.cuda.amp.autocast():
             output = model(videos)
+            # print(output.shape)
             loss = criterion(output, target)
 
         for i in range(output.size(0)):

@@ -278,8 +278,10 @@ def main(args, ds_init):
     else:
         dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
         # commented since test set of ego4d is not annotated yet.
-        # dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
-        dataset_test = None
+        if args.data_set == "ego4d":
+            dataset_test = None
+        else:
+            dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
 
 
     sampler_train = torch.utils.data.DistributedSampler(
@@ -321,6 +323,7 @@ def main(args, ds_init):
         if "ego4d" in args.data_set.lower() and args.nb_classes == -1:
             # if finetune state classification and localization at the same time on ego4d
             # then the target will be a list
+            print("Using collate function for ego4d dataset")
             collate_func = samples_collate_ego4d
         else:
             collate_func = None
@@ -565,10 +568,10 @@ def main(args, ds_init):
         optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
 
     # added by Jiachen
-
     if args.eval:
         preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
-        test_stats = final_test(data_loader_test, model, device, preds_file)
+        criterion = torch.nn.CrossEntropyLoss() 
+        test_stats = final_test(data_loader_test, model, device, preds_file, criterion)
         torch.distributed.barrier()
         if global_rank == 0:
             print("Start merging results...")

@@ -15,6 +15,7 @@ from engine_for_pretraining import train_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
+import wandb
 
 from config_utils import parse_yml, combine
 
@@ -108,16 +109,11 @@ def get_args():
                         help='')
     parser.set_defaults(pin_mem=True)
 
-    # flow images
-    parser.add_argument('--use_flow', action='store_true',
-                        help='use preprocessed flow images as target or not')
-    parser.add_argument('--use_target', action='store_true',
-                        help='use given target or not')
-
     # configuration file
     parser.add_argument('--config', default='none', type=str,
                         help='path to configuration file')
     parser.add_argument('--overwrite', type=str, default="command-line", help="overwrite command-line argument or arguments from configuration file")
+    parser.add_argument('--debug', action='store_true', help="whether in debugging or not; this will prevent wandb logging and some other features")
 
 
     # distributed training parameters
@@ -145,15 +141,20 @@ def get_model(args):
 def main(args):
     utils.init_distributed_mode(args)
 
-    print(args)
-
+    
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
+
+    if utils.get_rank() == 0 and not args.debug:
+        wandb.init(project="pretrain-epickitchen-videomae", config=vars(opts))
+
+    print(args)
+
+
     torch.manual_seed(seed)
     np.random.seed(seed)
-
     cudnn.benchmark = True
 
     model = get_model(args)
@@ -251,8 +252,8 @@ def main(args):
             normlize_target=args.normlize_target,
 
             # whether predict given flow images or recons input based on flow images
-            use_flow = args.use_flow,
-            flow_based_recons = args.flow_based_recons
+            use_preprocessed_flow = args.use_preprocessed_flow,
+            flow_pretrain = args.flow_pretrain,
         )
 
         if args.output_dir:
@@ -263,6 +264,9 @@ def main(args):
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'epoch': epoch, 'n_parameters': n_parameters}
+
+        if global_rank == 0 and not args.debug:
+            wandb.log(log_stats)
 
         if args.output_dir and utils.is_main_process():
             if log_writer is not None:

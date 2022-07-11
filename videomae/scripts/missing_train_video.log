@@ -1,0 +1,255 @@
+| distributed init (rank 1): env://, gpu 1
+| distributed init (rank 0): env://, gpu 0
+0
+Number of the class = 400
+Number of the class = 400
+Number of the class = 400
+Sampler_train = <torch.utils.data.distributed.DistributedSampler object at 0x7fde90a67da0>
+Mixup is activated!
+Patch size = (16, 16)
+Load ckpt from /mnt/code/videomae/ckpt/vitb_800_kinetics400.pth
+Load state_dict by model_key = module
+number of params: 86534800
+LR = 0.00006250
+Batch size = 32
+Update frequent = 1
+Number of training examples = 246533
+Number of training training per epoch = 7704
+Assigned values = [0.023757264018058777, 0.03167635202407837, 0.04223513603210449, 0.056313514709472656, 0.07508468627929688, 0.1001129150390625, 0.13348388671875, 0.177978515625, 0.2373046875, 0.31640625, 0.421875, 0.5625, 0.75, 1.0]
+Skip weight decay list:  {'cls_token', 'pos_embed'}
+Namespace(aa='rand-m7-n4-mstd0.5-inc1', anno_path='', attn_drop_rate=0.0, auto_resume=True, batch_size=16, clip_grad=None, clip_len=8, color_jitter=0.4, config='', crop_pct=None, cutmix=1.0, cutmix_minmax=None, data_path='/data/shared/ssvl/kinetics/kinetics-dataset/k400/annotations/resized320', data_set='Kinetics-400', debug=True, deepscale=False, deepscale_config=None, deepspeed=False, deepspeed_config='/mnt/code/videomae/output/deepspeed_config.json', deepspeed_mpi=False, device='cuda', disable_eval_during_finetuning=False, dist_backend='nccl', dist_eval=False, dist_on_itp=False, dist_url='env://', distributed=True, drop=0.0, drop_path=0.1, enable_deepspeed=True, epochs=75, eval=True, eval_data_path=None, finetune='/mnt/code/videomae/ckpt/vitb_800_kinetics400.pth', gpu=0, imagenet_default_mean_and_std=True, init_scale=0.001, input_size=224, layer_decay=0.75, local_rank=0, log_dir='/mnt/code/videomae/output/temp1657447667.7346969', lr=6.25e-05, min_lr=1.25e-07, mixup=0.8, mixup_mode='batch', mixup_prob=1.0, mixup_switch_prob=0.5, model='vit_base_patch16_224', model_ema=False, model_ema_decay=0.9999, model_ema_force_cpu=False, model_key='model|module', model_prefix='', momentum=0.9, name='temp1657447667.7346969', nb_classes=400, neg_clip_save_path='', num_frames=16, num_sample=2, num_segments=1, num_workers=3, opt='adamw', opt_betas=[0.9, 0.999], opt_eps=1e-08, output_dir='/mnt/code/videomae/output/temp1657447667.7346969', overwrite='command-line', patch_size=(16, 16), pin_mem=True, pos_clip_save_path='', rank=0, recount=1, remode='pixel', reprob=0.25, resplit=False, resume='', sampling_rate=4, save_ckpt=True, save_ckpt_freq=10, seed=0, short_side_size=224, smoothing=0.1, start_epoch=0, test_num_crop=3, test_num_segment=5, train_interpolation='bicubic', tubelet_size=2, update_freq=1, use_mean_pooling=True, warmup_epochs=5, warmup_lr=1.25e-07, warmup_steps=-1, weight_decay=0.05, weight_decay_end=None, window_size=(8, 14, 14), world_size=2)
+[2022-07-10 10:07:52,389] [INFO] [logging.py:69:log_dist] [Rank 0] DeepSpeed info: version=0.5.8, git-hash=unknown, git-branch=unknown
+[2022-07-10 10:07:52,402] [INFO] [logging.py:69:log_dist] [Rank 0] initializing deepspeed groups
+[2022-07-10 10:07:52,402] [INFO] [logging.py:69:log_dist] [Rank 0] initializing deepspeed model parallel group with size 1
+[2022-07-10 10:07:52,527] [INFO] [logging.py:69:log_dist] [Rank 0] initializing deepspeed expert parallel group with size 1
+[2022-07-10 10:07:52,528] [INFO] [logging.py:69:log_dist] [Rank 0] creating expert data parallel process group with ranks: [0, 1]
+[2022-07-10 10:07:52,538] [INFO] [logging.py:69:log_dist] [Rank 0] creating expert parallel process group with ranks: [0]
+[2022-07-10 10:07:52,539] [INFO] [logging.py:69:log_dist] [Rank 0] creating expert parallel process group with ranks: [1]
+[2022-07-10 10:07:52,609] [INFO] [engine.py:279:__init__] DeepSpeed Flops Profiler Enabled: False
+Installed CUDA version 11.2 does not match the version torch was compiled with 11.1 but since the APIs are compatible, accepting this combination
+Using /root/.cache/torch_extensions as PyTorch extensions root...
+ninja: no work to do.
+Loading extension module fused_adam...
+Time to load fused_adam op: 1.707587718963623 seconds
+[2022-07-10 10:07:56,168] [INFO] [engine.py:1110:_configure_optimizer] Using DeepSpeed Optimizer param name adam as basic optimizer
+[2022-07-10 10:07:56,178] [INFO] [engine.py:1117:_configure_optimizer] DeepSpeed Basic Optimizer = FusedAdam
+[2022-07-10 10:07:56,179] [INFO] [logging.py:69:log_dist] [Rank 0] Creating fp16 optimizer with dynamic loss scale
+[2022-07-10 10:07:56,203] [INFO] [logging.py:69:log_dist] [Rank 0] DeepSpeed Final Optimizer = adam
+[2022-07-10 10:07:56,204] [INFO] [engine.py:808:_configure_lr_scheduler] DeepSpeed using client LR scheduler
+[2022-07-10 10:07:56,204] [INFO] [logging.py:69:log_dist] [Rank 0] DeepSpeed LR Scheduler = None
+[2022-07-10 10:07:56,204] [INFO] [logging.py:69:log_dist] [Rank 0] step=0, skipped=0, lr=[0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005], mom=[[0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999], [0.9, 0.999]]
+[2022-07-10 10:07:56,205] [INFO] [config.py:1059:print] DeepSpeedEngine configuration:
+[2022-07-10 10:07:56,208] [INFO] [config.py:1063:print]   activation_checkpointing_config  {
+    "partition_activations": false, 
+    "contiguous_memory_optimization": false, 
+    "cpu_checkpointing": false, 
+    "number_checkpoints": null, 
+    "synchronize_checkpoint_boundary": false, 
+    "profile": false
+}
+[2022-07-10 10:07:56,208] [INFO] [config.py:1063:print]   aio_config ................... {'block_size': 1048576, 'queue_depth': 8, 'thread_count': 1, 'single_submit': False, 'overlap_events': True}
+[2022-07-10 10:07:56,208] [INFO] [config.py:1063:print]   amp_enabled .................. False
+[2022-07-10 10:07:56,208] [INFO] [config.py:1063:print]   amp_params ................... False
+[2022-07-10 10:07:56,209] [INFO] [config.py:1063:print]   autotuning_config ............ {
+    "enabled": false, 
+    "start_step": null, 
+    "end_step": null, 
+    "metric_path": null, 
+    "arg_mappings": null, 
+    "metric": "throughput", 
+    "model_info": null, 
+    "results_dir": null, 
+    "exps_dir": null, 
+    "overwrite": true, 
+    "fast": true, 
+    "start_profile_step": 3, 
+    "end_profile_step": 5, 
+    "tuner_type": "gridsearch", 
+    "tuner_early_stopping": 5, 
+    "tuner_num_trials": 50, 
+    "model_info_path": null, 
+    "mp_size": 1, 
+    "max_train_batch_size": null, 
+    "min_train_batch_size": 1, 
+    "max_train_micro_batch_size_per_gpu": 1.024000e+03, 
+    "min_train_micro_batch_size_per_gpu": 1, 
+    "num_tuning_micro_batch_sizes": 3
+}
+[2022-07-10 10:07:56,209] [INFO] [config.py:1063:print]   bfloat16_enabled ............. False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   checkpoint_tag_validation_enabled  True
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   checkpoint_tag_validation_fail  False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   communication_data_type ...... None
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   curriculum_enabled ........... False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   curriculum_params ............ False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   dataloader_drop_last ......... False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   disable_allgather ............ False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   dump_state ................... False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   dynamic_loss_scale_args ...... {'init_scale': 128, 'scale_window': 128, 'delayed_shift': 2, 'min_scale': 1}
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   eigenvalue_enabled ........... False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   eigenvalue_gas_boundary_resolution  1
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   eigenvalue_layer_name ........ bert.encoder.layer
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   eigenvalue_layer_num ......... 0
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   eigenvalue_max_iter .......... 100
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   eigenvalue_stability ......... 1e-06
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   eigenvalue_tol ............... 0.01
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   eigenvalue_verbose ........... False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   elasticity_enabled ........... False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   flops_profiler_config ........ {
+    "enabled": false, 
+    "profile_step": 1, 
+    "module_depth": -1, 
+    "top_modules": 1, 
+    "detailed": true, 
+    "output_file": null
+}
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   fp16_enabled ................. True
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   fp16_master_weights_and_gradients  False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   fp16_mixed_quantize .......... False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   global_rank .................. 0
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   gradient_accumulation_steps .. 1
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   gradient_clipping ............ 0.0
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   gradient_predivide_factor .... 1.0
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   initial_dynamic_scale ........ 128
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   loss_scale ................... 0
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   memory_breakdown ............. False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   optimizer_legacy_fusion ...... False
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   optimizer_name ............... adam
+[2022-07-10 10:07:56,210] [INFO] [config.py:1063:print]   optimizer_params ............. {'lr': 0.0005, 'weight_decay': 0.05, 'bias_correction': True, 'betas': [0.9, 0.999], 'eps': 1e-08}
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   pipeline ..................... {'stages': 'auto', 'partition': 'best', 'seed_layers': False, 'activation_checkpoint_interval': 0}
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   pld_enabled .................. False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   pld_params ................... False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   prescale_gradients ........... False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_change_rate ......... 0.001
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_groups .............. 1
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_offset .............. 1000
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_period .............. 1000
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_rounding ............ 0
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_start_bits .......... 16
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_target_bits ......... 8
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_training_enabled .... False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_type ................ 0
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   quantize_verbose ............. False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   scheduler_name ............... None
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   scheduler_params ............. None
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   sparse_attention ............. None
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   sparse_gradients_enabled ..... False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   steps_per_print .............. 1000
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   tensorboard_enabled .......... False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   tensorboard_job_name ......... DeepSpeedJobName
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   tensorboard_output_path ...... 
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   train_batch_size ............. 32
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   train_micro_batch_size_per_gpu  16
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   use_quantizer_kernel ......... False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   wall_clock_breakdown ......... False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   world_size ................... 2
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   zero_allow_untested_optimizer  False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   zero_config .................. {
+    "stage": 0, 
+    "contiguous_gradients": true, 
+    "reduce_scatter": true, 
+    "reduce_bucket_size": 5.000000e+08, 
+    "allgather_partitions": true, 
+    "allgather_bucket_size": 5.000000e+08, 
+    "overlap_comm": false, 
+    "load_from_fp32_weights": true, 
+    "elastic_checkpoint": true, 
+    "offload_param": null, 
+    "offload_optimizer": null, 
+    "sub_group_size": 1.000000e+09, 
+    "prefetch_bucket_size": 5.000000e+07, 
+    "param_persistence_threshold": 1.000000e+05, 
+    "max_live_parameters": 1.000000e+09, 
+    "max_reuse_distance": 1.000000e+09, 
+    "gather_fp16_weights_on_model_save": false, 
+    "ignore_unused_parameters": true, 
+    "round_robin_gradients": false, 
+    "legacy_stage1": false
+}
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   zero_enabled ................. False
+[2022-07-10 10:07:56,211] [INFO] [config.py:1063:print]   zero_optimization_stage ...... 0
+[2022-07-10 10:07:56,212] [INFO] [config.py:1072:print]   json = {
+    "train_batch_size": 32, 
+    "train_micro_batch_size_per_gpu": 16, 
+    "steps_per_print": 1000, 
+    "optimizer": {
+        "type": "Adam", 
+        "adam_w_mode": true, 
+        "params": {
+            "lr": 0.0005, 
+            "weight_decay": 0.05, 
+            "bias_correction": true, 
+            "betas": [0.9, 0.999], 
+            "eps": 1e-08
+        }
+    }, 
+    "fp16": {
+        "enabled": true, 
+        "loss_scale": 0, 
+        "initial_scale_power": 7, 
+        "loss_scale_window": 128
+    }
+}
+Using /root/.cache/torch_extensions as PyTorch extensions root...
+ninja: no work to do.
+Loading extension module utils...
+Time to load utils op: 1.6072604656219482 seconds
+model.gradient_accumulation_steps() = 1
+Use step level LR scheduler!
+Set warmup steps = 38520
+Set warmup steps = 0
+Max WD = 0.0500000, Min WD = 0.0500000
+criterion = SoftTargetCrossEntropy()
+Test:  [    0/18661]  eta: 2 days, 19:31:27  loss: 1.8164 (1.8164)  acc1: 62.5000 (62.5000)  acc5: 87.5000 (87.5000)  time: 13.0265  data: 11.2349  max mem: 4375
+Test:  [   10/18661]  eta: 14:27:32  loss: 2.2747 (2.5609)  acc1: 43.7500 (47.1591)  acc5: 81.2500 (76.1364)  time: 2.7908  data: 2.3143  max mem: 4375
+Test:  [   20/18661]  eta: 12:21:37  loss: 2.2747 (2.2887)  acc1: 50.0000 (54.4643)  acc5: 81.2500 (77.9762)  time: 1.8551  data: 1.5098  max mem: 4375
+Test:  [   30/18661]  eta: 14:35:11  loss: 1.3518 (1.9379)  acc1: 75.0000 (63.7097)  acc5: 87.5000 (82.6613)  time: 2.8337  data: 2.4887  max mem: 4375
+Test:  [   40/18661]  eta: 13:56:52  loss: 1.4782 (1.8594)  acc1: 75.0000 (65.5488)  acc5: 87.5000 (83.3841)  time: 3.0215  data: 2.6758  max mem: 4375
+Test:  [   50/18661]  eta: 13:44:54  loss: 1.6084 (1.7992)  acc1: 68.7500 (66.4216)  acc5: 87.5000 (84.3137)  time: 2.4128  data: 2.0645  max mem: 4375
+Test:  [   60/18661]  eta: 14:55:53  loss: 1.3766 (1.7220)  acc1: 75.0000 (68.3402)  acc5: 87.5000 (85.3484)  time: 3.2861  data: 2.9347  max mem: 4375
+Test:  [   70/18661]  eta: 14:25:17  loss: 1.5717 (1.8193)  acc1: 68.7500 (66.4613)  acc5: 87.5000 (83.5387)  time: 3.1322  data: 2.7813  max mem: 4375
+Test:  [   80/18661]  eta: 14:41:28  loss: 1.6780 (1.7704)  acc1: 68.7500 (67.9012)  acc5: 87.5000 (84.1049)  time: 2.7138  data: 2.3664  max mem: 4375
+Test:  [   90/18661]  eta: 14:32:49  loss: 1.4781 (1.7711)  acc1: 75.0000 (67.7885)  acc5: 87.5000 (83.9973)  time: 2.9172  data: 2.5670  max mem: 4375
+Test:  [  100/18661]  eta: 14:34:05  loss: 1.2960 (1.7135)  acc1: 75.0000 (68.9356)  acc5: 93.7500 (85.0866)  time: 2.7412  data: 2.3880  max mem: 4375
+Test:  [  110/18661]  eta: 14:27:58  loss: 1.3273 (1.7093)  acc1: 75.0000 (68.5811)  acc5: 93.7500 (85.3041)  time: 2.7497  data: 2.3983  max mem: 4375
+Test:  [  120/18661]  eta: 14:29:25  loss: 1.6255 (1.7071)  acc1: 68.7500 (68.6467)  acc5: 87.5000 (85.2789)  time: 2.7526  data: 2.4029  max mem: 4375
+Test:  [  130/18661]  eta: 14:27:34  loss: 1.6181 (1.6850)  acc1: 68.7500 (69.0363)  acc5: 87.5000 (85.6870)  time: 2.8185  data: 2.4712  max mem: 4375
+Test:  [  140/18661]  eta: 14:20:50  loss: 1.2571 (1.6637)  acc1: 75.0000 (69.6365)  acc5: 87.5000 (85.8599)  time: 2.6390  data: 2.2929  max mem: 4375
+Test:  [  150/18661]  eta: 14:31:33  loss: 1.5867 (1.6864)  acc1: 68.7500 (69.0397)  acc5: 81.2500 (85.3891)  time: 2.9295  data: 2.5803  max mem: 4375
+Test:  [  160/18661]  eta: 14:28:25  loss: 2.0365 (1.7107)  acc1: 56.2500 (68.1289)  acc5: 81.2500 (85.0543)  time: 3.0110  data: 2.6613  max mem: 4375
+Test:  [  170/18661]  eta: 14:26:11  loss: 1.9605 (1.7172)  acc1: 56.2500 (67.9825)  acc5: 81.2500 (85.0146)  time: 2.7025  data: 2.3556  max mem: 4375
+Test:  [  180/18661]  eta: 14:36:13  loss: 1.4089 (1.7076)  acc1: 68.7500 (68.1285)  acc5: 87.5000 (85.0829)  time: 3.0733  data: 2.7305  max mem: 4375
+Test:  [  190/18661]  eta: 14:27:22  loss: 1.2552 (1.6936)  acc1: 75.0000 (68.3901)  acc5: 93.7500 (85.3403)  time: 2.8763  data: 2.5347  max mem: 4375
+Test:  [  200/18661]  eta: 14:34:55  loss: 1.3086 (1.6885)  acc1: 68.7500 (68.5323)  acc5: 87.5000 (85.4789)  time: 2.8331  data: 2.4850  max mem: 4375
+Test:  [  210/18661]  eta: 14:33:30  loss: 1.6119 (1.6813)  acc1: 68.7500 (68.6908)  acc5: 87.5000 (85.6339)  time: 3.0603  data: 2.7116  max mem: 4375
+Test:  [  220/18661]  eta: 14:34:39  loss: 1.5551 (1.6665)  acc1: 68.7500 (69.0045)  acc5: 87.5000 (85.9729)  time: 2.8678  data: 2.5211  max mem: 4375
+Test:  [  230/18661]  eta: 14:33:16  loss: 1.6103 (1.6833)  acc1: 68.7500 (68.4253)  acc5: 87.5000 (85.9037)  time: 2.8672  data: 2.5187  max mem: 4375
+Test:  [  240/18661]  eta: 14:35:21  loss: 2.1328 (1.6837)  acc1: 62.5000 (68.6722)  acc5: 81.2500 (85.7365)  time: 2.9107  data: 2.5638  max mem: 4375
+Test:  [  250/18661]  eta: 14:24:02  loss: 1.3827 (1.6771)  acc1: 75.0000 (68.8745)  acc5: 87.5000 (85.8566)  time: 2.5041  data: 2.1588  max mem: 4375
+Test:  [  260/18661]  eta: 14:21:29  loss: 1.1944 (1.6704)  acc1: 75.0000 (69.0613)  acc5: 87.5000 (85.8477)  time: 2.3013  data: 1.9530  max mem: 4375
+Test:  [  270/18661]  eta: 14:25:13  loss: 1.5702 (1.6743)  acc1: 62.5000 (68.8192)  acc5: 87.5000 (85.9087)  time: 2.9098  data: 2.5639  max mem: 4375
+Test:  [  280/18661]  eta: 14:26:30  loss: 1.4913 (1.6670)  acc1: 62.5000 (68.8835)  acc5: 87.5000 (86.0098)  time: 3.0824  data: 2.7403  max mem: 4375
+Test:  [  290/18661]  eta: 14:25:19  loss: 1.6359 (1.6707)  acc1: 68.7500 (68.8574)  acc5: 87.5000 (86.0610)  time: 2.8717  data: 2.5302  max mem: 4375
+Test:  [  300/18661]  eta: 14:39:02  loss: 1.7499 (1.6791)  acc1: 68.7500 (68.7292)  acc5: 87.5000 (85.9012)  time: 3.4909  data: 3.1483  max mem: 4375
+Test:  [  310/18661]  eta: 14:36:22  loss: 1.4389 (1.6688)  acc1: 68.7500 (68.9912)  acc5: 87.5000 (86.0330)  time: 3.4360  data: 3.0863  max mem: 4375
+Test:  [  320/18661]  eta: 14:29:46  loss: 1.8245 (1.7094)  acc1: 56.2500 (67.9517)  acc5: 81.2500 (85.4361)  time: 2.4365  data: 2.0896  max mem: 4375
+Test:  [  330/18661]  eta: 14:38:38  loss: 2.3717 (1.7202)  acc1: 43.7500 (67.6548)  acc5: 75.0000 (85.2908)  time: 3.0402  data: 2.6978  max mem: 4375
+Test:  [  340/18661]  eta: 14:32:45  loss: 1.7381 (1.7210)  acc1: 62.5000 (67.5220)  acc5: 81.2500 (85.2639)  time: 3.0647  data: 2.7176  max mem: 4375
+Test:  [  350/18661]  eta: 14:29:00  loss: 2.0518 (1.7426)  acc1: 56.2500 (66.9338)  acc5: 81.2500 (84.9715)  time: 2.3766  data: 2.0288  max mem: 4375
+Test:  [  360/18661]  eta: 14:36:00  loss: 2.4340 (1.7675)  acc1: 37.5000 (66.1877)  acc5: 81.2500 (84.7126)  time: 3.1069  data: 2.7639  max mem: 4375
+Test:  [  370/18661]  eta: 14:37:57  loss: 1.8398 (1.7587)  acc1: 62.5000 (66.2904)  acc5: 81.2500 (84.7709)  time: 3.4501  data: 3.1082  max mem: 4375
+Test:  [  380/18661]  eta: 14:40:50  loss: 1.5778 (1.7718)  acc1: 62.5000 (65.9449)  acc5: 87.5000 (84.7769)  time: 3.2340  data: 2.8907  max mem: 4375
+Test:  [  390/18661]  eta: 14:50:33  loss: 1.5599 (1.7642)  acc1: 68.7500 (66.1285)  acc5: 87.5000 (84.8146)  time: 3.7504  data: 3.4049  max mem: 4375
+Test:  [  400/18661]  eta: 14:45:01  loss: 1.2164 (1.7716)  acc1: 68.7500 (65.9445)  acc5: 87.5000 (84.7569)  time: 3.2300  data: 2.8836  max mem: 4375
+Test:  [  410/18661]  eta: 14:38:21  loss: 1.7102 (1.7648)  acc1: 68.7500 (66.1344)  acc5: 87.5000 (84.8692)  time: 2.1669  data: 1.8188  max mem: 4375
+Test:  [  420/18661]  eta: 14:41:52  loss: 1.3484 (1.7519)  acc1: 81.2500 (66.5083)  acc5: 87.5000 (85.0653)  time: 2.7577  data: 2.4055  max mem: 4375
+Test:  [  430/18661]  eta: 14:42:44  loss: 1.6058 (1.7686)  acc1: 75.0000 (66.2413)  acc5: 87.5000 (84.7448)  time: 3.2667  data: 2.9110  max mem: 4375
+Test:  [  440/18661]  eta: 14:47:24  loss: 1.6293 (1.7597)  acc1: 68.7500 (66.4399)  acc5: 87.5000 (84.9065)  time: 3.3722  data: 3.0197  max mem: 4375
+Test:  [  450/18661]  eta: 14:47:11  loss: 1.0861 (1.7416)  acc1: 81.2500 (66.8514)  acc5: 93.7500 (85.1441)  time: 3.3071  data: 2.9597  max mem: 4375
+Test:  [  460/18661]  eta: 14:55:11  loss: 0.9049 (1.7268)  acc1: 87.5000 (67.2722)  acc5: 93.7500 (85.3444)  time: 3.5881  data: 3.2443  max mem: 4375
+Test:  [  470/18661]  eta: 14:50:04  loss: 1.4029 (1.7358)  acc1: 81.2500 (67.1178)  acc5: 93.7500 (85.1911)  time: 3.2225  data: 2.8783  max mem: 4375
+Test:  [  480/18661]  eta: 14:56:16  loss: 1.7323 (1.7384)  acc1: 56.2500 (66.9049)  acc5: 87.5000 (85.2261)  time: 3.1151  data: 2.7691  max mem: 4375
+Test:  [  490/18661]  eta: 15:04:14  loss: 1.7914 (1.7392)  acc1: 68.7500 (67.0188)  acc5: 87.5000 (85.1833)  time: 4.1634  data: 3.8191  max mem: 4375
+Test:  [  500/18661]  eta: 14:59:40  loss: 1.3987 (1.7398)  acc1: 81.2500 (67.0534)  acc5: 87.5000 (85.1048)  time: 3.3211  data: 2.9764  max mem: 4375
+Test:  [  510/18661]  eta: 15:01:23  loss: 1.1553 (1.7248)  acc1: 81.2500 (67.4291)  acc5: 87.5000 (85.2984)  time: 2.8301  data: 2.4874  max mem: 4375
+Test:  [  520/18661]  eta: 14:58:29  loss: 1.0687 (1.7150)  acc1: 81.2500 (67.6943)  acc5: 93.7500 (85.4247)  time: 2.9550  data: 2.6124  max mem: 4375
+Test:  [  530/18661]  eta: 15:02:53  loss: 1.2076 (1.7165)  acc1: 75.0000 (67.6318)  acc5: 87.5000 (85.4167)  time: 3.1981  data: 2.8548  max mem: 4375

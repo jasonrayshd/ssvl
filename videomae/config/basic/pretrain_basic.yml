@@ -52,8 +52,9 @@ start_epoch: 0                              # help='start epoch
 num_workers: 2
 pin_mem: true
 # flow images
-use_flow: false                             # help='use preprocessed flow images as target or not
-flow_based_recons: false                    # help='use given target or not
+use_flow: true                              # whether use preprocessed flow images as target at pretraining or not
+flow_pretrain: True                         # whether predicting flow images at pretraining
+flow_mode: "A"   
 
 # configuration file
 # config: ""                                  # help='path to configuration file

@@ -50,8 +50,8 @@ start_epoch: 0                              # help='start epoch
 num_workers: 2
 pin_mem: true
 # flow images
-use_flow: false                             # help='use preprocessed flow images as target or not
-flow_based_recons: false                    # help='use given target or not
+use_preprocessed_flow: false                             # help='use preprocessed flow images as target or not
+flow_pretrain: false                    # help='use given target or not
 
 # configuration file
 # config: ""                                  # help='path to configuration file

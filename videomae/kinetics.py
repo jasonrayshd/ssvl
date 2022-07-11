@@ -163,6 +163,8 @@ class VideoClsDataset(Dataset):
                        :, spatial_start:spatial_start + self.short_side_size, :]
 
             buffer = self.data_transform(buffer)
+
+            # print(f"loading:{self.test_label_array[index]}")
             return buffer, self.test_label_array[index], sample.split("/")[-1].split(".")[0], \
                    chunk_nb, split_nb
         else:

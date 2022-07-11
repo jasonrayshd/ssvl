@@ -4,6 +4,7 @@ import pandas as pd
 import torch
 import torch.utils.data
 import random
+import numpy as np
 import logging
 
 import video_transforms as transform
@@ -13,7 +14,7 @@ from epickitchens_record import EpicKitchensVideoRecord
 logger = logging.getLogger(__name__)
 
 
-def get_start_end_idx(video_size, clip_size, clip_idx, num_clips):
+def get_start_end_idx(video_size, clip_size, clip_idx, num_clips, flow_pretrain=False):
     """
     Sample a clip of size clip_size from a video of size video_size and
     return the indices of the first and last frame of the clip. If clip_idx is
@@ -29,22 +30,37 @@ def get_start_end_idx(video_size, clip_size, clip_idx, num_clips):
             clip.
         num_clips (int): overall number of clips to uniformly sample from the
             given video for testing.
+
+        flow_pretrain (bool): whether pretraining and predicting flow images
+        random_strategy (bool): whether sample clip of random size this will lead to no adjascent frames will be sampled
+
     Returns:
         start_idx (int): the start frame index.
         end_idx (int): the end frame index.
     """
+
+
     delta = max(video_size - clip_size, 0)
     if clip_idx == -1:
         # Random temporal sampling.
+        # if flow_pretrain:
+        #     # edited by jiachen
+        #     # when predicting flow imagse in pretraining, only even number of frames will be 
+        #     # sampled to predict flow images.
+        #     # must start from even-indexed frame (when index starts from 0)
+        #     # since flow images in Epic-kitchens are sampled between images of which previous image is always even-index
+        #     start_idx = random.uniform(0, delta - 1)
+        # else:
         start_idx = random.uniform(0, delta)
     else:
         # Uniformly sample the clip with the given index.
         start_idx = delta * clip_idx / num_clips
+
     end_idx = start_idx + clip_size - 1
     return start_idx, end_idx
 
 
-def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0):
+def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0, flow_pretrain=False):
     """
     Given the start and end frame index, sample num_samples frames between
     the start and end with equal interval.
@@ -54,19 +70,63 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
         end_idx (int): the index of the end frame.
         num_samples (int): number of frames to sample.
         start_frame (int): starting frame of the action clip in the untrimmed video
+
+        flow_pretrain (bool): whether predicting flow images at pretraining
     Returns:
         frames (tersor): a tensor of temporal sampled video frames, dimension is
             `num clip frames` x `channel` x `height` x `width`.
     """
 
-    index = torch.linspace(start_idx, end_idx, num_samples)
-    index = torch.clamp(index, 0, num_frames - 1).long()
-    return start_frame + index
+    if flow_pretrain:
+        # NOTE
+        # 1. num_samples is an even number
+        # 2. start_idx is a odd number
+        # 3. start_idx and end_idx returned by get_start_end_idx() are increased by one
+
+        assert num_samples % 2 == 0, f"number of frames:{num_samples} to be sampled should be even"
+        # assert start_idx % 2 == 1, f"start index:{start_idx} is not an odd number"
+        raw_index = start_frame + torch.linspace(start_idx, end_idx, num_samples//2).long()
+
+        index = [ ]
+        rep_flag = False
+        for i in range(len(raw_index)):
+            if raw_index[i] % 2 != 0:
+                if raw_index[i] + 1 < start_frame + num_frames:
+                    index.append(raw_index[i])
+                    index.append(raw_index[i] + 1)
+                else:
+                    # replicate last frames
+                    rep_flag = True
+                    print("Replicating last two frames")
+                    index.extend(index[-2:])
+            else:
+                index.append(raw_index[i] - 1)
+                index.append(raw_index[i])
+
+        index = torch.clamp( torch.as_tensor(index), start_frame, start_frame + num_frames - 1)
+
+        if rep_flag:
+            print(index, start_frame, start_frame + num_frames, num_frames)
+
+        return index
+    else:
+        index = torch.linspace(start_idx, end_idx, num_samples)
+        index = torch.clamp(index, 0, num_frames - 1).long()
+        return start_frame + index
 
 
 def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60,
-                            as_pil=False, use_flow=False, flow_mode="A"
+                            as_pil=False, use_preprocessed_flow=False, flow_mode="A", flow_pretrain=False,
                             ):
+
+    """
+        ...
+
+        as_pil (bool): whether return frames as pil image
+        use_preprocessed_flow (bool): whether use flow images or not (for pretraining)
+        flow_mode (str): work with use_preprocessed_flow, indicates different flow image sampling strategy
+        flow_pretrain (bool): whether predicting flow images at pretraining
+    """
     # Load video by loading its extracted frames
     path_to_video = '{}/{}/rgb_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
                                                  video_record.participant,
@@ -78,23 +138,33 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
     
     img_tmpl = "frame_{:010d}.jpg"
     fps, sampling_rate, num_samples = video_record.fps, cfg.DATA.SAMPLING_RATE, cfg.DATA.NUM_FRAMES
+
+    if flow_pretrain is True:
+        # indicates that we are pretrainning on Epic-kitchen by predicting flow images
+        assert num_samples % 2 == 0, \
+            "When pretraining on Epic-kitchen and predicting flow images, number of sampled frames should be even number"
+
     start_idx, end_idx = get_start_end_idx(
         video_record.num_frames,
         num_samples * sampling_rate * fps / target_fps,
         temporal_sample_index,
         cfg.TEST.NUM_ENSEMBLE_VIEWS,
+        flow_pretrain = flow_pretrain,
     )
     start_idx, end_idx = start_idx + 1, end_idx + 1
     frame_idx = temporal_sampling(video_record.num_frames,
                                   start_idx, end_idx, num_samples,
-                                  start_frame=video_record.start_frame)
+                                  start_frame=video_record.start_frame,
+                                  flow_pretrain = flow_pretrain,
+                                  )
     img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
     # if use flow, this indicates pretrain is used then return frames of pil format
     frames = utils.retry_load_images(img_paths, as_pil=as_pil)
 
-    if use_flow:
+    if use_preprocessed_flow:
         # NOTE
         # idx range in [1, video frames]
+
         if flow_mode == "A":
             # sample strategy:
             # frame of odd index:  sample flow between it and its next frame
@@ -107,21 +177,22 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
             u_flow_paths = []
             v_flow_paths = []
 
-            for i, idx in enumerate(frame_idx):
+            for i in range(0, len(frame_idx), 2):
+                idx  = frame_idx[i]
+                assert idx % 2 == 1, f"idx:{idx} should be an odd number. frame_idx:{frame_idx}. {start_idx}, {video_record.metadata}, {video_record.num_frames}"
+    
                 upath = os.path.join(path_to_flow, "u", img_tmpl.format( idx.item()//2 + 1))
                 vpath = os.path.join(path_to_flow, "v", img_tmpl.format( idx.item()//2 + 1))
 
-                if not os.path.exists(upath) or not os.path.exists(vpath):
-                    # if we sampled last frame of a video that corresponding flow or flow image of its subsequent frames does not exist
-                    # then this should be the last iteration and this frame should be the last frame in the sampled frame list
-                    # we can simply drop this flow and do not compute the loss of corresponding predicted flow image
+                # if not os.path.exists(upath) or not os.path.exists(vpath):
+                #     # if we sampled last frame of a video that corresponding flow or flow image of its subsequent frames does not exist
+                #     # then this should be the last iteration and this frame should be the last frame in the sampled frame list
+                #     # we can simply drop this flow and do not compute the loss of corresponding predicted flow image
 
-                    assert i == len(frame_idx)-1, f"Corresponding flow image of this frame or flow image of its subsequent frames does not exist\n and this frame is not the last sampled frame:\n {path_to_video}: {idx}"
+                #     assert i == len(frame_idx) - 1, f"Corresponding flow image of this frame or flow image of its subsequent frames does not exist\n and this frame is not the last sampled frame:\n {path_to_video}: {idx}"
 
-                    print(f"Warning: found a none exist flow image: {path_to_flow} {upath.split('/')[-1]}")
-                    print("last predicted flow image will not be computed in loss")
-
-                    continue
+                #     print(f"Warning: found a none existent flow image: {path_to_flow} {upath.split('/')[-1]}")
+                #     print(" last predicted flow image will not be computed in loss")
 
                 u_flow_paths.append(upath)
                 v_flow_paths.append(vpath)
@@ -169,7 +240,7 @@ MODEL.MULTI_PATHWAY_ARCH
 
 class Epickitchens(torch.utils.data.Dataset):
 
-    def __init__(self, cfg, mode, pretrain=False, pretrain_transform=None, use_flow=False, flow_mode = "A"):
+    def __init__(self, cfg, mode, pretrain=False, flow_pretrain=False, pretrain_transform=None, use_preprocessed_flow=False, flow_mode = "A"):
 
         assert mode in [
             "train",
@@ -181,7 +252,8 @@ class Epickitchens(torch.utils.data.Dataset):
         self.mode = mode
         self.pretrain = pretrain                      # pretrain or not
         self.pretrain_transform = pretrain_transform  # data transformation for pretraining
-        self.use_flow = use_flow
+        self.use_preprocessed_flow = use_preprocessed_flow
+        self.flow_pretrain = flow_pretrain            # whether predicting flow images at pretraining
         self.flow_mode = flow_mode                    # mode of loading flow images, different modes will produce different number of flow images
 
         self.target_fps = 60
@@ -301,12 +373,13 @@ class Epickitchens(torch.utils.data.Dataset):
             )
 
         # load frames (and flows)
-        if not self.use_flow:
-            # if not pretrainning or is pretraining but do not need to use flow images
-            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain)
+        if not self.use_preprocessed_flow:
+            # if not pretrainning or is pretraining but do not need to use flow images,
+            # then not load flow images
+            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=self.flow_pretrain)
         else:
-            # load flow images according to given mode
-            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_flow=True, flow_mode=self.flow_mode)
+            # else load flow images according to given mode
+            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_preprocessed_flow=True, flow_mode=self.flow_mode, flow_pretrain=True)
 
         # data augmentation
         if not self.pretrain:
@@ -327,15 +400,15 @@ class Epickitchens(torch.utils.data.Dataset):
             )
         else:
             # frames, flows share the same mask
-            if self.use_flow:
+            if self.use_preprocessed_flow:
                 flows = [uflows, vflows]
-                frames, flows, mask = self.pretrain_transform((frames, flows), use_flow=True) # frames shape: C*T, H, W
+                frames, flows, mask = self.pretrain_transform((frames, flows), use_preprocessed_flow=True) # frames shape: C*T, H, W
                 frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) # 3, num_frames, H, W
                 # flows are processed in pretrain_transform
                 # flows = flows.view((self.cfg.DATA.NUM_FRAMES, 2) + frames.size()[1:3]).transpose(0,1) # 2, num_flows, H, W
             else:
-                # vanilla MAE pretrain
-                frames, mask = self.pretrain_transform((frames, None), use_flow=False)
+                # vanilla MAE pretraininng or recontruct input with predicted flow images
+                frames, mask = self.pretrain_transform((frames, None), use_preprocessed_flow=False)
                 frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) 
 
         label = self._video_records[index].label
@@ -346,7 +419,7 @@ class Epickitchens(torch.utils.data.Dataset):
         if not self.pretrain:
             # not pretrain, keep the original implementation
             return frames, label, index, metadata
-        elif self.pretrain and not self.use_flow:
+        elif self.pretrain and not self.use_preprocessed_flow:
             # if is pretrain but do not need to use flow images
             return frames, mask, label, index, metadata
         else:
@@ -399,3 +472,8 @@ class Epickitchens(torch.utils.data.Dataset):
             )
             frames, _ = transform.uniform_crop(frames, crop_size, spatial_idx)
         return frames
+
+
+    
+if __name__ == "__main__":
+    pass

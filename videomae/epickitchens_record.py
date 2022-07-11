@@ -57,10 +57,11 @@ class EpicKitchensVideoRecord(VideoRecord):
     def untrimmed_video_name(self):
         return self._series['video_id']
 
+    # has problem when reading P01_102_47 from csv annotation file
     @property
     def start_frame(self):
         return int(round(timestamp_to_sec(self._series['start_timestamp']) * self.fps))
-
+    # has problem when reading P01_102_47
     @property
     def end_frame(self):
         return int(round(timestamp_to_sec(self._series['stop_timestamp']) * self.fps))
