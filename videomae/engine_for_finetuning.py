@@ -225,7 +225,7 @@ def final_test(data_loader, model, device, file, criterion):
     # switch to evaluation mode
     model.eval()
     final_result = []
-    
+
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
         target = batch[1]

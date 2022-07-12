@@ -249,6 +249,11 @@ def main(args, ds_init):
 
     utils.init_distributed_mode(args)
 
+
+    nthreads = 5
+    cv2.setNumThreads(nthreads)
+    torch.set_num_threads(nthreads)
+
     # codes below should be called after distributed initialization
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -278,7 +283,7 @@ def main(args, ds_init):
     else:
         dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
         # commented since test set of ego4d is not annotated yet.
-        if args.data_set == "ego4d":
+        if "ego4d" in args.data_set.lower():
             dataset_test = None
         else:
             dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
@@ -302,15 +307,18 @@ def main(args, ds_init):
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
         sampler_test = torch.utils.data.SequentialSampler(dataset_test)
 
-    if global_rank == 0 and args.log_dir is not None:
-        run_time = time.time()
-        args.name += str(run_time)  # add current time as name for multiple run
+    if args.log_dir is not None:
+
+        # args.name += str(args.time)  # add current time as name for multiple run
         args.log_dir = os.path.join(args.log_dir, args.name)
         args.output_dir = os.path.join(args.output_dir, args.name)
-        os.makedirs(args.log_dir, exist_ok=True)
-        os.makedirs(args.output_dir, exist_ok=True)
-        log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
 
+        if global_rank == 0:
+            os.makedirs(args.log_dir, exist_ok=True)
+            os.makedirs(args.output_dir, exist_ok=True)
+            log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
+        else:
+            log_writer = None
     else:
         log_writer = None
 
@@ -583,7 +591,6 @@ def main(args, ds_init):
                 with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                     f.write(json.dumps(log_stats) + "\n")
         exit(0)
-        
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()

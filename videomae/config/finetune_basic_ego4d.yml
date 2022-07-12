@@ -1,4 +1,4 @@
-batch_size: 2
+batch_size: 4
 epochs: 75 
 update_freq: 1
 save_ckpt_freq: 10
@@ -84,8 +84,8 @@ sampling_rate: 4
 
 data_set: 'Ego4d-statechange-classification-localization'
 
-output_dir: ''      # help='path where to save, empty for no saving')
-log_dir: null       # help='path where to tensorboard log')
+output_dir: /mnt/code/videomae/output      # help='path where to save, empty for no saving')
+log_dir: /mnt/code/videomae/output       # help='path where to tensorboard log')
 # device: 'cuda'      # help='device to use for training / testing')
 # seed: 0
 resume: ''          # help='resume from checkpoint')
@@ -95,7 +95,7 @@ save_ckpt: true
 start_epoch: 0      # help='start epoch')
 # eval: false         # help='Perform evaluation only')
 # dist_eval: true    # help='Enabling distributed evaluation')
-num_workers: 2
+num_workers: 4
 # pin_mem: true
 
 # # distributed training parameters
@@ -116,13 +116,13 @@ num_workers: 2
 cfg:
   DATA: 
     # Data Loading
-    ANN_DIR: "/mnt/ego4d/v1/partial_anno"
-    VIDEO_DIR_PATH: "/mnt/ego4d/v1/clips"
-    CLIPS_SAVE_PATH: "/mnt/ego4d/v1/pos"  # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
-    NO_SC_PATH: "/mnt/ego4d/v1/neg"        # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+    ANN_DIR: "/data/shared/ssvl/ego4d/v1/annotations"
+    VIDEO_DIR_PATH: "/data/shared/ssvl/ego4d/v1/full_scale"
+    CLIPS_SAVE_PATH: "/data/shared/ssvl/ego4d/v1/pos"  # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+    NO_SC_PATH: "/data/shared/ssvl/ego4d/v1/neg"        # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
 
     SAVE_AS_ZIP: True                # save frames in zip file for efficient data loading
-    READ_BY_CLIPS: True                  # read by clips or full_scale video
+    READ_BY_CLIPS: False                  # read by clips or full_scale video
 
     # Data Sampling
     CLIP_LEN_SEC: 8 # Duration time in second of clip

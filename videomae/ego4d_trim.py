@@ -171,16 +171,16 @@ def _get_frames_pts(
     # seek to the point we need in the video
     # with some buffer room, just in-case the seek is not precise
     seek_pts = max(0, min_pts - 2 * video_pt_diff)
-    video_stream.seek(seek_pts)
-    # container.seek(math.floor(pts_to_time_seconds(seek_pts, video_base)), stream=video_stream)
+    # video_stream.seek(seek_pts)
+    container.seek(seek_pts, stream=video_stream)
 
     if "audio" in streams_to_decode:
         assert len(container.streams.audio) == 1
         audio_stream = container.streams.audio[0]
         # pyre-fixme[61]: `audio_base` may not be initialized here.
         audio_seek_pts = int(seek_pts * video_base / audio_base)
-        audio_stream.seek(audio_seek_pts)
-        # container.seek(audio_seek_pts, stream=audio_stream)
+        # audio_stream.seek(audio_seek_pts)
+        container.seek(audio_seek_pts, stream=audio_stream)
 
     # --- iterate over video
 
