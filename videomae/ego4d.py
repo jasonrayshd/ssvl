@@ -294,16 +294,12 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         except Exception as e:
             print(f"error occurs while reading {info['video_id']}")
             raise e
-        try:
-            frames, labels, _ = self._sample_frames_gen_labels(info, from_zip=self.save_as_zip)     # Sample given number of frames
-                                                                                                # Return contains two numpy.ndarray that contains sampeld frames and label
-                                                                                                # original transformations include: 
-                                                                                                #     (1) random start frame
-                                                                                                #     (2) resize to square (was commented)
-        except:
-            print(f"error occurs while reading {info['video_id']} for {info['unique_id']}")
-            import sys
-            sys.exit(0)
+
+        frames, labels, _ = self._sample_frames_gen_labels(info, from_zip=self.save_as_zip)     # Sample given number of frames
+                                                                                            # Return contains two numpy.ndarray that contains sampeld frames and label
+                                                                                            # original transformations include: 
+                                                                                            #     (1) random start frame
+                                                                                            #     (2) resize to square (was commented)
 
         if labels.sum() != 0:
             labels = labels.nonzero()[0].item()

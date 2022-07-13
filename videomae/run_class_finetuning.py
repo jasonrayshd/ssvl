@@ -245,6 +245,33 @@ def get_args():
 
     return parser.parse_args(), ds_init
 
+def collate_func_debug_val(batch):
+    inputs, target, fps, info = zip(*batch)
+
+
+    for i, item in enumerate(target):
+        try:
+            labels.append(item[0])
+            states.append(item[1])
+            if item[0] is None or item[1] is None:
+                print(info[i])
+                import sys
+                sys.exit(0)
+        except:
+            print(info[i])
+            import sys
+            sys.exit(0)
+
+    inputs, labels, states = (
+        default_collate(inputs),
+        default_collate(labels),
+        default_collate(states),
+    )
+
+    return inputs, [labels, states], fps, info
+
+
+
 def main(args, ds_init):
 
     utils.init_distributed_mode(args)
@@ -347,7 +374,8 @@ def main(args, ds_init):
             batch_size=int(1.5 * args.batch_size),
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
-            drop_last=False
+            drop_last=False,
+            # collate_fn=collate_func_debug_val,
         )
     else:
         data_loader_val = None
