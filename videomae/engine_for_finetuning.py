@@ -174,7 +174,7 @@ def validation_one_epoch(data_loader, model, device, criterion):
         videos = batch[0]
         target = batch[1]
         videos = videos.to(device, non_blocking=True)
-        print(target)
+        # print(target)
         if not isinstance(target, list):
             target = target.to(device, non_blocking=True)
         else:

@@ -375,7 +375,7 @@ def main(args, ds_init):
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
             drop_last=False,
-            # collate_fn=collate_func_debug_val,
+            collate_fn=collate_func_debug_val,
         )
     else:
         data_loader_val = None
