@@ -428,6 +428,7 @@ def main(args, ds_init):
                 checkpoint_model = checkpoint[model_key]
                 print("Load state_dict by model_key = %s" % model_key)
                 break
+
         if checkpoint_model is None:
             checkpoint_model = checkpoint
         state_dict = model.state_dict()
