@@ -174,7 +174,7 @@ def validation_one_epoch(data_loader, model, device, criterion):
         videos = batch[0]
         target = batch[1]
         videos = videos.to(device, non_blocking=True)
-
+        print(target)
         if not isinstance(target, list):
             target = target.to(device, non_blocking=True)
         else:
@@ -229,7 +229,6 @@ def final_test(data_loader, model, device, file, criterion):
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
         target = batch[1]
-        print(type(target))
         ids = batch[2]
         chunk_nb = batch[3]
         split_nb = batch[4]
