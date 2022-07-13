@@ -8,3 +8,4 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --overwrite command-line \
     --config /mnt/code/videomae/config/finetune_basic_ego4d.yml \
     --debug \
+ 
