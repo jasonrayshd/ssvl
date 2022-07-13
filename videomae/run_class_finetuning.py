@@ -603,19 +603,19 @@ def main(args, ds_init):
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch * args.update_freq)
 
-        # train_stats = train_one_epoch(
-        #     model, criterion, data_loader_train, optimizer,
-        #     device, epoch, loss_scaler, args.clip_grad, model_ema, mixup_fn,
-        #     log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
-        #     lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
-        #     num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
-        # )
+        train_stats = train_one_epoch(
+            model, criterion, data_loader_train, optimizer,
+            device, epoch, loss_scaler, args.clip_grad, model_ema, mixup_fn,
+            log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
+            lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
+            num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
+        )
 
-        # if args.output_dir and args.save_ckpt:
-        #     if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
-        #         utils.save_model(
-        #             args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-        #             loss_scaler=loss_scaler, epoch=epoch, model_ema=model_ema)
+        if args.output_dir and args.save_ckpt:
+            if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
+                utils.save_model(
+                    args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+                    loss_scaler=loss_scaler, epoch=epoch, model_ema=model_ema)
         
         if data_loader_val is not None:
 
