@@ -20,7 +20,7 @@ from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValu
 from datasets import build_dataset
 from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
 from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate, multiple_samples_collate_ego4d, samples_collate_ego4d
+from utils import  multiple_samples_collate, multiple_samples_collate_ego4d, samples_collate_ego4d, collate_func_debug_val
 import utils
 import modeling_finetune
 
@@ -244,33 +244,6 @@ def get_args():
         ds_init = None
 
     return parser.parse_args(), ds_init
-
-def collate_func_debug_val(batch):
-    inputs, target, fps, info = zip(*batch)
-
-
-    for i, item in enumerate(target):
-        try:
-            labels.append(item[0])
-            states.append(item[1])
-            if item[0] is None or item[1] is None:
-                raise Exception(f"Error occurs: {info[i]}")
-                import sys
-                sys.exit(0)
-        except:
-            raise Exception(f"Error occurs: {info[i]}")
-            import sys
-            sys.exit(0)
-
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
-
-    return inputs, [labels, states], fps, info
-
-
 
 def main(args, ds_init):
 
