@@ -254,11 +254,11 @@ def collate_func_debug_val(batch):
             labels.append(item[0])
             states.append(item[1])
             if item[0] is None or item[1] is None:
-                print(info[i])
+                raise Exception(f"Error occurs: {info[i]}")
                 import sys
                 sys.exit(0)
         except:
-            print(info[i])
+            raise Exception(f"Error occurs: {info[i]}")
             import sys
             sys.exit(0)
 
