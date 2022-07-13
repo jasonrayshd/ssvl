@@ -249,10 +249,7 @@ def main(args, ds_init):
 
     utils.init_distributed_mode(args)
 
-
-    nthreads = 5
-    cv2.setNumThreads(nthreads)
-    torch.set_num_threads(nthreads)
+    # torch.set_num_threads(5)
 
     # codes below should be called after distributed initialization
     num_tasks = utils.get_world_size()

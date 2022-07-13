@@ -1,4 +1,4 @@
-batch_size: 4
+batch_size: 8
 epochs: 75 
 update_freq: 1
 save_ckpt_freq: 10
@@ -38,7 +38,7 @@ warmup_steps: -1        # help='num of steps to warmup LR, will overload warmup_
 
 # Augmentation parameters
 color_jitter: 0.4,                # help='Color jitter factor (default: 0.4)')
-num_sample: 2                     # help='Repeated_aug (default: 2)')
+num_sample: 1                     # help='Repeated_aug (default: 2)')
 aa: 'rand-m7-n4-mstd0.5-inc1'     # help='Use AutoAugment policy. "v0" or "original". " + "(default: rand-m7-n4-mstd0.5-inc1)'),
 smoothing: 0.1                    # help='Label smoothing (default: 0.1)')
 train_interpolation: 'bicubic'    # help='Training interpolation (random, bilinear, bicubic default: "bicubic")')

@@ -12,6 +12,7 @@ import time
 
 import av
 import cv2
+
 from PIL import Image
 from tblib import Frame
 import torch
@@ -810,6 +811,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         #         frame = frame.to_rgb().to_ndarray()
         #         frames.append(frame)
 
+        cv2.setNumThreads(3)
         # official code where av == 6.0.0
         frames = []
         container = av.open(video_path)
