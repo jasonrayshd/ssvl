@@ -565,7 +565,7 @@ def main(args, ds_init):
         criterion = torch.nn.CrossEntropyLoss()
 
     if args.nb_classes == -1:
-        criterion = Ego4dTwoHead_Criterion(criterion)
+        criterion = Ego4dTwoHead_Criterion(criterion, lamb_cls=args.lamb_cls, lamb_loc=args.lamb_loc)
 
     print("criterion = %s" % str(criterion))
 
@@ -620,7 +620,7 @@ def main(args, ds_init):
         if data_loader_val is not None:
 
             if args.nb_classes == -1:
-                val_criterion = Ego4dTwoHead_Criterion(torch.nn.CrossEntropyLoss())
+                val_criterion = Ego4dTwoHead_Criterion(torch.nn.CrossEntropyLoss(), lamb_cls=args.lamb_cls, lamb_loc=args.lamb_loc)
             else:
                 val_criterion = torch.nn.CrossEntropyLoss()
 
