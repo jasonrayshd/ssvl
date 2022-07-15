@@ -720,7 +720,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             # load frames from folder that contains jpeg files
             for frame_num in candidate_frame_nums:
                 frame_path = os.path.join(clip_path, f'{frame_num}.jpeg')
-                message = f'Failed to read after trying {retry} times, {frame_path}; {candidate_frame_nums}; {os.listdir("/".join(frame_path.split("/")[:-1]))}'
+                message = f'Failed to find frames after trying {retry} times, {frame_path}; {candidate_frame_nums}; {os.listdir("/".join(frame_path.split("/")[:-1]))}'
                 # tolerate missed read
                 self.assert_exist_wtolerance(frame_path, message, retry=retry)
                 frames.append(self._load_frame(frame_path))
@@ -728,16 +728,26 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         else:
             # load frames from zip file
             zip_file_path = os.path.join(clip_path, "frames.zip")
-            message = f'Failed to read after trying {retry} times, {zip_file_path}; {candidate_frame_nums};'
+            message = f'Failed to find zip file after trying {retry} times, {zip_file_path}; {candidate_frame_nums};'
             self.assert_exist_wtolerance(zip_file_path, message, retry=retry)
 
-            try:
-                zf = ZipFile( zip_file_path, "r")
-            except zipfile.BadZipFile:
-                os.system(f"rm {zip_file_path}")
-                    raise Exception(f"Exception occurs while opening zip file: {zip_file_path}. Deleted it...\n\
-                                    \rRaw expception: {e} \
-                                    ")
+            _zip_open_retry = 2
+            while i in range(_zip_open_retry):
+                try:
+                    zf = ZipFile( zip_file_path, "r")
+                    # if successfully opened zipfile then break loop
+                    break
+                except zipfile.BadZipFile:
+                    os.system(f"rm {zip_file_path}")
+                    # if reach maximum times of retrying
+                    # then raise error and end program
+                    if i == _zip_open_retry - 1:
+                        raise Exception(f"Exception occurs while opening zip file: {zip_file_path}. Deleted it...\n\
+                                        \rRaw expception: {e} \
+                                        ")
+                    # else
+                    # extract frames again
+                    self._extract_clip_frames(info, save_as_zip=from_zip)
 
             # zf.printdir()
             for frame_num in candidate_frame_nums:
