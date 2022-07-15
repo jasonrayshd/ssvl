@@ -731,19 +731,26 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             message = f'Failed to read after trying {retry} times, {zip_file_path}; {candidate_frame_nums};'
             self.assert_exist_wtolerance(zip_file_path, message, retry=retry)
 
-            with ZipFile( zip_file_path, "r") as zf:
-                # zf.printdir()
-                for frame_num in candidate_frame_nums:
-                    try:
-                        with zf.open(f"{frame_num}.jpeg") as f:
-                            image_data = f.read()
-                            pil = Image.open(io.BytesIO(image_data))
-                            frames.append(np.array(pil))
-                    except Exception as e:
-                        os.system(f"rm {zip_file_path}")
-                        raise Exception(f"Exception occurs while reading frame {frame_num}.jpeg from file {zip_file_path}. Deleted it...\n\
-                                        \rRaw expception: {e} \
-                                        ")
+            try:
+                zf = ZipFile( zip_file_path, "r")
+            except zipfile.BadZipFile:
+                os.system(f"rm {zip_file_path}")
+                    raise Exception(f"Exception occurs while opening zip file: {zip_file_path}. Deleted it...\n\
+                                    \rRaw expception: {e} \
+                                    ")
+
+            # zf.printdir()
+            for frame_num in candidate_frame_nums:
+                try:
+                    with zf.open(f"{frame_num}.jpeg") as f:
+                        image_data = f.read()
+                        pil = Image.open(io.BytesIO(image_data))
+                        frames.append(np.array(pil))
+                except Exception as e:
+                    os.system(f"rm {zip_file_path}")
+                    raise Exception(f"Exception occurs while reading frame {frame_num}.jpeg from file {zip_file_path}. Deleted it...\n\
+                                    \rRaw expception: {e} \
+                                    ")
 
         if pnr_frame is not None:
             keyframe_location = np.argmin(keyframe_candidates_list)
