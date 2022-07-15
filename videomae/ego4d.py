@@ -732,7 +732,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             self.assert_exist_wtolerance(zip_file_path, message, retry=retry)
 
             _zip_open_retry = 2
-            while i in range(_zip_open_retry):
+            for i in range(_zip_open_retry):
                 try:
                     zf = ZipFile( zip_file_path, "r")
                     # if successfully opened zipfile then break loop
@@ -747,7 +747,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                                         ")
                     # else
                     # extract frames again
-                    self._extract_clip_frames(info, save_as_zip=from_zip)
+                    self._extract_clip_frames(info, save_as_zip=True)
 
             # zf.printdir()
             for frame_num in candidate_frame_nums:
