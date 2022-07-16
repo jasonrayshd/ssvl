@@ -26,6 +26,7 @@ from ego4d_trim import _get_frames
 
 import io
 import decord
+import zipfile
 from zipfile import ZipFile
 
 """
