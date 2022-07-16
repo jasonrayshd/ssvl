@@ -6,7 +6,7 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch \
     --enable_deepspeed \
     --dist_eval \
     --overwrite command-line \
-    --config /mnt/code/videomae/config/finetune_basic_ego4d.yml \
+    --config /mnt/code/videomae/config/local/finetune_basic_ego4d.yml \
     --debug \
     --name prek400ftego4d_A1
  
