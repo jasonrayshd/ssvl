@@ -7,6 +7,13 @@ import random
 import numpy as np
 import logging
 
+import io
+import time
+import zipfile
+from zipfile import ZipFile
+import tarfile
+from PIL import Image
+
 import video_transforms as transform
 import epickitchens_utils as utils
 from epickitchens_record import EpicKitchensVideoRecord
@@ -115,8 +122,41 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
         return start_frame + index
 
 
+def extract_zip(path_to_save, ext="tar"):
+    print(f"Start extracting frame from zip file:{path_to_save}.{ext} ...")
+    start_time = time.time()
+
+    message = f"Zip file does not exists: {path_to_save}"
+    assert os.path.exists(path_to_save + "." + ext), message
+
+    os.makedirs(path_to_save, exist_ok=True)
+
+    if ext == "zip":
+        try:
+            zf = ZipFile( path_to_save + "." + ext, "r")
+        except zipfile.BadZipFile:       
+            raise Exception(f"Exception occurs while opening zip file: {path_to_save}.zip, file might be corrupted")
+
+        zf.extractall(path_to_save)
+        zf.close()
+    elif ext == "tar":
+        try:
+            tf = tarfile.open( path_to_save + "." + ext, "r")
+        except Exception as e:
+            raise Exception(f"Exception occurs while opening tar file: {path_to_save}.tar, file might be corrupted \
+                            \r Raw exception: {e}")
+        tf.extractall(path_to_save)
+        tf.close()
+    else:
+        raise ValueError(f"Unsupported compressed file type: {ext}, expect one of [zip, tar]")
+
+    end_time = time.time()
+    print(f"Finish processing zipfile {path_to_save}, time taken: {end_time-start_time}")
+
+
 def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60,
                             as_pil=False, use_preprocessed_flow=False, flow_mode="A", flow_pretrain=False,
+                            mode = "train"
                             ):
 
     """
@@ -127,15 +167,45 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
         flow_mode (str): work with use_preprocessed_flow, indicates different flow image sampling strategy
         flow_pretrain (bool): whether predicting flow images at pretraining
     """
-    # Load video by loading its extracted frames
-    path_to_video = '{}/{}/rgb_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
-                                                 video_record.participant,
-                                                 video_record.untrimmed_video_name)
-    
-    path_to_flow = '{}/{}/flow_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
-                                                 video_record.participant,
-                                                 video_record.untrimmed_video_name)
-    
+
+    if cfg.VERSION == 100:
+        # if is epic-kitchen 100
+        path_to_video = '{}/{}/rgb_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
+                                                    video_record.participant,
+                                                    video_record.untrimmed_video_name)
+        if not os.path.isdir(path_to_video):
+            extract_zip(path_to_video)
+
+        path_to_flow = '{}/{}/flow_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
+                                                    video_record.participant,
+                                                    video_record.untrimmed_video_name)
+
+        if not os.path.isdir(path_to_flow):
+            extract_zip(path_to_flow)
+
+    elif cfg.VERSION == 55:
+        message = f"Unkown split:{mode} for Epic-Kitchen55, expect one of [train/test]"
+        assert mode in ["train", "test"], message
+        # else if epic-kitchen 55
+        # Load video by loading its extracted frames
+        path_to_video = '{}/rgb/{}/{}/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
+                                                    mode,
+                                                    video_record.participant,
+                                                    video_record.untrimmed_video_name)
+        if not os.path.isdir(path_to_video):
+            extract_zip(path_to_video)
+
+        path_to_flow = '{}/flow/{}/{}/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
+                                                    mode,
+                                                    video_record.participant,
+                                                    video_record.untrimmed_video_name)
+        if not os.path.isdir(path_to_flow):
+            extract_zip(path_to_flow)
+
+    else:
+        raise ValueError(f"Unknwon Epic-kitchen version: {cfg.VERSION}")
+
+
     img_tmpl = "frame_{:010d}.jpg"
     fps, sampling_rate, num_samples = video_record.fps, cfg.DATA.SAMPLING_RATE, cfg.DATA.NUM_FRAMES
 
@@ -376,10 +446,10 @@ class Epickitchens(torch.utils.data.Dataset):
         if not self.use_preprocessed_flow:
             # if not pretrainning or is pretraining but do not need to use flow images,
             # then not load flow images
-            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=self.flow_pretrain)
+            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=self.flow_pretrain, mode=self.mode)
         else:
             # else load flow images according to given mode
-            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_preprocessed_flow=True, flow_mode=self.flow_mode, flow_pretrain=True)
+            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_preprocessed_flow=True, flow_mode=self.flow_mode, flow_pretrain=True, mode=self.mode)
 
         # data augmentation
         if not self.pretrain:

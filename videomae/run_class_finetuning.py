@@ -303,18 +303,14 @@ def main(args, ds_init):
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
         sampler_test = torch.utils.data.SequentialSampler(dataset_test)
 
-    if args.log_dir is not None:
 
-        # args.name += str(args.time)  # add current time as name for multiple run
-        args.log_dir = os.path.join(args.log_dir, args.name)
-        args.output_dir = os.path.join(args.output_dir, args.name)
-
-        if global_rank == 0:
-            os.makedirs(args.log_dir, exist_ok=True)
-            os.makedirs(args.output_dir, exist_ok=True)
-            log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
-        else:
-            log_writer = None
+    assert args.log_dir is not None and args.output_dir is not None, "log_dir and output_dir should not be empty"
+    args.log_dir = os.path.join(args.log_dir, args.name)
+    args.output_dir = os.path.join(args.output_dir, args.name)
+    if global_rank == 0:
+        os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(args.log_dir, exist_ok=True)  
+        log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
     else:
         log_writer = None
 

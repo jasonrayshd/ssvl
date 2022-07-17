@@ -114,7 +114,7 @@ def get_args():
                         help='path to configuration file')
     parser.add_argument('--overwrite', type=str, default="command-line", help="overwrite command-line argument or arguments from configuration file")
     parser.add_argument('--debug', action='store_true', help="whether in debugging or not; this will prevent wandb logging and some other features")
-
+    parser.add_argument('--name', default='temp', type=str,help='name of the experiment')
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -178,8 +178,13 @@ def main(args):
     )
     print("Sampler_train = %s" % str(sampler_train))
 
-    if global_rank == 0 and args.log_dir is not None:
-        os.makedirs(args.log_dir, exist_ok=True)
+
+    assert args.log_dir is not None and args.output_dir is not None, "log_dir and output_dir should not be empty"
+    args.log_dir = os.path.join(args.log_dir, args.name)
+    args.output_dir = os.path.join(args.output_dir, args.name)
+    if global_rank == 0:
+        os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(args.log_dir, exist_ok=True)  
         log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
     else:
         log_writer = None
