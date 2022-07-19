@@ -4,11 +4,57 @@ import time
 import torch
 from PIL import Image
 import cv2
+import os
 
 logger = logging.getLogger(__name__)
 
+import time
+import zipfile
+from zipfile import ZipFile
+import tarfile
 
-def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False):
+def extract_zip(path_to_save, ext="tar"):
+
+
+    # num_frames = len(os.listdir(path_to_save)) # existing frames in the directory
+    message = f"Zip file does not exists: {path_to_save}"
+    assert os.path.exists(path_to_save + "." + ext), message
+    os.makedirs(path_to_save, exist_ok=True)
+
+    print(f"Start extracting frame from zip file:{path_to_save}.{ext} ...")
+    start_time = time.time()
+
+    # if ext == "zip":
+    #     try:
+    #         zf = ZipFile( path_to_save + "." + ext, "r")
+    #     except zipfile.BadZipFile:       
+    #         raise Exception(f"Exception occurs while opening zip file: {path_to_save}.zip, file might be corrupted")
+
+    #     if len(frame_lst) != 0:
+    #         namelist = zf.get
+    #         for frame in frame_lst:
+                
+    #     else:
+    #         zf.extractall(path_to_save)
+    #         zf.close()
+
+    if ext == "tar":
+        try:
+            tf = tarfile.open( path_to_save + "." + ext, "r")
+        except Exception as e:
+            raise Exception(f"Exception occurs while opening tar file: {path_to_save}.tar, file might be corrupted \
+                            \r Raw exception: {e}")
+
+        tf.extractall(path_to_save)
+        tf.close()
+    else:
+        raise ValueError(f"Unsupported compressed file type: {ext}, expect one of [zip, tar]")
+
+    end_time = time.time()
+    print(f"Finish processing zipfile {path_to_save}, time taken: {end_time-start_time}")
+
+
+def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, path_to_compressed=""):
     """
     This function is to load images with support of retrying for failed load.
     Args:
@@ -18,6 +64,14 @@ def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False):
     Returns:
         imgs (list): list of loaded images.
     """
+
+    for image_path in image_paths:
+        if not os.path.exists(image_path):
+            # if one frame does not exist then extract all frames specified in image_paths from the zip
+            assert os.path.exists(path_to_compressed), f"image file {image_paths} not exists while compressed file does not exist: {path_to_video}"
+            extract_zip(path_to_compressed)    
+            break
+
     for i in range(retry):
         # edited by jiachen, read image and convert to RGB format
         if not as_pil:

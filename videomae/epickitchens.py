@@ -7,11 +7,6 @@ import random
 import numpy as np
 import logging
 
-import io
-import time
-import zipfile
-from zipfile import ZipFile
-import tarfile
 from PIL import Image
 
 import video_transforms as transform
@@ -122,38 +117,6 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
         return start_frame + index
 
 
-def extract_zip(path_to_save, ext="tar"):
-    print(f"Start extracting frame from zip file:{path_to_save}.{ext} ...")
-    start_time = time.time()
-
-    message = f"Zip file does not exists: {path_to_save}"
-    assert os.path.exists(path_to_save + "." + ext), message
-
-    os.makedirs(path_to_save, exist_ok=True)
-
-    if ext == "zip":
-        try:
-            zf = ZipFile( path_to_save + "." + ext, "r")
-        except zipfile.BadZipFile:       
-            raise Exception(f"Exception occurs while opening zip file: {path_to_save}.zip, file might be corrupted")
-
-        zf.extractall(path_to_save)
-        zf.close()
-    elif ext == "tar":
-        try:
-            tf = tarfile.open( path_to_save + "." + ext, "r")
-        except Exception as e:
-            raise Exception(f"Exception occurs while opening tar file: {path_to_save}.tar, file might be corrupted \
-                            \r Raw exception: {e}")
-        tf.extractall(path_to_save)
-        tf.close()
-    else:
-        raise ValueError(f"Unsupported compressed file type: {ext}, expect one of [zip, tar]")
-
-    end_time = time.time()
-    print(f"Finish processing zipfile {path_to_save}, time taken: {end_time-start_time}")
-
-
 def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60,
                             as_pil=False, use_preprocessed_flow=False, flow_mode="A", flow_pretrain=False,
                             mode = "train"
@@ -173,15 +136,10 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
         path_to_video = '{}/{}/rgb_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
                                                     video_record.participant,
                                                     video_record.untrimmed_video_name)
-        if not os.path.isdir(path_to_video):
-            extract_zip(path_to_video)
 
         path_to_flow = '{}/{}/flow_frames/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
                                                     video_record.participant,
                                                     video_record.untrimmed_video_name)
-
-        if not os.path.isdir(path_to_flow):
-            extract_zip(path_to_flow)
 
     elif cfg.VERSION == 55:
         message = f"Unkown split:{mode} for Epic-Kitchen55, expect one of [train/test]"
@@ -192,19 +150,17 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                                                     mode,
                                                     video_record.participant,
                                                     video_record.untrimmed_video_name)
-        if not os.path.isdir(path_to_video):
-            extract_zip(path_to_video)
-
         path_to_flow = '{}/flow/{}/{}/{}'.format(cfg.EPICKITCHENS.VISUAL_DATA_DIR,
                                                     mode,
                                                     video_record.participant,
                                                     video_record.untrimmed_video_name)
-        if not os.path.isdir(path_to_flow):
-            extract_zip(path_to_flow)
 
     else:
         raise ValueError(f"Unknwon Epic-kitchen version: {cfg.VERSION}")
 
+    # code below will extract frames from compressed file [zip, tar] if the directory not exist
+    if not os.path.isdir(path_to_video):
+        utils.extract_zip(path_to_video)
 
     img_tmpl = "frame_{:010d}.jpg"
     fps, sampling_rate, num_samples = video_record.fps, cfg.DATA.SAMPLING_RATE, cfg.DATA.NUM_FRAMES
@@ -229,11 +185,13 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                                   )
     img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
     # if use flow, this indicates pretrain is used then return frames of pil format
-    frames = utils.retry_load_images(img_paths, as_pil=as_pil)
+    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video)
 
     if use_preprocessed_flow:
         # NOTE
         # idx range in [1, video frames]
+        if not os.path.isdir(path_to_flow):
+            utils.extract_zip(path_to_flow)
 
         if flow_mode == "A":
             # sample strategy:
@@ -267,8 +225,8 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                 u_flow_paths.append(upath)
                 v_flow_paths.append(vpath)
 
-            uflows = utils.retry_load_images(u_flow_paths, as_pil=True)
-            vflows = utils.retry_load_images(v_flow_paths, as_pil=True)
+            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
+            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
             
             return frames, uflows, vflows
         else:
