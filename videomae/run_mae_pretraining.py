@@ -115,7 +115,8 @@ def get_args():
     parser.add_argument('--overwrite', type=str, default="command-line", help="overwrite command-line argument or arguments from configuration file")
     parser.add_argument('--debug', action='store_true', help="whether in debugging or not; this will prevent wandb logging and some other features")
     parser.add_argument('--name', default='temp', type=str,help='name of the experiment')
-
+    parser.add_argument('--project', default='temp', type=str,help='name of wandb project')
+    
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
@@ -148,7 +149,7 @@ def main(args):
     seed = args.seed + utils.get_rank()
 
     if utils.get_rank() == 0 and not args.debug:
-        wandb.init(project="pretrain-epickitchen-videomae", config=vars(opts))
+        wandb.init(project=args.project, config=vars(opts))
 
     print(args)
 
