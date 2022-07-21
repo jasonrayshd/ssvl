@@ -102,8 +102,13 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
                     print("Replicating last two frames")
                     index.extend(index[-2:])
             else:
-                index.append(raw_index[i] - 1)
-                index.append(raw_index[i])
+                if raw_index[i] < start_frame + num_frames:
+                    index.append(raw_index[i] - 1)
+                    index.append(raw_index[i])
+                else:
+                    rep_flag = True
+                    print("Replicating last two frames")
+                    index.extend(index[-2:])
 
         index = torch.clamp( torch.as_tensor(index), start_frame, start_frame + num_frames - 1)
 
@@ -177,6 +182,7 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
         cfg.TEST.NUM_ENSEMBLE_VIEWS,
         flow_pretrain = flow_pretrain,
     )
+
     start_idx, end_idx = start_idx + 1, end_idx + 1
     frame_idx = temporal_sampling(video_record.num_frames,
                                   start_idx, end_idx, num_samples,
@@ -207,7 +213,7 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
 
             for i in range(0, len(frame_idx), 2):
                 idx  = frame_idx[i]
-                assert idx % 2 == 1, f"idx:{idx} should be an odd number. frame_idx:{frame_idx}. {start_idx}, {video_record.metadata}, {video_record.num_frames}"
+                assert idx % 2 == 1, f"idx:{idx} should be an odd number. video_record.start_frame:{video_record.start_frame} path_to_video:{path_to_video}, frame_idx:{frame_idx}. {start_idx}, {end_idx}, untrimmed_video_name:{video_record.untrimmed_video_name}, {video_record.num_frames}"
     
                 upath = os.path.join(path_to_flow, "u", img_tmpl.format( idx.item()//2 + 1))
                 vpath = os.path.join(path_to_flow, "v", img_tmpl.format( idx.item()//2 + 1))
@@ -268,7 +274,7 @@ MODEL.MULTI_PATHWAY_ARCH
 
 class Epickitchens(torch.utils.data.Dataset):
 
-    def __init__(self, cfg, mode, pretrain=False, flow_pretrain=False, pretrain_transform=None, use_preprocessed_flow=False, flow_mode = "A"):
+    def __init__(self, cfg, mode, pretrain=False, predict_preprocessed_flow=False, pretrain_transform=None,  flow_mode = "A"):
 
         assert mode in [
             "train",
@@ -280,8 +286,9 @@ class Epickitchens(torch.utils.data.Dataset):
         self.mode = mode
         self.pretrain = pretrain                      # pretrain or not
         self.pretrain_transform = pretrain_transform  # data transformation for pretraining
-        self.use_preprocessed_flow = use_preprocessed_flow
-        self.flow_pretrain = flow_pretrain            # whether predicting flow images at pretraining
+        self.predict_preprocessed_flow = predict_preprocessed_flow # whether predicting flow images at pretraining
+        # self.use_preprocessed_flow = use_preprocessed_flow
+        # self.flow_pretrain = flow_pretrain            
         self.flow_mode = flow_mode                    # mode of loading flow images, different modes will produce different number of flow images
 
         self.target_fps = 60
@@ -401,10 +408,10 @@ class Epickitchens(torch.utils.data.Dataset):
             )
 
         # load frames (and flows)
-        if not self.use_preprocessed_flow:
+        if not self.predict_preprocessed_flow:
             # if not pretrainning or is pretraining but do not need to use flow images,
             # then not load flow images
-            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=self.flow_pretrain, mode=self.mode)
+            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=False, mode=self.mode)
         else:
             # else load flow images according to given mode
             frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_preprocessed_flow=True, flow_mode=self.flow_mode, flow_pretrain=True, mode=self.mode)
@@ -428,7 +435,7 @@ class Epickitchens(torch.utils.data.Dataset):
             )
         else:
             # frames, flows share the same mask
-            if self.use_preprocessed_flow:
+            if self.predict_preprocessed_flow:
                 flows = [uflows, vflows]
                 frames, flows, mask = self.pretrain_transform((frames, flows), use_preprocessed_flow=True) # frames shape: C*T, H, W
                 frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) # 3, num_frames, H, W
@@ -447,7 +454,7 @@ class Epickitchens(torch.utils.data.Dataset):
         if not self.pretrain:
             # not pretrain, keep the original implementation
             return frames, label, index, metadata
-        elif self.pretrain and not self.use_preprocessed_flow:
+        elif self.pretrain and not self.predict_preprocessed_flow:
             # if is pretrain but do not need to use flow images
             return frames, mask, label, index, metadata
         else:

@@ -15,7 +15,6 @@ import tarfile
 
 def extract_zip(path_to_save, ext="tar"):
 
-
     # num_frames = len(os.listdir(path_to_save)) # existing frames in the directory
     message = f"Zip file does not exists: {path_to_save}"
     assert os.path.exists(path_to_save + "." + ext), message
@@ -68,7 +67,7 @@ def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, pa
     for image_path in image_paths:
         if not os.path.exists(image_path):
             # if one frame does not exist then extract all frames specified in image_paths from the zip
-            assert os.path.exists(path_to_compressed), f"image file {image_paths} not exists while compressed file does not exist: {path_to_video}"
+            assert os.path.exists(path_to_compressed), f"image file {image_paths} not exists while compressed file does not exist: {path_to_compressed}"
             extract_zip(path_to_compressed)    
             break
 
@@ -111,7 +110,6 @@ def get_sequence(center_idx, half_len, sample_rate, num_frames):
         elif seq[seq_idx] >= num_frames:
             seq[seq_idx] = num_frames - 1
     return seq
-
 
 def pack_pathway_output(cfg, frames):
     """

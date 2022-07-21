@@ -53,7 +53,7 @@ class DataAugmentationForVideoMAE(object):
 def build_pretraining_dataset(args):
     
     if "ego4d" in args.data_set:
-        transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.use_preprocessed_flow)
+        transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.predict_preprocessed_flow)
         mode = "train"
         # cfg = Namespace(**{
         #     "DATA": Namespace(**{
@@ -77,7 +77,7 @@ def build_pretraining_dataset(args):
 
     elif "epic-kitchen" in args.data_set:
         # NOTE flow images in epic-kitchens are normalized to [0, 255]
-        transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.use_preprocessed_flow)
+        transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.predict_preprocessed_flow)
         mode = "train"
 
         """
@@ -129,8 +129,8 @@ def build_pretraining_dataset(args):
         # })
         dataset = Epickitchens(args.cfg, mode,
                                 pretrain=True, pretrain_transform=transform, 
-                                use_preprocessed_flow=args.use_preprocessed_flow, flow_mode=args.flow_mode,
-                                flow_pretrain=args.flow_pretrain,
+                                flow_mode=args.flow_mode,
+                                predict_preprocessed_flow=args.predict_preprocessed_flow,
                                 )
 
     else:
