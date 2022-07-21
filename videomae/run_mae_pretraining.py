@@ -129,13 +129,26 @@ def get_args():
 
 def get_model(args):
     print(f"Creating model: {args.model}")
-    model = create_model(
-        args.model,
-        pretrained=False,
-        drop_path_rate=args.drop_path,
-        drop_block_rate=None,
-        decoder_depth=args.decoder_depth
-    )
+
+    if not args.ts_pretrain:
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth
+        )
+    else:
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
+
+            fuse_scheme = args.fuse_scheme,
+            tokenizer_backbone = args.tokenizer_backbone,
+        )
     return model
 
 
@@ -158,9 +171,11 @@ def main(args):
 
     model = get_model(args)
 
-    assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
-
-    patch_size = model.rgb_encoder.patch_embed.patch_size
+    if args.ts_pretrain:
+        assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
+        patch_size = model.rgb_encoder.patch_embed.patch_size
+    else:
+        patch_size = model.encoder.patch_embed.patch_size
     print("Patch size = %s" % str(patch_size))
 
     # window size for masking

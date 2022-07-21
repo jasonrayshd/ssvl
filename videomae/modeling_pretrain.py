@@ -9,6 +9,7 @@ from modeling_finetune import Block, _cfg, PatchEmbed, get_sinusoid_encoding_tab
 from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_ as __call_trunc_normal_
 
+from i3dresnet import I3Res50minor
 
 def trunc_normal_(tensor, mean=0., std=1.):
     __call_trunc_normal_(tensor, mean=mean, std=std, a=-std, b=std)
@@ -88,7 +89,7 @@ class PretrainVisionTransformerEncoder(nn.Module):
         # print(x.shape)
         B, _, C = x.shape
         x_vis = x[~mask].reshape(B, -1, C) # ~mask means visible
-        print(x_vis.shape)
+        # print(x_vis.shape)
         for blk in self.blocks:
             x_vis = blk(x_vis)
 
@@ -289,17 +290,27 @@ class Tokenizer(nn.Module):
                             stride=(tubelet_size,  patch_size[0],  patch_size[1]))
 
         elif backbone == "I3DResNet":
-            pass
+            self.tokenizer = I3Res50minor(in_ch=in_chans, layers=3, tublet_size=tubelet_size, patch_size=patch_size, num_classes=feature_dim)
+
         else:
             raise NotImplementedError(f"Unkown tokenizer backbone: {backbone}, expected to be one of [I3DResNet, ]")
 
     def forward(self, x, mask):
         if self.backbone == "single":
             x =  self.tokenizer(x).flatten(2).transpose(1, 2)
-            B, _, C = x.shape
-            x = x[~mask].reshape(B, -1, C)
+            # B, _, C = x.shape
+            # x = x[~mask].reshape(B, -1, C)
 
-            return x
+            # return x
+        
+        elif self.backbone == "I3DResNet":
+            x = self.tokenizer(x)
+            # return x
+
+        B, _, C = x.shape
+        x = x[~mask].reshape(B, -1, C)
+
+        return x
 
 class PretrainTsVisionTransformerSharedDecoder(nn.Module):
     """ 
@@ -598,7 +609,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
             feat = torch.cat([feat_e, feat_tok], dim=2)
         else:
             raise NotImplementedError(f"Unknown fuse scheme:{self.fuse_scheme}, expected to be one of [concate, ]")
-        
+
         return feat
 
     def forward(self, rgb, flows, mask):
@@ -614,7 +625,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
 
         rgb_vis = self.rgb_encoder(rgb, mask) # [B, N_vis, C_e]
         flow_vis = self.flow_encoder(flows, mask) # [B, N_vis, C_e]
-        print(f"rgb_vis:{rgb_vis.shape} flow_vis:{flow_vis.shape}")
+        # print(f"rgb_vis:{rgb_vis.shape} flow_vis:{flow_vis.shape}")
 
         # NOTE: different from encoder, input of tokenizer is unmasked rgb and flows
         # if self.share_tokenizer:
@@ -623,7 +634,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
         # else:
         rgb_token = self.rgb_tokenizer(rgb, mask)     # [B, T, C_tok]
         flow_token = self.flow_tokenizer(flows, mask)  # [B, T, C_tok]
-        print(f"rgb_token:{rgb_token.shape} flow_token:{flow_token.shape}")
+        # print(f"rgb_token:{rgb_token.shape} flow_token:{flow_token.shape}")
 
         # fuse and project
         rgb_feat = self.fuse(rgb_vis, rgb_token)
@@ -635,8 +646,8 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
             rgb_feat = self.rgb_encoder_to_decoder(rgb_feat) # [B, N_vis, C_d]
             flow_feat = self.flow_encoder_to_decoder(flow_feat) # [B, N_vis, C_d]
 
-        print(f"rgb_feat:{rgb_feat.shape} flow_feat:{flow_feat.shape}")
-        print(f"mask: {mask.shape}")
+        # print(f"rgb_feat:{rgb_feat.shape} flow_feat:{flow_feat.shape}")
+        # print(f"mask: {mask.shape}")
 
         B, N, C = rgb_feat.shape
         # we don't unshuffle the correct visible token order, 
@@ -646,7 +657,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
         rgb_pos_emd_mask = expand_rgb_pos_embed[mask].reshape(B, -1, C)
         # rgb_pos_emb = torch.cat([rgb_pos_emd_vis, rgb_pos_emd_mask], dim=1)
         # expand_rgb_mask_token = self.rgb_mask_token.expand_as(rgb_pos_emd_mask)
-        print(f"rgb_pos_emd_vis:{rgb_pos_emd_vis.shape}, rgb_pos_emd_mask:{rgb_pos_emd_mask.shape}")
+        # print(f"rgb_pos_emd_vis:{rgb_pos_emd_vis.shape}, rgb_pos_emd_mask:{rgb_pos_emd_mask.shape}")
         # print(f"expand_rgb_pos_embed:{expand_rgb_pos_embed.shape}")
 
         B, N, C = flow_feat.shape
@@ -655,7 +666,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
         flow_pos_emd_mask = expand_flow_pos_embed[mask].reshape(B, -1, C)
         # flow_pos_emb = torch.cat([flow_pos_emd_vis, flow_pos_emd_mask], dim=1)
         # expand_flow_mask_token = self.flow_mask_token.expand_as(flow_pos_emd_mask)
-        print(f"flow_pos_emd_vis:{flow_pos_emd_vis.shape}, flow_pos_emd_mask:{flow_pos_emd_mask.shape}")
+        # print(f"flow_pos_emd_vis:{flow_pos_emd_vis.shape}, flow_pos_emd_mask:{flow_pos_emd_mask.shape}")
         # print(f"expand_rgb_pos_embed:{expand_rgb_pos_embed.shape}")
 
         if self.share_mask_token:
@@ -840,8 +851,8 @@ def pretrain_tsvit_small_patch16_224(pretrained=False, **kwargs):
         share_mask_token = False,
         # share_pos_embed = False,
 
-        fuse_scheme = "concate",
-        tokenizer_backbone = "single",
+        # fuse_scheme = "concate",
+        # tokenizer_backbone = "I3DResNet",
 
         **kwargs)
 
@@ -860,7 +871,7 @@ if __name__ == "__main__":
     from einops import rearrange
     mask_gen = TubeMaskingGenerator(input_size=[8, 14, 14], mask_ratio=0.9)
     device = "cuda:7"
-    B = 8
+    B = 4
     model = pretrain_tsvit_small_patch16_224().to(device)
     rgb = torch.randn((B, 3, 16, 224, 224)).to(device)
     flows = torch.randn((B, 2, 8, 224, 224)).to(device)
@@ -891,7 +902,6 @@ if __name__ == "__main__":
     flow_target = rearrange(flow_target, '(b t n) d -> b (t n) d', b=B, t=N//tublet_size)
 
     flow_target = flow_target.to(device, non_blocking=True)
-
 
     print(rgb_target.shape, flow_target.shape)
 

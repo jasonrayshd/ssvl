@@ -55,6 +55,8 @@ pin_mem: true
 ts_pretrain: true
 predict_preprocessed_flow: true               # whether use preprocessed flow images as target at pretraining
 flow_mode: "A"                                # mode of sampling flow images  [A]
+fuse_scheme: "concate"
+tokenizer_backbone: "I3DResNet"
 
 tau: 0.8
 lamb: [0.49, 0.49, 0.001, 0.001]
