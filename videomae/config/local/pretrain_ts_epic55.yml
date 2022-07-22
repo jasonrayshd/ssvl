@@ -56,7 +56,7 @@ ts_pretrain: true
 predict_preprocessed_flow: true               # whether use preprocessed flow images as target at pretraining
 flow_mode: "A"                                # mode of sampling flow images  [A]
 fuse_scheme: "concate"
-tokenizer_backbone: "I3DResNet"
+tokenizer_backbone: "simplecnn"
 
 tau: 0.8
 lamb: [0.494, 0.494, 0.001, 0.001]
@@ -96,5 +96,5 @@ cfg:
     NUM_SPATIAL_CROPS: ""
     NUM_ENSEMBLE_VIEWS: ""
   VERSION: 55
-  ONINE_EXTRACTING: false
+  ONINE_EXTRACTING: true
 
