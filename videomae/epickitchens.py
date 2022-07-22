@@ -244,7 +244,7 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
 
             uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
             vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
-            
+
             # print(np.array(uflows[0])[:10,:10])
             return frames, uflows, vflows
         else:
