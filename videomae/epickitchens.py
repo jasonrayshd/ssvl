@@ -236,7 +236,7 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                 v_flow_paths.append(vpath)
 
             if not os.path.isdir(path_to_flow):
-                frame_list = [img_tmpl.format(frame_idx[i].item()) for i in range(0, len(frame_idx), 2)]
+                frame_list = [img_tmpl.format(frame_idx[i].item()//2 + 1) for i in range(0, len(frame_idx), 2)]
                 if cfg.ONINE_EXTRACTING:
                     utils.extract_zip(path_to_flow, frame_list=frame_list, flow=True)
                 else:

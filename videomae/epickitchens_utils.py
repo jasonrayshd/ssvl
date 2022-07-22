@@ -108,15 +108,20 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
                             \rRaw exception:\n{e}")
 
         if len(frame_list) != 0:
-            dir_name = path_to_save.split("/")[-1]
+            dir_name = path_to_save.split("/")[-1]            
             if flow:
                 for frame_idx in frame_list:
-                    tf.extract(f"./u/{frame_idx}", path_to_save)
-                    tf.extract(f"./v/{frame_idx}", path_to_save)
+                    try:
+                        tf.extract(f"./u/{frame_idx}", path_to_save)
+                        tf.extract(f"./v/{frame_idx}", path_to_save)
+                    except KeyError as e:
+                        print(f"Key error raisd: frame_list:{frame_list} path_to_save:{path_to_save}")
             else:
-
                 for frame_idx in frame_list:
-                    tf.extract("./"+frame_idx, path_to_save)
+                    try:
+                        tf.extract("./"+frame_idx, path_to_save)
+                    except KeyError as e:
+                        print(f"Key error raisd: frame_list:{frame_list} path_to_save:{path_to_save}")
 
         else:
             tf.extractall(path_to_save)
@@ -144,9 +149,13 @@ def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, pa
         if not os.path.exists(image_path):
             # if one frame does not exist then extract all frames specified in image_paths from the zip
             assert os.path.exists(path_to_compressed), f"image file {image_paths} not exists while compressed file does not exist: {path_to_compressed}"
+
             if online_extracting:
                 flst = [image_path.split("/")[-1] for image_path in image_paths]
-                extract_zip(path_to_compressed, frame_list=flst, flow=flow)    
+                extract_zip(path_to_compressed, frame_list=flst, flow=flow)
+            else:
+                extract_zip(path_to_compressed)
+
             break
 
     for i in range(retry):
