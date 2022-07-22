@@ -79,11 +79,11 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
                             \rRaw exception:\n{e}")
 
         if len(frame_list) != 0:
-            # img_tmpl = "frame_{:010d}.jpg"
+            dir_name = path_to_save.split("/")[-1]
             if flow:
                 for frame_idx in frame_list:
-                    tf.extract(f"./u/{frame_idx}", os.path.join(path_to_save))
-                    tf.extract(f"./v/{frame_idx}", os.path.join(path_to_save))
+                    tf.extract(f"./u/{frame_idx}", os.path.join(os.getcwd(), dir_name))
+                    tf.extract(f"./v/{frame_idx}", os.path.join(os.getcwd(), dir_name))
             else:
 
                 for frame_idx in frame_list:
