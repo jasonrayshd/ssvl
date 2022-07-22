@@ -42,33 +42,34 @@ def cache_tar_to_local(zip_file_path, raw_dest, cache_log_file = "cache.log", fl
 
         except OSError as e:
             print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
+            return False
+
             # assume not enough space and delete pre-cached tar file
+            # cache_log_fbar = open(cache_log_file, "r")
+            # # ATTENTION: with \n at tail of each element in the list
+            # # each element in the list is a absolute path of previously cached zip file
+            # cached_file_lst = cache_log_fbar.readlines()
+            # cache_log_fbar.close()
 
-            cache_log_fbar = open(cache_log_file, "r")
-            # ATTENTION: with \n at tail of each element in the list
-            # each element in the list is a absolute path of previously cached zip file
-            cached_file_lst = cache_log_fbar.readlines()
-            cache_log_fbar.close()
+            # if len(cached_file_lst) != 0:
 
-            if len(cached_file_lst) != 0:
+            #     zip_file_path = cached_file_lst[0].strip("\n")
+            #     cached_file_lst.pop(0)
 
-                zip_file_path = cached_file_lst[0].strip("\n")
-                cached_file_lst.pop(0)
+            #     cache_log_fbar = open(cache_log_file, "w")
+            #     cache_log_fbar.write("".join(cached_file_lst))
+            #     cache_log_fbar.close()
+            # else:
+            #     return False
 
-                cache_log_fbar = open(cache_log_file, "w")
-                cache_log_fbar.write("".join(cached_file_lst))
-                cache_log_fbar.close()
-            else:
-                return False
+            # # remove earliest cached file
+            # try:
+            #     os.remove(zip_file_path)
+            # except:
+            #     print(f"Fail to delete cached file:{zip_file_path}, continue removing next tar files...")
+            #     continue
 
-            # remove earliest cached file
-            try:
-                os.remove(zip_file_path)
-            except:
-                print(f"Fail to delete cached file:{zip_file_path}, continue removing next tar files...")
-                continue
-
-            print(f"Deleted previously cached file:{zip_file_path} and try again...")
+            # print(f"Deleted previously cached file:{zip_file_path} and try again...")
 
         except Exception as e:
             print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
@@ -121,21 +122,31 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
                             \rRaw exception:\n{e}")
 
         if len(frame_list) != 0:
-            dir_name = path_to_save.split("/")[-1]            
+            dir_name = path_to_save.split("/")[-1]
+            retry = 5         
             if flow:
                 for frame_idx in frame_list:
-                    try:
-                        tf.extract(f"./u/{frame_idx}", path_to_save)
-                        tf.extract(f"./v/{frame_idx}", path_to_save)
-                    except KeyError as e:
-                        raise Exception(f"Key error raisd tf.names:{tf.getnames()[:20]}... frame_idx:{frame_idx} frame_list:{frame_list} path_to_save:{path_to_save}")
-
+                    for i in range(retry):
+                        try:
+                            tf.extract(f"./u/{frame_idx}", path_to_save)
+                            tf.extract(f"./v/{frame_idx}", path_to_save)
+                            break
+                        except KeyError as e:
+                            raise Exception(f"Key error raisd tf.names:{tf.getnames()[:20]}... frame_idx:{frame_idx} frame_list:{frame_list} path_to_save:{path_to_save}")
+                        except FileExistsError as e:
+                            print(f"When extracting {path_to_save} {frame_idx}, file eixsts, retrying...")
+                            continue
             else:
                 for frame_idx in frame_list:
-                    try:
-                        tf.extract("./"+frame_idx, path_to_save)
-                    except KeyError as e:
-                        raise Exception(f"Key error raisd tf.names:{tf.getnames()[:20]}... frame_idx:{frame_idx} frame_list:{frame_list} path_to_save:{path_to_save}")
+                    for i in range(retry):
+                        try:
+                            tf.extract("./"+frame_idx, path_to_save)
+                            break
+                        except KeyError as e:
+                            raise Exception(f"Key error raisd tf.names:{tf.getnames()[:20]}... frame_idx:{frame_idx} frame_list:{frame_list} path_to_save:{path_to_save}")
+                        except FileExistsError as e:
+                            print(f"When extracting {path_to_save} {frame_idx}, file eixsts, retrying...")
+                            continue
         else:
             tf.extractall(path_to_save)
 
