@@ -34,9 +34,9 @@ def cache_tar_to_local(zip_file_path, raw_dest, cache_log_file = "cache.log", fl
         try:
             ret_dest = shutil.copy(zip_file_path, dest)
             # write to cache log file
-            cache_log_fbar = open(cache_log_file, "a+")
-            cache_log_fbar.write(os.path.join(dest, zip_file_name) + "\n")
-            cache_log_fbar.close()
+            # cache_log_fbar = open(cache_log_file, "a+")
+            # cache_log_fbar.write(os.path.join(dest, zip_file_name) + "\n")
+            # cache_log_fbar.close()
 
             return True
 
