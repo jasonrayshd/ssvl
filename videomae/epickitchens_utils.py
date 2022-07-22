@@ -15,13 +15,13 @@ import tarfile
 import shutil
 
 
-def cache_tar_to_local(zip_file_path, dest, cache_log_file = "cache.log"):
+def cache_tar_to_local(zip_file_path, dest, cache_log_file = "cache.log", flow=False):
 
     assert os.path.exists(zip_file_path), "Zip file not found when caching it locally"
     zip_file_name = zip_file_path.split("/")[-1]
 
     # if already cached, then return
-    if os.path.exists(os.path.join(dest, zip_file_name)):
+    if os.path.exists(os.path.join(dest,"flow" if flow else "rgb", zip_file_name)):
         return True
 
     # else copy file and handle potential error
@@ -33,7 +33,7 @@ def cache_tar_to_local(zip_file_path, dest, cache_log_file = "cache.log"):
         try:
             ret_dest = shutil.copy(zip_file_path, dest)
             with open(cache_log_file, "a+") as f:
-                f.write(zip_file_name+"\n")
+                f.write("flow/" if flow else "rgb/" + zip_file_name+"\n")
             return True
         except OSError as e:
             print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
@@ -92,11 +92,11 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
             if len(frame_list) != 0:
                 # if only extract several frames from the tar file then to ensure reading efficiency
                 # cache tar file locally
-                ret = cache_tar_to_local(path_to_save + "." + ext, dest=os.getcwd())
+                ret = cache_tar_to_local(path_to_save + "." + ext, dest=os.getcwd(),flow=flow)
                 if ret:
                     zip_file_name = path_to_save.split("/")[-1] + "." + ext
                     # read from local directory
-                    tf = tarfile.open( os.path.join(os.getcwd(), zip_file_name), "r")
+                    tf = tarfile.open( os.path.join(os.getcwd(), "flow" if flow else "rgb", zip_file_name), "r")
                 else:
                     # fail to cache tar file, read from original path
                     tf = tarfile.open( path_to_save + "." + ext, "r")
