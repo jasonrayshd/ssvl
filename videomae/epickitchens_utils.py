@@ -115,14 +115,14 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
                         tf.extract(f"./u/{frame_idx}", path_to_save)
                         tf.extract(f"./v/{frame_idx}", path_to_save)
                     except KeyError as e:
-                        print(f"Key error raisd: frame_list:{frame_list} path_to_save:{path_to_save}")
+                        raise Exception(f"Key error raisd tf.names:{tf.getnames()} frame_idx:{frame_idx} frame_list:{frame_list} path_to_save:{path_to_save}")
+
             else:
                 for frame_idx in frame_list:
                     try:
                         tf.extract("./"+frame_idx, path_to_save)
                     except KeyError as e:
-                        print(f"Key error raisd: frame_list:{frame_list} path_to_save:{path_to_save}")
-
+                        raise Exception(f"Key error raisd tf.names:{tf.getnames()} frame_idx:{frame_idx} frame_list:{frame_list} path_to_save:{path_to_save}")
         else:
             tf.extractall(path_to_save)
 
