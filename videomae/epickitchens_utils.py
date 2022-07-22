@@ -15,7 +15,7 @@ import tarfile
 import shutil
 
 
-def cache_tar_to_local(zip_file_path, dest):
+def cache_tar_to_local(zip_file_path, dest, cache_log_file = "cache.log"):
 
     assert os.path.exists(zip_file_path), "Zip file not found when caching it locally"
     zip_file_name = zip_file_path.split("/")[-1]
@@ -26,12 +26,41 @@ def cache_tar_to_local(zip_file_path, dest):
 
     # else copy file and handle potential error
     os.makedirs(dest, exist_ok=True)
-    try:
-        ret_dest = shutil.copy(zip_file_path, dest)
-        return True
-    except Exception as e:
-        print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
-        return False
+    
+    retry = 10
+    for i in range(retry):
+        # keep trying caching tar file
+        try:
+            ret_dest = shutil.copy(zip_file_path, dest)
+            with open(cache_log_file, "a+") as f:
+                f.write(zip_file_name+"\n")
+            return True
+        except OSError as e:
+            print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
+            # assume not enough space and delete pre-cached tar file
+            with open(cache_log_file, "r") as f:
+                cached_file_lst = f.readlines() # ATTENTION: with \n at tail of each element in the list
+                if len(cached_file_lst) != 0:
+                    zip_file_name = cached_file_lst[0].strip("\n")
+                    cached_file_lst.pop(0)
+                else:
+                    return False
+
+                # remove earliest cached file
+                try:
+                    os.remove(os.path.join(dest, zip_file_name))
+                except:
+                    continue
+
+                print(f"Delete previously cached file:{zip_file_name} and try again...")
+
+            with open(cache_log_file, "w") as f:
+                content = "".join(cached_file_lst)
+                f.write(content)
+
+        except Exception as e:
+            print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
+            return False
 
 
 def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
