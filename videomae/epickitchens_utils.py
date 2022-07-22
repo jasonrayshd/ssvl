@@ -15,13 +15,14 @@ import tarfile
 import shutil
 
 
-def cache_tar_to_local(zip_file_path, dest, cache_log_file = "cache.log", flow=False):
+def cache_tar_to_local(zip_file_path, raw_dest, cache_log_file = "cache.log", flow=False):
 
     assert os.path.exists(zip_file_path), "Zip file not found when caching it locally"
     zip_file_name = zip_file_path.split("/")[-1]
 
     # if already cached, then return
-    if os.path.exists(os.path.join(dest,"flow" if flow else "rgb", zip_file_name)):
+    dest = os.path.join(raw_dest, "flow" if flow else "rgb")
+    if os.path.exists(os.path.join(dest, zip_file_name)):
         return True
 
     # else copy file and handle potential error
@@ -32,36 +33,48 @@ def cache_tar_to_local(zip_file_path, dest, cache_log_file = "cache.log", flow=F
         # keep trying caching tar file
         try:
             ret_dest = shutil.copy(zip_file_path, dest)
-            with open(cache_log_file, "a+") as f:
-                f.write("flow/" if flow else "rgb/" + zip_file_name+"\n")
+            # write to cache log file
+            cache_log_fbar = open(cache_log_file, "a+")
+            cache_log_fbar.write(os.path.join(dest, zip_file_name) + "\n")
+            cache_log_fbar.close()
+
             return True
+
         except OSError as e:
             print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
             # assume not enough space and delete pre-cached tar file
-            with open(cache_log_file, "r") as f:
-                cached_file_lst = f.readlines() # ATTENTION: with \n at tail of each element in the list
-                if len(cached_file_lst) != 0:
-                    zip_file_name = cached_file_lst[0].strip("\n")
-                    cached_file_lst.pop(0)
-                else:
-                    return False
 
-                # remove earliest cached file
-                try:
-                    os.remove(os.path.join(dest, zip_file_name))
-                except:
-                    continue
+            cache_log_fbar = open(cache_log_file, "r")
+            # ATTENTION: with \n at tail of each element in the list
+            # each element in the list is a absolute path of previously cached zip file
+            cached_file_lst = cache_log_fbar.readlines()
+            cache_log_fbar.close()
 
-                print(f"Delete previously cached file:{zip_file_name} and try again...")
+            if len(cached_file_lst) != 0:
 
-            with open(cache_log_file, "w") as f:
-                content = "".join(cached_file_lst)
-                f.write(content)
+                zip_file_path = cached_file_lst[0].strip("\n")
+                cached_file_lst.pop(0)
+
+                cache_log_fbar = open(cache_log_file, "w")
+                cache_log_fbar.write("".join(cached_file_lst))
+                cache_log_fbar.close()
+            else:
+                return False
+
+            # remove earliest cached file
+            try:
+                os.remove(zip_file_path)
+            except:
+                print(f"Fail to delete cached file:{zip_file_path}, continue removing next tar files...")
+                continue
+
+            print(f"Deleted previously cached file:{zip_file_path} and try again...")
 
         except Exception as e:
             print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
             return False
 
+    print(f"Reach maximum caching attempts... zip_file_path:{zip_file_path}")
 
 def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
 
