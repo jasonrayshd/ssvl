@@ -8,6 +8,46 @@ import torch.nn.functional as F
 import math
 
 
+class SimpleCNN(nn.Module):
+
+    def __init__(self, in_ch=3, tublet_size=2, patch_size=[16,16], num_classes=768):
+        super().__init__()
+
+        dim = num_classes // 8
+
+        self.patch_embed = nn.Conv3d(in_ch, dim, kernel_size=(tublet_size, *patch_size), stride=(tublet_size, *patch_size), bias=False)
+
+        self.conv1 = nn.Conv3d(dim, 2*dim, kernel_size=(3, 1, 1), stride=(1, 1, 1), padding=(1, 0, 0), bias=False)
+        self.bn1 = nn.BatchNorm3d(2*dim)
+
+        self.conv2 = nn.Conv3d(2*dim, 4*dim, kernel_size=(1, 3, 3), stride=(1, 1, 1), padding=(0, 1, 1), bias=False)
+        self.bn2 = nn.BatchNorm3d(4*dim)
+
+        self.conv3 = nn.Conv3d(4*dim, num_classes, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn3 = nn.BatchNorm3d(num_classes)
+
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+
+        x = self.patch_embed(x)
+
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+
+        x = self.conv3(x)
+        x = self.bn3(x)
+        x = self.relu(x)
+
+        print(x.shape)
+        return x
+
+
 class NonLocalBlock(nn.Module):
     def __init__(self, dim_in, dim_out, dim_inner):
         super(NonLocalBlock, self).__init__()
@@ -159,70 +199,4 @@ class I3Res50(nn.Module):
 
         x = x.view(x.shape[0], -1)
         x = self.fc(x)
-        return x
-
-
-class I3Res50minor(nn.Module):
-
-    def __init__(self, in_ch, tublet_size=2, patch_size = [16, 16], block=Bottleneck, layers=2, num_classes=400, use_nl=False):
-
-        self.inplanes = 64
-        super(I3Res50minor, self).__init__()
-        self.conv1 = nn.Conv3d(in_ch, 64, kernel_size=(tublet_size, *patch_size), stride=(tublet_size, *patch_size), bias=False)
-        self.bn1 = nn.BatchNorm3d(64)
-        self.relu = nn.ReLU(inplace=True)
-
-        # self.maxpool1 = nn.MaxPool3d(kernel_size=(2, 3, 3), stride=(2, 2, 2), padding=(0, 0, 0))
-        self.maxpool2 = nn.MaxPool3d(kernel_size=(2, 1, 1), stride=(2, 1, 1), padding=(0, 0, 0))
-
-        nonlocal_mod = 2 if use_nl else 1000
-        self.layers = nn.Sequential(
-                self._make_layer(block, 64, layers, stride=1, temp_conv=[1 for i in range(layers)], temp_stride=[1 for i in range(layers)] ),
-            )
-
-        # self.layer2 = self._make_layer(block, 128, layers[1], stride=2, temp_conv=[1, 0, 1, 0], temp_stride=[1, 1, 1, 1], nonlocal_mod=nonlocal_mod)
-        # self.layer3 = self._make_layer(block, 256, layers[2], stride=2, temp_conv=[1, 0, 1, 0, 1, 0], temp_stride=[1, 1, 1, 1, 1, 1], nonlocal_mod=nonlocal_mod)
-        # self.layer4 = self._make_layer(block, 512, layers[3], stride=2, temp_conv=[0, 1, 0], temp_stride=[1, 1, 1])
-        self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-        self.fc = nn.Linear(256, num_classes)
-        self.drop = nn.Dropout(0.5)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv3d):
-                m.weight = nn.init.kaiming_normal_(m.weight, mode='fan_out')
-            elif isinstance(m, nn.BatchNorm3d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def _make_layer(self, block, planes, blocks, stride, temp_conv, temp_stride, nonlocal_mod=1000):
-        downsample = None
-        if stride != 1 or self.inplanes != planes * block.expansion or temp_stride[0]!=1:
-            downsample = nn.Sequential(
-                nn.Conv3d(self.inplanes, planes * block.expansion, kernel_size=(1, 1, 1), stride=(temp_stride[0], stride, stride), padding=(0, 0, 0), bias=False),
-                nn.BatchNorm3d(planes * block.expansion)
-                )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, temp_conv[0], temp_stride[0], False))
-        self.inplanes = planes * block.expansion
-        for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, 1, None, temp_conv[i], temp_stride[i], i%nonlocal_mod==nonlocal_mod-1))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        # x = self.maxpool1(x)
-        # print(x.shape) # (B, 64, 8, 14, 14)
-        x = self.layers(x)
-
-        # print(x.shape) # (B, 256, 8, 14, 14)
-
-        B, C, T, Nh, Nw = x.shape
-        x = x.flatten(2).transpose(1, 2)
-        x = self.fc(x)
-        # x = self.drop(x)
-
         return x

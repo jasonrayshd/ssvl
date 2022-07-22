@@ -9,7 +9,7 @@ from modeling_finetune import Block, _cfg, PatchEmbed, get_sinusoid_encoding_tab
 from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_ as __call_trunc_normal_
 
-from i3dresnet import I3Res50minor
+from tokenizer_network import SimpleCNN
 
 def trunc_normal_(tensor, mean=0., std=1.):
     __call_trunc_normal_(tensor, mean=mean, std=std, a=-std, b=std)
@@ -289,23 +289,19 @@ class Tokenizer(nn.Module):
                             kernel_size = (tubelet_size,  patch_size[0], patch_size[1]), 
                             stride=(tubelet_size,  patch_size[0],  patch_size[1]))
 
-        elif backbone == "I3DResNet":
-            self.tokenizer = I3Res50minor(in_ch=in_chans, layers=3, tublet_size=tubelet_size, patch_size=patch_size, num_classes=feature_dim)
+        elif backbone == "simplecnn":
+            self.tokenizer = SimpleCNN(in_ch=in_chans, tublet_size=tubelet_size, patch_size=patch_size, num_classes=feature_dim)
 
         else:
-            raise NotImplementedError(f"Unkown tokenizer backbone: {backbone}, expected to be one of [I3DResNet, ]")
+            raise NotImplementedError(f"Unkown tokenizer backbone: {backbone}, expected to be one of [single, simplecnn]")
 
     def forward(self, x, mask):
         if self.backbone == "single":
-            x =  self.tokenizer(x).flatten(2).transpose(1, 2)
-            # B, _, C = x.shape
-            # x = x[~mask].reshape(B, -1, C)
-
-            # return x
-        
-        elif self.backbone == "I3DResNet":
-            x = self.tokenizer(x)
-            # return x
+            x = self.tokenizer(x).flatten(2).transpose(1, 2)
+        elif self.backbone == "simplecnn":
+            x = self.tokenizer(x).flatten(2).transpose(1, 2)
+        else:
+            raise NotImplementedError(f"Unkown tokenizer backbone: {self.backbone}, expected to be one of [single, simplecnn]")
 
         B, _, C = x.shape
         x = x[~mask].reshape(B, -1, C)
@@ -825,7 +821,7 @@ def pretrain_videomae_flowA_base_patch16_224(pretrained=False, **kwargs):
 
 
 @register_model
-def pretrain_tsvit_small_patch16_224(pretrained=False, **kwargs):
+def pretrain_tsvit_base_patch16_224(pretrained=False, **kwargs):
     model = PretrainTwoStreamVisionTransformer(
         img_size=224,
         patch_size=16, 
@@ -833,7 +829,7 @@ def pretrain_tsvit_small_patch16_224(pretrained=False, **kwargs):
         encoder_depth=12,        # original: 12
         encoder_num_heads=12,
         encoder_num_classes=0,
-
+    
         rgb_num_classes=1536,
         flow_num_classes=16*16*2*1, # patch_size * patch_size * number of flow axis * N
         decoder_embed_dim=384,
@@ -870,9 +866,9 @@ if __name__ == "__main__":
     from engine_for_pretraining import TwoStreamVitLoss
     from einops import rearrange
     mask_gen = TubeMaskingGenerator(input_size=[8, 14, 14], mask_ratio=0.9)
-    device = "cuda:7"
+    device = "cuda:1"
     B = 4
-    model = pretrain_tsvit_small_patch16_224().to(device)
+    model = pretrain_tsvit_base_patch16_224(decoder_depth = 4, tokenizer_backbone = "simplecnn").to(device)
     rgb = torch.randn((B, 3, 16, 224, 224)).to(device)
     flows = torch.randn((B, 2, 8, 224, 224)).to(device)
     mask = torch.from_numpy(mask_gen()).to(torch.bool).unsqueeze(0).to(device).repeat(B, 1)

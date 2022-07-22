@@ -113,7 +113,7 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
         index = torch.clamp( torch.as_tensor(index), start_frame, start_frame + num_frames - 1)
 
         if rep_flag:
-            print(index, start_frame, start_frame + num_frames, num_frames)
+            print(raw_index, index, start_frame, start_frame + num_frames, num_frames)
 
         return index
     else:
@@ -234,6 +234,7 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
             uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
             vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
             
+            # print(np.array(uflows[0])[:10,:10])
             return frames, uflows, vflows
         else:
             raise ValueError(f"Unknown flow mode {flow_mode}, available modes are [A]")
@@ -437,6 +438,7 @@ class Epickitchens(torch.utils.data.Dataset):
             # frames, flows share the same mask
             if self.predict_preprocessed_flow:
                 flows = [uflows, vflows]
+
                 frames, flows, mask = self.pretrain_transform((frames, flows), use_preprocessed_flow=True) # frames shape: C*T, H, W
                 frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) # 3, num_frames, H, W
                 # flows are processed in pretrain_transform

@@ -253,6 +253,7 @@ def main(args):
 
     utils.auto_load_model(
         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
+
     torch.cuda.empty_cache()
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()

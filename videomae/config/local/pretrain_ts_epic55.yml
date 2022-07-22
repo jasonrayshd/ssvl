@@ -6,7 +6,7 @@ epochs: 800
 save_ckpt_freq: 10
 
 # Model parameters
-model: "pretrain_tsvit_small_patch16_224"
+model: "pretrain_tsvit_base_patch16_224"
 decoder_depth: 4
 mask_type: "tube"         # choices=['tube']
 mask_ratio: 0.4
@@ -59,7 +59,7 @@ fuse_scheme: "concate"
 tokenizer_backbone: "I3DResNet"
 
 tau: 0.8
-lamb: [0.49, 0.49, 0.001, 0.001]
+lamb: [0.494, 0.494, 0.001, 0.001]
 # configuration file
 # config: ""                                  # help='path to configuration file
 
