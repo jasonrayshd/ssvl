@@ -105,7 +105,7 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
             if len(frame_list) != 0:
                 # if only extract several frames from the tar file then to ensure reading efficiency
                 # cache tar file locally
-                ret = cache_tar_to_local(path_to_save + "." + ext, dest=os.getcwd(),flow=flow)
+                ret = cache_tar_to_local(path_to_save + "." + ext, raw_dest=os.getcwd(),flow=flow)
                 if ret:
                     zip_file_name = path_to_save.split("/")[-1] + "." + ext
                     # read from local directory
