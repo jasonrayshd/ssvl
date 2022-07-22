@@ -197,7 +197,7 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
             utils.extract_zip(path_to_video)
 
     # if use flow, this indicates pretrain is used then return frames of pil format
-    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video)
+    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video, online_extracting=cfg.ONINE_EXTRACTING,)
 
     if use_preprocessed_flow:
         # NOTE
@@ -242,8 +242,8 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                 else:
                     utils.extract_zip(path_to_flow)
 
-            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
-            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
+            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True)
+            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True)
 
             # print(np.array(uflows[0])[:10,:10])
             return frames, uflows, vflows
