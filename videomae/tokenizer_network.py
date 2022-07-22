@@ -44,7 +44,7 @@ class SimpleCNN(nn.Module):
         x = self.bn3(x)
         x = self.relu(x)
 
-        print(x.shape)
+        # print(x.shape)
         return x
 
 

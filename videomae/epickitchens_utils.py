@@ -12,8 +12,29 @@ import time
 import zipfile
 from zipfile import ZipFile
 import tarfile
+import shutil
 
-def extract_zip(path_to_save, ext="tar"):
+
+def cache_tar_to_local(zip_file_path, dest):
+
+    assert os.path.exists(zip_file_path), "Zip file not found when caching it locally"
+    zip_file_name = zip_file_path.split("/")[-1]
+
+    # if already cached, then return
+    if os.path.exists(os.path.join(dest, zip_file_name)):
+        return True
+
+    # else copy file and handle potential error
+    os.makedirs(dest, exist_ok=True)
+    try:
+        ret_dest = shutil.copy(zip_file_path, dest)
+        return True
+    except Exception as e:
+        print(f"Caching tar file to local directory failed:\nRaw Exception:\n{e}")
+        return False
+
+
+def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
 
     # num_frames = len(os.listdir(path_to_save)) # existing frames in the directory
     message = f"Zip file does not exists: {path_to_save}"
@@ -39,12 +60,38 @@ def extract_zip(path_to_save, ext="tar"):
 
     if ext == "tar":
         try:
-            tf = tarfile.open( path_to_save + "." + ext, "r")
+            if len(frame_list) != 0:
+                # if only extract several frames from the tar file then to ensure reading efficiency
+                # cache tar file locally
+                ret = cache_tar_to_local(path_to_save + "." + ext, dest=os.getcwd())
+                if ret:
+                    zip_file_name = path_to_save.split("/")[-1] + "." + ext
+                    # read from local directory
+                    tf = tarfile.open( os.path.join(os.getcwd(), zip_file_name), "r")
+                else:
+                    # fail to cache tar file, read from original path
+                    tf = tarfile.open( path_to_save + "." + ext, "r")
+            else:
+                tf = tarfile.open( path_to_save + "." + ext, "r")
+
         except Exception as e:
             raise Exception(f"Exception occurs while opening tar file: {path_to_save}.tar, file might be corrupted \
-                            \r Raw exception: {e}")
+                            \rRaw exception:\n{e}")
 
-        tf.extractall(path_to_save)
+        if len(frame_list) != 0:
+            # img_tmpl = "frame_{:010d}.jpg"
+            if flow:
+                for frame_idx in frame_list:
+                    tf.extract(f"./u/{frame_idx}", os.path.join(path_to_save,"u"))
+                    tf.extract(f"./v/{frame_idx}", os.path.join(path_to_save,"v"))
+            else:
+
+                for frame_idx in frame_list:
+                    tf.extract("./"+frame_idx, path_to_save)
+
+        else:
+            tf.extractall(path_to_save)
+
         tf.close()
     else:
         raise ValueError(f"Unsupported compressed file type: {ext}, expect one of [zip, tar]")
