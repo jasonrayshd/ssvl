@@ -170,10 +170,12 @@ def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, pa
     """
 
     for image_path in image_paths:
-        if not os.path.exists(image_path):
+        try:
+            Image.open(image_path)
+        except: # if image does not exist or is corrupted will raise an error
+        # if not os.path.exists(image_path):
             # if one frame does not exist then extract all frames specified in image_paths from the zip
             assert os.path.exists(path_to_compressed), f"image file {image_paths} not exists while compressed file does not exist: {path_to_compressed}"
-
             if online_extracting:
                 flst = [image_path.split("/")[-1] for image_path in image_paths]
                 extract_zip(path_to_compressed, frame_list=flst, flow=flow)
@@ -184,11 +186,22 @@ def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, pa
 
     for i in range(retry):
         # edited by jiachen, read image and convert to RGB format
-        if not as_pil:
-            imgs = [cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB) for image_path in image_paths]
-        else:
-            imgs = [Image.open(image_path) for image_path in image_paths]
+        try:
+            if not as_pil:
+                imgs = [cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB) for image_path in image_paths]
+            else:
+                imgs = [Image.open(image_path) for image_path in image_paths]
 
+        except Exception as e:
+            print("PIL reading error, extracting image file again.\nRaw exception:{e}")
+            assert os.path.exists(path_to_compressed), f"image file {image_paths} not exists while compressed file does not exist: {path_to_compressed}"
+            if online_extracting:
+                flst = [image_path.split("/")[-1] for image_path in image_paths]
+                extract_zip(path_to_compressed, frame_list=flst, flow=flow)
+            else:
+                extract_zip(path_to_compressed)
+
+            continue
         # imgs = [cv2.imread(image_path) for image_path in image_paths]
 
         if all(img is not None for img in imgs):
