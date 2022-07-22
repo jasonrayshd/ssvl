@@ -129,7 +129,7 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
     print(f"Finish processing zipfile {path_to_save}, time taken: {end_time-start_time}")
 
 
-def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, path_to_compressed="", online_extracting=False, flow=True):
+def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, path_to_compressed="", online_extracting=False, flow=False):
     """
     This function is to load images with support of retrying for failed load.
     Args:
