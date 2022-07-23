@@ -125,11 +125,15 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
             dir_name = path_to_save.split("/")[-1]
             retry = 5         
             if flow:
+                exist_uflow_list = os.listdir(os.path.join(path_to_save, "u"))
+                exist_vflow_list = os.listdir(os.path.join(path_to_save, "v"))
                 for frame_idx in frame_list:
                     for i in range(retry):
                         try:
-                            tf.extract(f"./u/{frame_idx}", path_to_save)
-                            tf.extract(f"./v/{frame_idx}", path_to_save)
+                            if not frame_idx in exist_uflow_list:
+                                tf.extract(f"./u/{frame_idx}", path_to_save)
+                            if not frame_idx in exist_vflow_list:
+                                tf.extract(f"./v/{frame_idx}", path_to_save)
                             break
                         except KeyError as e:
                             raise Exception(f"Key error raisd tf.names:{tf.getnames()[:20]}... frame_idx:{frame_idx} frame_list:{frame_list} path_to_save:{path_to_save}")
@@ -137,10 +141,12 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
                             print(f"When extracting {path_to_save} {frame_idx}, file eixsts, retrying...")
                             continue
             else:
+                exist_frame_list = os.listdir(path_to_save)
                 for frame_idx in frame_list:
                     for i in range(retry):
                         try:
-                            tf.extract("./"+frame_idx, path_to_save)
+                            if not frame_idx in exist_frame_list:
+                                tf.extract("./"+frame_idx, path_to_save)
                             break
                         except KeyError as e:
                             raise Exception(f"Key error raisd tf.names:{tf.getnames()[:20]}... frame_idx:{frame_idx} frame_list:{frame_list} path_to_save:{path_to_save}")
