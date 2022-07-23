@@ -158,7 +158,7 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False):
     print(f"Finish processing zipfile {path_to_save}, time taken: {end_time-start_time}")
 
 
-def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, path_to_compressed="", online_extracting=False, flow=False):
+def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, path_to_compressed="", online_extracting=False, flow=False, video_record=None):
     """
     This function is to load images with support of retrying for failed load.
     Args:
@@ -177,7 +177,20 @@ def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, pa
             # if one frame does not exist then extract all frames specified in image_paths from the zip
             assert os.path.exists(path_to_compressed), f"image file {image_paths} not exists while compressed file does not exist: {path_to_compressed}"
             if online_extracting:
-                flst = [image_path.split("/")[-1] for image_path in image_paths]
+                img_tmpl = "frame_{:010d}.jpg"
+
+                if video_record is None:
+                    flst = [image_path.split("/")[-1] for image_path in image_paths]
+                else:
+                    st = video_record.start_frame
+                    n = video_record.num_frames
+                    if flow:
+                        if st % 2 == 0:
+                            st += 1
+                        flst = [img_tmpl.join(idx//2 + 1) for idx in range(st ,st+n+1, 2)]
+                    else:
+                        flst = [img_tmpl.join(idx) for idx in range(st ,st+n+1, 1)]
+
                 extract_zip(path_to_compressed, frame_list=flst, flow=flow)
             else:
                 extract_zip(path_to_compressed)

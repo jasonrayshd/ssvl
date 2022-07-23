@@ -190,14 +190,16 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
 
     # code below will extract frames from compressed file [tar, ] if the directory not exist
     if not os.path.isdir(path_to_video):
-        frame_list = [img_tmpl.format(idx.item()) for idx in frame_idx]
         if cfg.ONINE_EXTRACTING:
+            st = video_record.start_frame
+            n = video_record.num_frames
+            frame_list = [img_tmpl.format(idx) for idx in range(st, st+n+1)]
             utils.extract_zip(path_to_video, frame_list=frame_list)
         else:
             utils.extract_zip(path_to_video)
 
     # if use flow, this indicates pretrain is used then return frames of pil format
-    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video, online_extracting=cfg.ONINE_EXTRACTING,)
+    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video, online_extracting=cfg.ONINE_EXTRACTING, video_record=video_record)
 
     if use_preprocessed_flow:
         # NOTE
@@ -236,14 +238,16 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                 v_flow_paths.append(vpath)
 
             if not os.path.isdir(path_to_flow):
-                frame_list = [img_tmpl.format(frame_idx[i].item()//2 + 1) for i in range(0, len(frame_idx), 2)]
                 if cfg.ONINE_EXTRACTING:
+                    st = video_record.start_frame if video_record.start_frame%2 == 1 else video_record.start_frame+1
+                    n = video_record.num_frames
+                    frame_list = [img_tmpl.format(idx//2 + 1) for idx in range(st, st+n+1, 2)]
                     utils.extract_zip(path_to_flow, frame_list=frame_list, flow=True)
                 else:
                     utils.extract_zip(path_to_flow)
 
-            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True)
-            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True)
+            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True, video_record=video_record)
+            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True, video_record=video_record)
 
             # print(np.array(uflows[0])[:10,:10])
             return frames, uflows, vflows
