@@ -222,7 +222,56 @@ class TwoStreamVitLoss(nn.Module):
         self.lamb = lamb # weights for each loss component
         self.tau = tau# temperature
 
-    def ctr(self, feat, token):
+    # referred to MoCov3-pytorch
+    # https://github.com/facebookresearch/moco-v3/blob/main/moco/builder.py
+    @torch.no_grad()
+    def concat_all_gather(self, tensor):
+        """
+        Performs all_gather operation on the provided tensors.
+        *** Warning ***: torch.distributed.all_gather has no gradient.
+        """
+        tensors_gather = [torch.ones_like(tensor)
+            for _ in range(torch.distributed.get_world_size())]
+        torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
+        output = torch.cat(tensors_gather, dim=0)
+        return output
+
+    # referred to VAAT
+    # https://github.com/google-research/google-research/blob/master/vatt/utils/train/objectives.py
+    def ctr(self, q, k):
+        # normalize embeddings
+        q = F.normalize(q, p=2, dim=2) # B, N1, C
+        k = F.normalize(k, p=2, dim=2) # B, N2, C
+
+        # gather cross rank negative
+        k_all = self.concat_all_gather(k)
+
+        q_vs_k = torch.einsum("bmd,cnd->bcmn", q, k) # (B, B, N1, N2)
+        q_vs_k = q_vs_k.flatten(2)
+
+        q_vs_kall = torch.einsum("bmd,cnd->bcmn", q, k_all) # (B, B_all, N1, N2)
+        q_vs_kall = q_vs_kall.flatten(1)
+
+        pos_sim = torch.einsum("bbn->bn", q_vs_k)
+
+        # NOTE: [07.24 by jiachen]
+        # when training in half-precision (16-bit), intermediate result of logsumexp
+        # will always exceed the range of 16-bit floating point number
+        # Solution: convert tensor to 32-bit floating point before compute logsumexp
+        # and back to 16-bit after
+        logsumexp_pos = torch.logsumexp(pos_sim.float()/self.tau, dim=1).half()
+        logsumexp_all = torch.logsumexp(q_vs_kall.float()/self.tau, dim=1).half()
+
+        nce = logsumexp_all - logsumexp_pos
+
+        # according to implementation of VAAT
+        # if none of the samples are valid, the logsumexp could be NaN, hence
+        # we manually set them to zero
+        nce = torch.where(torch.isnan(nce), torch.zeros(nce.shape).half().to(nce.device), nce).mean()
+
+        return nce
+
+    def _ctr_old(self, feat, token):
         # feat, token: (B, N, C)
         logits = torch.mm(feat.flatten(1), token.flatten(1).t())
         B, _ = logits.shape

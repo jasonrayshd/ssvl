@@ -124,7 +124,8 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
 
 def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60,
                             as_pil=False, use_preprocessed_flow=False, flow_mode="A", flow_pretrain=False,
-                            mode = "train"
+                            mode = "train",
+                            cache_manager= None,
                             ):
 
     """
@@ -194,12 +195,12 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
             st = video_record.start_frame
             n = video_record.num_frames
             frame_list = [img_tmpl.format(idx) for idx in range(st, st+n+1)]
-            utils.extract_zip(path_to_video, frame_list=frame_list)
+            utils.extract_zip(path_to_video, frame_list=frame_list, cache_manager=cache_manager)
         else:
             utils.extract_zip(path_to_video)
 
     # if use flow, this indicates pretrain is used then return frames of pil format
-    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video, online_extracting=cfg.ONINE_EXTRACTING, video_record=video_record)
+    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video, online_extracting=cfg.ONINE_EXTRACTING, video_record=None, cache_manager=cache_manager)
 
     if use_preprocessed_flow:
         # NOTE
@@ -242,12 +243,12 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                     st = video_record.start_frame if video_record.start_frame%2 == 1 else video_record.start_frame+1
                     n = video_record.num_frames
                     frame_list = [img_tmpl.format(idx//2 + 1) for idx in range(st, st+n+1, 2)]
-                    utils.extract_zip(path_to_flow, frame_list=frame_list, flow=True)
+                    utils.extract_zip(path_to_flow, frame_list=frame_list, flow=True, cache_manager=cache_manager)
                 else:
                     utils.extract_zip(path_to_flow)
 
-            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True, video_record=video_record)
-            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True, video_record=video_record)
+            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True, video_record=None, cache_manager=cache_manager)
+            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True, video_record=None, cache_manager=cache_manager)
 
             # print(np.array(uflows[0])[:10,:10])
             return frames, uflows, vflows
@@ -290,7 +291,7 @@ MODEL.MULTI_PATHWAY_ARCH
 
 class Epickitchens(torch.utils.data.Dataset):
 
-    def __init__(self, cfg, mode, pretrain=False, predict_preprocessed_flow=False, pretrain_transform=None,  flow_mode = "A"):
+    def __init__(self, cfg, mode, pretrain=False, predict_preprocessed_flow=False, pretrain_transform=None,  flow_mode = "A", cache_manager=None):
 
         assert mode in [
             "train",
@@ -306,6 +307,7 @@ class Epickitchens(torch.utils.data.Dataset):
         # self.use_preprocessed_flow = use_preprocessed_flow
         # self.flow_pretrain = flow_pretrain            
         self.flow_mode = flow_mode                    # mode of loading flow images, different modes will produce different number of flow images
+        self.cache_manager =cache_manager
 
         self.target_fps = 60
         # For training or validation mode, one single clip is sampled from every
@@ -427,10 +429,10 @@ class Epickitchens(torch.utils.data.Dataset):
         if not self.predict_preprocessed_flow:
             # if not pretrainning or is pretraining but do not need to use flow images,
             # then not load flow images
-            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=False, mode=self.mode)
+            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=False, mode=self.mode, cache_manager=self.cache_manager)
         else:
             # else load flow images according to given mode
-            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_preprocessed_flow=True, flow_mode=self.flow_mode, flow_pretrain=True, mode=self.mode)
+            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_preprocessed_flow=True, flow_mode=self.flow_mode, flow_pretrain=True, mode=self.mode, cache_manager=self.cache_manager)
 
         # data augmentation
         if not self.pretrain:

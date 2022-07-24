@@ -50,7 +50,7 @@ class DataAugmentationForVideoMAE(object):
         return repr
 
 
-def build_pretraining_dataset(args):
+def build_pretraining_dataset(args, cache_manager=None):
     
     if "ego4d" in args.data_set:
         transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.predict_preprocessed_flow)
@@ -131,6 +131,7 @@ def build_pretraining_dataset(args):
                                 pretrain=True, pretrain_transform=transform, 
                                 flow_mode=args.flow_mode,
                                 predict_preprocessed_flow=args.predict_preprocessed_flow,
+                                cache_manager=cache_manager,
                                 )
 
     else:
