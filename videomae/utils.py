@@ -432,8 +432,8 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler, mo
 def auto_load_model(args, model, model_without_ddp, optimizer, loss_scaler, model_ema=None):
     output_dir = Path(args.output_dir)
     if loss_scaler is not None:
-        # torch.amp
         if args.auto_resume and len(args.resume) == 0:
+            # code blocks running by default if enable_deepspeed is False:
             import glob
             all_checkpoints = glob.glob(os.path.join(output_dir, 'checkpoint-*.pth'))
             latest_ckpt = -1

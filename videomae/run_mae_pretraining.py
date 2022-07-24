@@ -11,11 +11,17 @@ from pathlib import Path
 from timm.models import create_model
 from optim_factory import create_optimizer
 from datasets import build_pretraining_dataset
-from engine_for_pretraining import train_one_epoch
+from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
 import wandb
+
+
+import logging
+import socket
+from epickitchens_utils import CacheManager
+from multiprocessing.managers import SyncManager
 
 from config_utils import parse_yml, combine
 
@@ -124,25 +130,39 @@ def get_args():
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     
+    parser.add_argument('--local_world_size', default=1, type=int,
+                        help='number of locally distributed processes')
     return parser.parse_args()
 
 
 def get_model(args):
     print(f"Creating model: {args.model}")
-    model = create_model(
-        args.model,
-        pretrained=False,
-        drop_path_rate=args.drop_path,
-        drop_block_rate=None,
-        decoder_depth=args.decoder_depth
-    )
+
+    if not args.ts_pretrain:
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth
+        )
+    else:
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
+
+            fuse_scheme = args.fuse_scheme,
+            tokenizer_backbone = args.tokenizer_backbone,
+        )
     return model
 
 
 def main(args):
     utils.init_distributed_mode(args)
 
-    
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -153,21 +173,82 @@ def main(args):
 
     print(args)
 
-
     torch.manual_seed(seed)
     np.random.seed(seed)
     cudnn.benchmark = True
 
     model = get_model(args)
-    patch_size = model.encoder.patch_embed.patch_size
+
+    if args.ts_pretrain:
+        assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
+        patch_size = model.rgb_encoder.patch_embed.patch_size
+    else:
+        patch_size = model.encoder.patch_embed.patch_size
     print("Patch size = %s" % str(patch_size))
 
     # window size for masking
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
+    logging.basicConfig(
+        filename=os.path.join(args.output_dir, args.name, f"console_{utils.get_rank()}.log"),
+        filemode="w",
+        level=logging.DEBUG,
+    )
+
+    if args.gpu == 0:
+        # set cache manager
+        SyncManager.register("cacheManager", CacheManager)
+        manager = SyncManager(address=("127.0.0.1", 51225), authkey=b'abracadabra')
+        manager.start() 
+        cache_manager = manager.cacheManager(log_path=os.path.join(args.output_dir, args.name))
+        print("Cache Manager started. Waiting for processes to connect")
+        
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", 51226))
+        s.listen()
+        for i in range(args.local_world_size-1):
+            try:
+                conn, addr = s.accept()
+                conn.sendall(b"success")
+                conn.close()
+                print("Socket server: sent message to 1 process")
+            except Exception as e:
+                print(f"Socket server:\nRaw exception:{e}")
+
+        print("Socket send message successfully")
+        s.close()
+
+    else:
+       
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        retry = 20
+        for i in range(retry):
+            try:
+                s.connect(("127.0.0.1", 51226))
+                msg = s.recv(1024)
+                break
+            except ConnectionRefusedError as e:
+                time.sleep(1)
+
+        SyncManager.register("cacheManager", CacheManager)
+        manager = SyncManager(address=("", 51225), authkey=b'abracadabra')
+
+        retry = 20
+        cache_manager = None
+        for i in range(retry):
+            try:
+                manager.connect()
+                cache_manager = manager.cacheManager(log_path=os.path.join(args.output_dir, args.name))
+                break
+            except ConnectionRefusedError as e:
+                time.sleep(1)
+
+        if cache_manager is None:
+            raise Exception("Cache manager is None, after retrying 20 times")
+
     # get dataset
-    dataset_train = build_pretraining_dataset(args)
+    dataset_train = build_pretraining_dataset(args, cache_manager=cache_manager)
 
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -177,6 +258,7 @@ def main(args):
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=sampler_rank, shuffle=True
     )
+
     print("Sampler_train = %s" % str(sampler_train))
 
 
@@ -237,6 +319,7 @@ def main(args):
 
     utils.auto_load_model(
         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
+
     torch.cuda.empty_cache()
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
@@ -247,20 +330,33 @@ def main(args):
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch)
 
-        train_stats = train_one_epoch(
-            model, data_loader_train,
-            optimizer, device, epoch, loss_scaler,
-            args.clip_grad, log_writer=log_writer,
-            start_steps=epoch * num_training_steps_per_epoch,
-            lr_schedule_values=lr_schedule_values,
-            wd_schedule_values=wd_schedule_values,
-            patch_size=patch_size[0],
-            normlize_target=args.normlize_target,
+        if not args.ts_pretrain:
+            train_stats = train_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+                patch_size=patch_size[0],
+                normlize_target=args.normlize_target,
 
-            # whether predict given flow images or recons input based on flow images
-            use_preprocessed_flow = args.use_preprocessed_flow,
-            flow_pretrain = args.flow_pretrain,
-        )
+                # whether predict given flow images or recons input based on flow images
+                predict_preprocessed_flow = args.predict_preprocessed_flow,
+            )
+        else:
+            train_stats = train_tsvit_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+                patch_size=patch_size[0],
+                normlize_target=args.normlize_target,
+                tau = args.tau,
+                lamb=args.lamb,
+            ) 
 
         if args.output_dir:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:

@@ -102,13 +102,18 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
                     print("Replicating last two frames")
                     index.extend(index[-2:])
             else:
-                index.append(raw_index[i] - 1)
-                index.append(raw_index[i])
+                if raw_index[i] < start_frame + num_frames:
+                    index.append(raw_index[i] - 1)
+                    index.append(raw_index[i])
+                else:
+                    rep_flag = True
+                    print("Replicating last two frames")
+                    index.extend(index[-2:])
 
         index = torch.clamp( torch.as_tensor(index), start_frame, start_frame + num_frames - 1)
 
         if rep_flag:
-            print(index, start_frame, start_frame + num_frames, num_frames)
+            print(raw_index, index, start_frame, start_frame + num_frames, num_frames)
 
         return index
     else:
@@ -119,7 +124,8 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
 
 def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_fps=60,
                             as_pil=False, use_preprocessed_flow=False, flow_mode="A", flow_pretrain=False,
-                            mode = "train"
+                            mode = "train",
+                            cache_manager= None,
                             ):
 
     """
@@ -158,9 +164,6 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
     else:
         raise ValueError(f"Unknwon Epic-kitchen version: {cfg.VERSION}")
 
-    # code below will extract frames from compressed file [zip, tar] if the directory not exist
-    if not os.path.isdir(path_to_video):
-        utils.extract_zip(path_to_video)
 
     img_tmpl = "frame_{:010d}.jpg"
     fps, sampling_rate, num_samples = video_record.fps, cfg.DATA.SAMPLING_RATE, cfg.DATA.NUM_FRAMES
@@ -177,6 +180,7 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
         cfg.TEST.NUM_ENSEMBLE_VIEWS,
         flow_pretrain = flow_pretrain,
     )
+
     start_idx, end_idx = start_idx + 1, end_idx + 1
     frame_idx = temporal_sampling(video_record.num_frames,
                                   start_idx, end_idx, num_samples,
@@ -184,14 +188,23 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                                   flow_pretrain = flow_pretrain,
                                   )
     img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
+
+    # code below will extract frames from compressed file [tar, ] if the directory not exist
+    if not os.path.isdir(path_to_video):
+        if cfg.ONINE_EXTRACTING:
+            st = video_record.start_frame
+            n = video_record.num_frames
+            frame_list = [img_tmpl.format(idx) for idx in range(st, st+n+1)]
+            utils.extract_zip(path_to_video, frame_list=frame_list, cache_manager=cache_manager)
+        else:
+            utils.extract_zip(path_to_video)
+
     # if use flow, this indicates pretrain is used then return frames of pil format
-    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video)
+    frames = utils.retry_load_images(img_paths, as_pil=as_pil, path_to_compressed = path_to_video, online_extracting=cfg.ONINE_EXTRACTING, video_record=None, cache_manager=cache_manager)
 
     if use_preprocessed_flow:
         # NOTE
         # idx range in [1, video frames]
-        if not os.path.isdir(path_to_flow):
-            utils.extract_zip(path_to_flow)
 
         if flow_mode == "A":
             # sample strategy:
@@ -207,7 +220,7 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
 
             for i in range(0, len(frame_idx), 2):
                 idx  = frame_idx[i]
-                assert idx % 2 == 1, f"idx:{idx} should be an odd number. frame_idx:{frame_idx}. {start_idx}, {video_record.metadata}, {video_record.num_frames}"
+                assert idx % 2 == 1, f"idx:{idx} should be an odd number. video_record.start_frame:{video_record.start_frame} path_to_video:{path_to_video}, frame_idx:{frame_idx}. {start_idx}, {end_idx}, untrimmed_video_name:{video_record.untrimmed_video_name}, {video_record.num_frames}"
     
                 upath = os.path.join(path_to_flow, "u", img_tmpl.format( idx.item()//2 + 1))
                 vpath = os.path.join(path_to_flow, "v", img_tmpl.format( idx.item()//2 + 1))
@@ -225,9 +238,19 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                 u_flow_paths.append(upath)
                 v_flow_paths.append(vpath)
 
-            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
-            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow)
-            
+            if not os.path.isdir(path_to_flow):
+                if cfg.ONINE_EXTRACTING:
+                    st = video_record.start_frame if video_record.start_frame%2 == 1 else video_record.start_frame+1
+                    n = video_record.num_frames
+                    frame_list = [img_tmpl.format(idx//2 + 1) for idx in range(st, st+n+1, 2)]
+                    utils.extract_zip(path_to_flow, frame_list=frame_list, flow=True, cache_manager=cache_manager)
+                else:
+                    utils.extract_zip(path_to_flow)
+
+            uflows = utils.retry_load_images(u_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True, video_record=None, cache_manager=cache_manager)
+            vflows = utils.retry_load_images(v_flow_paths, as_pil=True, path_to_compressed= path_to_flow, online_extracting=cfg.ONINE_EXTRACTING, flow=True, video_record=None, cache_manager=cache_manager)
+
+            # print(np.array(uflows[0])[:10,:10])
             return frames, uflows, vflows
         else:
             raise ValueError(f"Unknown flow mode {flow_mode}, available modes are [A]")
@@ -268,7 +291,7 @@ MODEL.MULTI_PATHWAY_ARCH
 
 class Epickitchens(torch.utils.data.Dataset):
 
-    def __init__(self, cfg, mode, pretrain=False, flow_pretrain=False, pretrain_transform=None, use_preprocessed_flow=False, flow_mode = "A"):
+    def __init__(self, cfg, mode, pretrain=False, predict_preprocessed_flow=False, pretrain_transform=None,  flow_mode = "A", cache_manager=None):
 
         assert mode in [
             "train",
@@ -280,9 +303,11 @@ class Epickitchens(torch.utils.data.Dataset):
         self.mode = mode
         self.pretrain = pretrain                      # pretrain or not
         self.pretrain_transform = pretrain_transform  # data transformation for pretraining
-        self.use_preprocessed_flow = use_preprocessed_flow
-        self.flow_pretrain = flow_pretrain            # whether predicting flow images at pretraining
+        self.predict_preprocessed_flow = predict_preprocessed_flow # whether predicting flow images at pretraining
+        # self.use_preprocessed_flow = use_preprocessed_flow
+        # self.flow_pretrain = flow_pretrain            
         self.flow_mode = flow_mode                    # mode of loading flow images, different modes will produce different number of flow images
+        self.cache_manager =cache_manager
 
         self.target_fps = 60
         # For training or validation mode, one single clip is sampled from every
@@ -401,13 +426,13 @@ class Epickitchens(torch.utils.data.Dataset):
             )
 
         # load frames (and flows)
-        if not self.use_preprocessed_flow:
+        if not self.predict_preprocessed_flow:
             # if not pretrainning or is pretraining but do not need to use flow images,
             # then not load flow images
-            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=self.flow_pretrain, mode=self.mode)
+            frames = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, flow_pretrain=False, mode=self.mode, cache_manager=self.cache_manager)
         else:
             # else load flow images according to given mode
-            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_preprocessed_flow=True, flow_mode=self.flow_mode, flow_pretrain=True, mode=self.mode)
+            frames, vflows, uflows = pack_frames_to_video_clip(self.cfg, self._video_records[index], temporal_sample_index, as_pil=self.pretrain, use_preprocessed_flow=True, flow_mode=self.flow_mode, flow_pretrain=True, mode=self.mode, cache_manager=self.cache_manager)
 
         # data augmentation
         if not self.pretrain:
@@ -428,8 +453,9 @@ class Epickitchens(torch.utils.data.Dataset):
             )
         else:
             # frames, flows share the same mask
-            if self.use_preprocessed_flow:
+            if self.predict_preprocessed_flow:
                 flows = [uflows, vflows]
+
                 frames, flows, mask = self.pretrain_transform((frames, flows), use_preprocessed_flow=True) # frames shape: C*T, H, W
                 frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) # 3, num_frames, H, W
                 # flows are processed in pretrain_transform
@@ -447,7 +473,7 @@ class Epickitchens(torch.utils.data.Dataset):
         if not self.pretrain:
             # not pretrain, keep the original implementation
             return frames, label, index, metadata
-        elif self.pretrain and not self.use_preprocessed_flow:
+        elif self.pretrain and not self.predict_preprocessed_flow:
             # if is pretrain but do not need to use flow images
             return frames, mask, label, index, metadata
         else:
