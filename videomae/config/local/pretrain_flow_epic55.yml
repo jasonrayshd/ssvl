@@ -72,9 +72,9 @@ cfg:
   EPICKITCHENS:
     # epic-kitchen100: path to directory that contains each participant's data
     # epic-kitchen50: path to directory that contains two directories: flow and rgb
-    VISUAL_DATA_DIR: "/mnt/data/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
+    VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
     # path to annotation file
-    ANNOTATIONS_DIR: "/mnt/data/3h91syskeag572hl6tvuovwv4d/annotations"
+    ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
     # annotation file name of train/val/test data
     TRAIN_LIST: "EPIC_train_action_labels.pkl"
     VAL_LIST: ""
@@ -92,4 +92,4 @@ cfg:
     NUM_SPATIAL_CROPS: ""
     NUM_ENSEMBLE_VIEWS: ""
   VERSION: 55
-  ONINE_EXTRACTING: false
+  ONINE_EXTRACTING: true

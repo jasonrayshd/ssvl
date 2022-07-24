@@ -112,7 +112,7 @@ def cache_tar_to_local(zip_file_path, raw_dest, cache_log_file = "cache.log", fl
 
     logger.warn(f"Reach maximum caching attempts... zip_file_path:{zip_file_path}")
 
-def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False, cache_dest="/data/jiachen/temp", cache_manager=None, force=False):
+def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False, cache_dest="", cache_manager=None, force=False):
 
     # num_frames = len(os.listdir(path_to_save)) # existing frames in the directory
     message = f"Zip file does not exists: {path_to_save}"

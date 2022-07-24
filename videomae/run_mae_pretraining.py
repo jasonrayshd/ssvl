@@ -190,12 +190,6 @@ def main(args):
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
-    logging.basicConfig(
-        filename=os.path.join(args.output_dir, args.name, f"console_{utils.get_rank()}.log"),
-        filemode="w",
-        level=logging.DEBUG,
-    )
-
     if args.gpu == 0:
         # set cache manager
         SyncManager.register("cacheManager", CacheManager)
@@ -391,4 +385,11 @@ if __name__ == '__main__':
     if opts.output_dir:
         Path(opts.output_dir).mkdir(parents=True, exist_ok=True)
     
+
+    logging.basicConfig(
+        filename=os.path.join(args.output_dir, args.name, f"console_{utils.get_rank()}.log"),
+        filemode="w",
+        level=logging.DEBUG,
+    )
+
     main(opts)
