@@ -41,8 +41,8 @@ data_path: '/path/to/list_kinetics-400'     # help='dataset path
 imagenet_default_mean_and_std: true         # action='store_true
 num_frames: 16
 sampling_rate: 4
-output_dir: "/mnt/code/videomae/output"                              # help='path where to save, empty for no saving
-log_dir: "/mnt/code/videomae/output"                              # help='path where to tensorboard log
+output_dir: "/mnt/code/ssvl/videomae/output"                              # help='path where to save, empty for no saving
+log_dir: "/mnt/code/ssvl/videomae/output"                              # help='path where to tensorboard log
 # device: 'cuda'                              # help='device to use for training / testing
 # seed: 0
 resume: ""                                  # help='resume from checkpoint

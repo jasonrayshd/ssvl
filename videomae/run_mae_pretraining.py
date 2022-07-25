@@ -22,6 +22,7 @@ import logging
 import socket
 from epickitchens_utils import CacheManager
 from multiprocessing.managers import SyncManager
+import multiprocessing as mlp
 
 from config_utils import parse_yml, combine
 
@@ -129,7 +130,7 @@ def get_args():
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
-    
+
     parser.add_argument('--local_world_size', default=1, type=int,
                         help='number of locally distributed processes')
     return parser.parse_args()
@@ -158,6 +159,11 @@ def get_model(args):
             tokenizer_backbone = args.tokenizer_backbone,
         )
     return model
+
+
+def cache_worker(address, local_world_size, log_path=""):
+    cache_manager = CacheManager(address=address,local_world_size=local_world_size, log_path=log_path)
+    cache_manager.start()
 
 
 def main(args):
@@ -190,57 +196,24 @@ def main(args):
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
-    if args.gpu == 0:
-        # set cache manager
-        SyncManager.register("cacheManager", CacheManager)
-        manager = SyncManager(address=("127.0.0.1", 51225), authkey=b'abracadabra')
-        manager.start() 
-        cache_manager = manager.cacheManager(log_path=os.path.join(args.output_dir, args.name))
-        print("Cache Manager started. Waiting for processes to connect")
-        
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.bind(("127.0.0.1", 51226))
-        s.listen()
-        for i in range(args.local_world_size-1):
-            try:
-                conn, addr = s.accept()
-                conn.sendall(b"success")
-                conn.close()
-                print("Socket server: sent message to 1 process")
-            except Exception as e:
-                print(f"Socket server:\nRaw exception:{e}")
+    # start cache manager by local main process
+    # cache_address = ("127.0.0.1", 51225)
+    # cache_log_path = os.path.join(args.output_dir, args.name)
+    # if args.gpu == 0:
+    #     cache_sub_process = mlp.Process(target=cache_worker, args=(cache_address, args.local_world_size, cache_log_path))
+    #     cache_sub_process.start()
+    #     print("Cache Manager started. Waiting for processes to connect")
 
-        print("Socket send message successfully")
-        s.close()
+    # cache_manager = CacheManager(address=cache_address, local_world_size=args.local_world_size, log_path=cache_log_path)
+    # retry = 20
+    # for i in range(retry):
+    #     try:
+    #         cache_manager.connect()
+    #         break
+    #     except ConnectionRefusedError as e:
+    #         time.sleep(1)
 
-    else:
-       
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        retry = 20
-        for i in range(retry):
-            try:
-                s.connect(("127.0.0.1", 51226))
-                msg = s.recv(1024)
-                break
-            except ConnectionRefusedError as e:
-                time.sleep(1)
-
-        SyncManager.register("cacheManager", CacheManager)
-        manager = SyncManager(address=("", 51225), authkey=b'abracadabra')
-
-        retry = 20
-        cache_manager = None
-        for i in range(retry):
-            try:
-                manager.connect()
-                cache_manager = manager.cacheManager(log_path=os.path.join(args.output_dir, args.name))
-                break
-            except ConnectionRefusedError as e:
-                time.sleep(1)
-
-        if cache_manager is None:
-            raise Exception("Cache manager is None, after retrying 20 times")
-
+    cache_manager = None
     # get dataset
     dataset_train = build_pretraining_dataset(args, cache_manager=cache_manager)
 
@@ -384,10 +357,10 @@ if __name__ == '__main__':
 
     if opts.output_dir:
         Path(opts.output_dir).mkdir(parents=True, exist_ok=True)
-    
 
+    os.makedirs(os.path.join(opts.output_dir, opts.name), exist_ok=True)
     logging.basicConfig(
-        filename=os.path.join(args.output_dir, args.name, f"console_{utils.get_rank()}.log"),
+        filename=os.path.join(opts.output_dir, opts.name, f"console_{utils.get_rank()}_{os.environ['LOCAL_RANK']}.log"),
         filemode="w",
         level=logging.DEBUG,
     )
