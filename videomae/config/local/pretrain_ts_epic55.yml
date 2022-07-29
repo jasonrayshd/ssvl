@@ -2,7 +2,7 @@
 # configurations needed in pretraining
 
 batch_size: 4
-epochs: 800
+epochs: 1200
 save_ckpt_freq: 10
 
 # Model parameters
@@ -49,7 +49,7 @@ resume: ""                                  # help='resume from checkpoint
 auto_resume: true                           # 
 
 start_epoch: 0                              # help='start epoch
-num_workers: 5
+num_workers: 8
 pin_mem: true
 # flow images
 ts_pretrain: true
@@ -59,7 +59,7 @@ fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
 
 tau: 0.1
-lamb: [1, 1, 1, 1]
+lamb: [1, 1, 1, 1, 1, 1]
 # configuration file
 # config: ""                                  # help='path to configuration file
 
@@ -76,9 +76,11 @@ cfg:
   EPICKITCHENS:
     # epic-kitchen100: path to directory that contains each participant's data
     # epic-kitchen50: path to directory that contains two directories: flow and rgb
-    VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
+    # VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
+    VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
     # path to annotation file
-    ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
+    # ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
+    ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations"
     # annotation file name of train/val/test data
     TRAIN_LIST: "EPIC_train_action_labels.pkl"
     VAL_LIST: ""

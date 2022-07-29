@@ -259,7 +259,7 @@ class PretrainVisionTransformer(nn.Module):
     def no_weight_decay(self):
         return {'pos_embed', 'cls_token', 'mask_token'}
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, all_token=False):
         _, _, T, _, _ = x.shape
         x_vis = self.encoder(x, mask) # [B, N_vis, C_e]
         x_vis = self.encoder_to_decoder(x_vis) # [B, N_vis, C_d]
@@ -270,7 +270,7 @@ class PretrainVisionTransformer(nn.Module):
         pos_emd_vis = expand_pos_embed[~mask].reshape(B, -1, C)
         pos_emd_mask = expand_pos_embed[mask].reshape(B, -1, C)
         x_full = torch.cat([x_vis + pos_emd_vis, self.mask_token + pos_emd_mask], dim=1) # [B, N, C_d]
-        x = self.decoder(x_full, pos_emd_mask.shape[1]) # [B, N_mask, 3 * 16 * 16]
+        x = self.decoder(x_full, pos_emd_mask.shape[1] if not all_token else 0) # [B, N_mask, 3 * 16 * 16]
 
         return x
 
@@ -608,7 +608,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
 
         return feat
 
-    def forward(self, rgb, flows, mask):
+    def forward(self, rgb, flows, mask, all_token=False):
         _, _, rgbT, _, _ = rgb.shape
         _, _, flowT, _, _ = flows.shape
 
@@ -684,11 +684,11 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
         # assert rgb_feat.shape == flow_feat.shape
 
         if self.share_decoder:
-            rgb_rgb_hat, rgb_flow_hat = self.decoder(rgb_full, rgb_pos_emd_mask.shape[1]) # [B, N_mask, 3 * 16 * 16]
-            flow_rgb_hat, flow_flow_hat = self.decoder(flow_full, flow_pos_emd_mask.shape[1]) # [B, N_mask, 3 * 16 * 16]
+            rgb_rgb_hat, rgb_flow_hat = self.decoder(rgb_full, rgb_pos_emd_mask.shape[1] if not all_token else 0) # [B, N_mask, 3 * 16 * 16]
+            flow_rgb_hat, flow_flow_hat = self.decoder(flow_full, flow_pos_emd_mask.shape[1] if not all_token else 0) # [B, N_mask, 3 * 16 * 16]
         else:
-            rgb_rgb_hat, rgb_flow_hat = self.rgb_decoder(rgb_full, rgb_pos_emd_mask.shape[1]) # [B, N_mask, 3 * 16 * 16]
-            flow_rgb_hat, flow_flow_hat = self.flow_decoder(flow_full, flow_pos_emd_mask.shape[1]) # [B, N_mask, 3 * 16 * 16]
+            rgb_rgb_hat, rgb_flow_hat = self.rgb_decoder(rgb_full, rgb_pos_emd_mask.shape[1] if not all_token else 0) # [B, N_mask, 3 * 16 * 16]
+            flow_rgb_hat, flow_flow_hat = self.flow_decoder(flow_full, flow_pos_emd_mask.shape[1] if not all_token else 0) # [B, N_mask, 3 * 16 * 16]
 
         return rgb_rgb_hat, rgb_flow_hat, flow_rgb_hat, flow_flow_hat, rgb_vis, flow_vis, rgb_token, flow_token
 

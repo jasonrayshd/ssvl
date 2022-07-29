@@ -217,11 +217,14 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
 
             u_flow_paths = []
             v_flow_paths = []
-
+            # _debug_frame_idx = []
             for i in range(0, len(frame_idx), 2):
+
                 idx  = frame_idx[i]
+                # _debug_frame_idx.append(idx.item()//2 + 1)
+
                 assert idx % 2 == 1, f"idx:{idx} should be an odd number. video_record.start_frame:{video_record.start_frame} path_to_video:{path_to_video}, frame_idx:{frame_idx}. {start_idx}, {end_idx}, untrimmed_video_name:{video_record.untrimmed_video_name}, {video_record.num_frames}"
-    
+
                 upath = os.path.join(path_to_flow, "u", img_tmpl.format( idx.item()//2 + 1))
                 vpath = os.path.join(path_to_flow, "v", img_tmpl.format( idx.item()//2 + 1))
 
@@ -237,6 +240,8 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
 
                 u_flow_paths.append(upath)
                 v_flow_paths.append(vpath)
+
+            # print(f"path_to_video: {path_to_video} Sampled rgb image: {frame_idx} Sampled flow image: {_debug_frame_idx}")
 
             if not os.path.isdir(path_to_flow):
                 if cfg.ONINE_EXTRACTING:

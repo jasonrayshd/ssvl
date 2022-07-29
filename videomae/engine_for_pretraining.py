@@ -73,6 +73,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
 
+                    train_wo_amp = False,
                     # two_stream = False,
                     predict_preprocessed_flow = False, # use preprocessed flow images or not
                     # predict_flow_pretrain = False, # reconstruct input based on predicted flow images or not
@@ -134,9 +135,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
                     videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=patch_size, p2=patch_size)
                     B, _, C = videos_patch.shape
                     labels = videos_patch[bool_masked_pos].reshape(B, -1, C)
-        
-                
-        
+
         else:
             # target will be processed in dataset code
             # reconstruct entire given flow images
@@ -161,7 +160,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             labels = labels.to(device, non_blocking=True)
             # print(f"final label: {labels.shape}")
  
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(enabled=not train_wo_amp):
             outputs = model(videos, bool_masked_pos)
 
             loss = loss_func(input=outputs, target=labels)
@@ -173,11 +172,19 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             sys.exit(1)
 
         optimizer.zero_grad()
-        # this attribute is added by timm on one optimizer (adahessian)
-        is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
-        grad_norm = loss_scaler(loss, optimizer, clip_grad=max_norm,
-                                parameters=model.parameters(), create_graph=is_second_order)
-        loss_scale_value = loss_scaler.state_dict()["scale"]
+
+        if not train_wo_amp:
+            # this attribute is added by timm on one optimizer (adahessian)
+            is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
+            grad_norm = loss_scaler(loss, optimizer, clip_grad=max_norm,
+                                    parameters=model.parameters(), create_graph=is_second_order)
+            loss_scale_value = loss_scaler.state_dict()["scale"]
+        else:
+            loss.backward()
+            optimizer.step()
+
+            grad_norm = 0
+            loss_scale_value = 0
 
         torch.cuda.synchronize()
 
@@ -217,7 +224,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
 
 class TwoStreamVitLoss(nn.Module):
 
-    def __init__(self, lamb = [0.25, 0.25, 0.25, 0.25], tau=0.8):
+    def __init__(self, lamb = [1, 1, 1, 1, 1, 1], tau=0.8):
         super().__init__()
         self.lamb = lamb # weights for each loss component
         self.tau = tau# temperature
@@ -257,7 +264,7 @@ class TwoStreamVitLoss(nn.Module):
         # NOTE: [07.24 by jiachen]
         # when training in half-precision (16-bit), intermediate result of logsumexp
         # will always exceed the range of 16-bit floating point number
-        # Solution: convert tensor to 32-bit floating point before compute logsumexp
+        # Simple solution: convert input tensor to 32-bit floating point before compute logsumexp
         # and back to 16-bit after
         logsumexp_pos = torch.logsumexp(pos_sim.float()/self.tau, dim=1).half()
         logsumexp_all = torch.logsumexp(q_vs_kall.float()/self.tau, dim=1).half()
@@ -271,7 +278,7 @@ class TwoStreamVitLoss(nn.Module):
 
         return nce
 
-    def _ctr_old(self, feat, token):
+    def _ctr_raw(self, feat, token):
         # feat, token: (B, N, C)
         logits = torch.mm(feat.flatten(1), token.flatten(1).t())
         B, _ = logits.shape
@@ -289,18 +296,26 @@ class TwoStreamVitLoss(nn.Module):
 
         rgb_target, flow_target = target_lst
 
-        l_recons = self.recons(rgb_rgb_hat, rgb_target) + self.recons(flow_flow_hat, flow_target)
-        l_cross_recons  = self.recons(rgb_flow_hat, flow_target) + self.recons(flow_rgb_hat, rgb_target)
+        l_rgb_recons = self.recons(rgb_rgb_hat, rgb_target)
+        l_flow_recons = self.recons(flow_flow_hat, flow_target)
+        l_rgb_flow_recons  = self.recons(rgb_flow_hat, flow_target)
+        l_flow_rgb_recons = self.recons(flow_rgb_hat, rgb_target)
         l_rgb_contrast = self.ctr(rgb_vis, flow_token)
         l_flow_contrast = self.ctr(flow_vis, rgb_token)
 
+        loss =  self.lamb[0]*l_rgb_recons + self.lamb[1]*l_flow_recons + \
+                self.lamb[2]*l_rgb_flow_recons + self.lamb[3]*l_flow_rgb_recons + \
+                self.lamb[4]*l_rgb_contrast + self.lamb[5]*l_flow_contrast
+
         # print(l_recons, l_cross_recons, l_rgb_contrast, l_flow_contrast)
         return {
-            "sum": self.lamb[0]*l_recons + self.lamb[1]*l_cross_recons + self.lamb[2]*l_rgb_contrast + self.lamb[3]*l_flow_contrast,
-            "recons": l_recons,
-            "cross_recons": l_cross_recons,
-            "rgb_contrast": l_rgb_contrast,
-            "flow_contrast": l_flow_contrast
+            "sum": loss,
+            "rgb_recons": l_rgb_recons.cpu().item(),
+            "flow_recons": l_flow_recons.cpu().item(),
+            "rgb_flow_recons": l_rgb_flow_recons.cpu().item(),
+            "flow_rgb_recons": l_flow_rgb_recons.cpu().item(),
+            "rgb_contrast": l_rgb_contrast.cpu().item(),
+            "flow_contrast": l_flow_contrast.cpu().item(),
         }
 
 def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -400,10 +415,17 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
         torch.cuda.synchronize()
 
         metric_logger.update(loss=loss_value)
-        metric_logger.update(recons_loss=loss_dct["recons"])
-        metric_logger.update(cross_recons=loss_dct["cross_recons"])
+        metric_logger.update(rgb_recons_loss=loss_dct["rgb_recons"])
+        metric_logger.update(flow_recons_loss=loss_dct["flow_recons"])
+        metric_logger.update(recons_loss=loss_dct["rgb_recons"]+loss_dct["flow_recons"])
+
+        metric_logger.update(rgb_flow_recons=loss_dct["rgb_flow_recons"])
+        metric_logger.update(flow_rgb_recons=loss_dct["flow_rgb_recons"])
+        metric_logger.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"])
+
         metric_logger.update(rgb_contrast=loss_dct["rgb_contrast"])
         metric_logger.update(flow_contrast=loss_dct["flow_contrast"])
+        metric_logger.update(contrast_loss=loss_dct["rgb_contrast"] + loss_dct["flow_contrast"])
 
         metric_logger.update(loss_scale=loss_scale_value)
         min_lr = 10.
@@ -423,11 +445,17 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
 
         if log_writer is not None:
             log_writer.update(loss=loss_value, head="loss")
-            log_writer.update(recons_loss=loss_dct["recons"], head="recons_loss")
-            log_writer.update(cross_recons=loss_dct["cross_recons"], head="cross_recons")
+            log_writer.update(rgb_recons=loss_dct["rgb_recons"], head="rgb_recons")
+            log_writer.update(flow_recons=loss_dct["flow_recons"], head="flow_recons")
+            log_writer.update(recons_loss=loss_dct["rgb_recons"] + loss_dct["flow_recons"], head="recons_loss")
+
+            log_writer.update(rgb_flow_recons=loss_dct["rgb_flow_recons"], head="rgb_flow_recons")
+            log_writer.update(flow_rgb_recons=loss_dct["flow_rgb_recons"], head="flow_rgb_recons")
+            log_writer.update(cross_recons=loss_dct["rgb_flow_recons"] + loss_dct["flow_rgb_recons"], head="cross_recons")
+
             log_writer.update(rgb_contrast=loss_dct["rgb_contrast"], head="rgb_contrast")
             log_writer.update(flow_contrast=loss_dct["flow_contrast"], head="flow_contrast")
-
+            log_writer.update(contrast_loss= loss_dct["rgb_contrast"] + loss_dct["flow_contrast"], head="contrast_loss")
             log_writer.update(loss_scale=loss_scale_value, head="opt")
             log_writer.update(lr=max_lr, head="opt")
             log_writer.update(min_lr=min_lr, head="opt")

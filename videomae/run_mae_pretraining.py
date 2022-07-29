@@ -17,7 +17,6 @@ import utils
 import modeling_pretrain
 import wandb
 
-
 import logging
 import socket
 from epickitchens_utils import CacheManager
@@ -131,8 +130,11 @@ def get_args():
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
-    parser.add_argument('--local_world_size', default=1, type=int,
-                        help='number of locally distributed processes')
+    parser.add_argument('--wandb_id', default=None, type=str,
+                        help='run id of wandb')
+    
+    parser.add_argument('--train_wo_amp', action='store_true')
+
     return parser.parse_args()
 
 
@@ -175,7 +177,7 @@ def main(args):
     seed = args.seed + utils.get_rank()
 
     if utils.get_rank() == 0 and not args.debug:
-        wandb.init(project=args.project, config=vars(opts))
+        wandb.init(project=args.project, id=args.wandb_id, resume="must" if args.wandb_id else None, config=vars(opts))
 
     print(args)
 
@@ -228,7 +230,6 @@ def main(args):
 
     print("Sampler_train = %s" % str(sampler_train))
 
-
     assert args.log_dir is not None and args.output_dir is not None, "log_dir and output_dir should not be empty"
     args.log_dir = os.path.join(args.log_dir, args.name)
     args.output_dir = os.path.join(args.output_dir, args.name)
@@ -271,6 +272,8 @@ def main(args):
 
     optimizer = create_optimizer(
         args, model_without_ddp)
+
+
     loss_scaler = NativeScaler()
 
     print("Use step level LR & WD scheduler!")
@@ -308,6 +311,8 @@ def main(args):
                 patch_size=patch_size[0],
                 normlize_target=args.normlize_target,
 
+                # use mixed precision or not
+                train_wo_amp = args.train_wo_amp, 
                 # whether predict given flow images or recons input based on flow images
                 predict_preprocessed_flow = args.predict_preprocessed_flow,
             )

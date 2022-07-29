@@ -2,11 +2,11 @@
 # configurations needed in pretraining
 
 batch_size: 8
-epochs: 1200
+epochs: 100
 save_ckpt_freq: 10
 
 # Model parameters
-model: "pretrain_videomae_flowA_base_patch16_224"
+model: "pretrain_videomae_base_patch16_224"
 decoder_depth: 4
 mask_type: "tube"         # choices=['tube']
 mask_ratio: 0.4
@@ -20,12 +20,12 @@ opt_eps: 1.0e-8             # help='Optimizer Epsilon (default: 1e-8)
 opt_betas: null           # type=float, nargs='+  metavar='BETA help='Optimizer Betas (default: None, use opt default)
 clip_grad: null           # type=float, None, metavar='NORM help='Clip gradient norm (default: None, no clipping)
 momentum: 0.9             # metavar='M help='SGD momentum (default: 0.9)
-weight_decay: 0.05        # help='weight decay (default: 0.05)
+weight_decay: 0.001        # help='weight decay (default: 0.05)
 weight_decay_end: null    # help="""Final value of the
                           # weight decay. We use a cosine schedule for WD. 
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
 
-lr: 1.5e-4                # metavar='LR help='learning rate (default: 1.5e-4)
+lr: 1.5e-3                # metavar='LR help='learning rate (default: 1.5e-4)
 warmup_lr: 1.0e-6           # metavar='LR help='warmup learning rate (default: 1e-6)
 min_lr: 1.0e-5              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
@@ -53,8 +53,8 @@ num_workers: 8
 pin_mem: true
 # flow images
 ts_pretrain: false
-predict_preprocessed_flow: true             # whether use preprocessed flow images as target at pretraining or not
-flow_mode: "A"                              # mode of sampling flow images  [A]
+predict_preprocessed_flow: false             # whether use preprocessed flow images as target at pretraining or not
+flow_mode: "A"                               # mode of sampling flow images  [A]
 
 # configuration file
 # config: ""                                  # help='path to configuration file
