@@ -74,9 +74,8 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
                     lr_schedule_values=None, wd_schedule_values=None,
 
                     train_wo_amp = False,
-                    # two_stream = False,
-                    predict_preprocessed_flow = False, # use preprocessed flow images or not
-                    # predict_flow_pretrain = False, # reconstruct input based on predicted flow images or not
+                    predict_preprocessed_flow = False,
+
                     ):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -121,17 +120,12 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
                     videos_norm = (videos_squeeze - videos_squeeze.mean(dim=-2, keepdim=True)
                         ) / (videos_squeeze.var(dim=-2, unbiased=True, keepdim=True).sqrt() + 1e-6)
                     # we find that the mean is about 0.48 and standard deviation is about 0.08.
-                    # if flow_based_recons:
-                    #     B, C, T, H, W = unnorm_videos.shape
-                    #     labels = rearrange(videos_norm, 'b (t h w) (p0 p1 p2) c -> b c (t p0) (h p1) (w p2)', t = T/2, h=H/patch_size, w=W/patch_size,p0=2, p1=patch_size, p2=patch_size)
-                    # else:
+
                     videos_patch = rearrange(videos_norm, 'b n p c -> b n (p c)')
                     B, _, C = videos_patch.shape
                     labels = videos_patch[bool_masked_pos].reshape(B, -1, C)
                 else:
-                    # if flow_based_recons:
-                    #     labels = unnorm_videos
-                    # else:
+
                     videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=patch_size, p2=patch_size)
                     B, _, C = videos_patch.shape
                     labels = videos_patch[bool_masked_pos].reshape(B, -1, C)
@@ -144,7 +138,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             _, _, T, H, W = videos.shape
             assert T%N == 0, f"Number of flows:{T} to be predicted should be divisible by number of frames:{N}"
             # print(labels.shape)
-
+            print(f"label shape: {labels.shape}")
             labels = rearrange(labels, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
 
             tublet_size = 2
@@ -224,8 +218,9 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
 
 class TwoStreamVitLoss(nn.Module):
 
-    def __init__(self, lamb = [1, 1, 1, 1, 1, 1], tau=0.8):
+    def __init__(self, ctr="easy", lamb = [1, 1, 1, 1, 1, 1], tau=0.8):
         super().__init__()
+        self.ctr_type = ctr
         self.lamb = lamb # weights for each loss component
         self.tau = tau# temperature
 
@@ -243,9 +238,17 @@ class TwoStreamVitLoss(nn.Module):
         output = torch.cat(tensors_gather, dim=0)
         return output
 
+
+    def ctr(self, q, k):
+        if self.ctr_type == "easy":
+            return self.easy_ctr(q, k)
+        elif self.ctr_type == "hard":
+            pass
+            # return self.hard_ctr(q, k)
+
     # referred to VAAT
     # https://github.com/google-research/google-research/blob/master/vatt/utils/train/objectives.py
-    def ctr(self, q, k):
+    def easy_ctr(self, q, k):
         # normalize embeddings
         q = F.normalize(q, p=2, dim=2) # B, N1, C
         k = F.normalize(k, p=2, dim=2) # B, N2, C
@@ -323,6 +326,7 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
 
+                    ctr="easy",
                     tau = 0.8,
                     lamb = [0.25, 0.25, 0.25, 0.25],
                     ):
@@ -334,7 +338,7 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
-    loss_func = TwoStreamVitLoss(lamb=lamb, tau=tau)
+    loss_func = TwoStreamVitLoss(ctr=ctr, lamb=lamb, tau=tau)
 
     for step, batch in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         # assign learning rate & weight decay for each step

@@ -10,21 +10,21 @@ from epickitchens import Epickitchens
 from argparse import Namespace
 
 class DataAugmentationForVideoMAE(object):
-    def __init__(self, args, use_preprocessed_flow=False):
+    def __init__(self, args, flow_mode=False):
         self.input_mean = [0.485, 0.456, 0.406]  # IMAGENET_DEFAULT_MEAN
         self.input_std = [0.229, 0.224, 0.225]  # IMAGENET_DEFAULT_STD
 
         # flow image should be the same given normalized images
         # thus it do not need to be normalized
-        normalize = GroupNormalize(self.input_mean, self.input_std, use_preprocessed_flow=use_preprocessed_flow)
+        normalize = GroupNormalize(self.input_mean, self.input_std, flow_mode=flow_mode)
         # This contains random process and is rewritten for flow image processing
-        self.train_augmentation = GroupMultiScaleCrop(args.input_size, [1, .875, .75, .66], use_preprocessed_flow=use_preprocessed_flow)
+        self.train_augmentation = GroupMultiScaleCrop(args.input_size, [1, .875, .75, .66], flow_mode=flow_mode)
 
         # accpet pil image
         self.transform = transforms.Compose([                            
             self.train_augmentation,
-            Stack(roll=False, use_preprocessed_flow=use_preprocessed_flow),
-            ToTorchFormatTensor(div=True, use_preprocessed_flow=use_preprocessed_flow),
+            Stack(roll=False, flow_mode=flow_mode),
+            ToTorchFormatTensor(div=True, flow_mode=flow_mode),
             normalize,
         ])
         if args.mask_type == 'tube':
@@ -34,10 +34,10 @@ class DataAugmentationForVideoMAE(object):
         else:
             raise ValueError(f"Unknown mask type {args.mask_type}")
 
-    def __call__(self, images, use_preprocessed_flow=False):
+    def __call__(self, images, flow_mode=""):
         process_data, flows_or_none = self.transform(images)
 
-        if use_preprocessed_flow:
+        if flow_mode == "local":
             return process_data, flows_or_none, self.masked_position_generator()
         else:
             return process_data, self.masked_position_generator()
@@ -50,10 +50,10 @@ class DataAugmentationForVideoMAE(object):
         return repr
 
 
-def build_pretraining_dataset(args, cache_manager=None):
+def build_pretraining_dataset(args, **kwargs):
     
     if "ego4d" in args.data_set:
-        transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.predict_preprocessed_flow)
+        transform = DataAugmentationForVideoMAE(args, flow_mode=args.flow_mode)
         mode = "train"
         # cfg = Namespace(**{
         #     "DATA": Namespace(**{
@@ -77,7 +77,7 @@ def build_pretraining_dataset(args, cache_manager=None):
 
     elif "epic-kitchen" in args.data_set:
         # NOTE flow images in epic-kitchens are normalized to [0, 255]
-        transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.predict_preprocessed_flow)
+        transform = DataAugmentationForVideoMAE(args, flow_mode=args.flow_mode)
         mode = "train"
 
         """
@@ -128,10 +128,9 @@ def build_pretraining_dataset(args, cache_manager=None):
         #     }),
         # })
         dataset = Epickitchens(args.cfg, mode,
-                                pretrain=True, pretrain_transform=transform, 
+                                pretrain = True, pretrain_transform=transform, 
                                 flow_mode=args.flow_mode,
-                                predict_preprocessed_flow=args.predict_preprocessed_flow,
-                                cache_manager=cache_manager,
+                                flow_extractor = kwargs["flow_extractor"] if "flow_extractor" in kwargs.keys() else None,
                                 )
 
     else:

@@ -385,14 +385,21 @@ def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:
 
 
 def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epochs=0,
-                     start_warmup_value=0, warmup_steps=-1):
+                     start_warmup_value=0, warmup_steps=-1, strategy=""):
     warmup_schedule = np.array([])
     warmup_iters = warmup_epochs * niter_per_ep
     if warmup_steps > 0:
         warmup_iters = warmup_steps
     print("Set warmup steps = %d" % warmup_iters)
     if warmup_epochs > 0:
-        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
+        if strategy == "fixed_in_epoch":
+            warmup_schedule = np.array( [start_warmup_value * (10**i)  for i in range(warmup_epochs//2)] )
+            print(warmup_schedule)
+            warmup_schedule = np.repeat(warmup_schedule, 2)
+            warmup_schedule = np.repeat(warmup_schedule, niter_per_ep)
+            print("[ATTENTION] Using fixed learning rate within each epoch")
+        else:
+            warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
 
     iters = np.arange(epochs * niter_per_ep - warmup_iters)
     schedule = np.array(

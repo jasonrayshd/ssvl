@@ -516,14 +516,14 @@ class VideoMAE(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.clips)
 
-    def _make_dataset(self, directory, setting):
+    def _make_dataset(self, setting):
         if not os.path.exists(setting):
             raise(RuntimeError("Setting file %s doesn't exist. Check opt.train-list and opt.val-list. " % (setting)))
         clips = []
         with open(setting) as split_f:
             data = split_f.readlines()
             for line in data:
-                line_info = line.split(' ')
+                line_info = line.split(',')
                 # line format: video_path, video_duration, video_label(number or a target path)
                 if len(line_info) < 2:
                     raise(RuntimeError('Video input format is not correct, missing one or more element. %s' % line))

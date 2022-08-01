@@ -46,10 +46,10 @@ class GroupCenterCrop(object):
 
 
 class GroupNormalize(object):
-    def __init__(self, mean, std, use_preprocessed_flow=False):
+    def __init__(self, mean, std, flow_mode=""):
         self.mean = mean
         self.std = std
-        self.use_preprocessed_flow = use_preprocessed_flow
+        self.flow_mode = flow_mode
         # flow image should be the same given normalized images
         # thus it do not need to be normalized
 
@@ -93,12 +93,12 @@ class GroupScale(object):
 
 class GroupMultiScaleCrop(object):
 
-    def __init__(self, input_size, scales=None, max_distort=1, fix_crop=True, more_fix_crop=True, use_preprocessed_flow=False):
+    def __init__(self, input_size, scales=None, max_distort=1, fix_crop=True, more_fix_crop=True, flow_mode=""):
         self.scales = scales if scales is not None else [1, 875, .75, .66]
         self.max_distort = max_distort
         self.fix_crop = fix_crop
         self.more_fix_crop = more_fix_crop
-        self.use_preprocessed_flow = use_preprocessed_flow
+        self.flow_mode = flow_mode
         self.input_size = input_size if not isinstance(input_size, int) else [input_size, input_size]
         self.interpolation = Image.BILINEAR
 
@@ -111,7 +111,7 @@ class GroupMultiScaleCrop(object):
         crop_img_group = [img.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for img in img_group]
         ret_img_group = [img.resize((self.input_size[0], self.input_size[1]), self.interpolation) for img in crop_img_group]
 
-        if self.use_preprocessed_flow:
+        if self.flow_mode == "local":
             # then, label is flow images
             uflow, vflow = label
             crop_uflow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in uflow]
@@ -121,6 +121,7 @@ class GroupMultiScaleCrop(object):
             ret_vflow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_vflow_group]
 
             return (ret_img_group, [ret_uflow_group, ret_vflow_group])
+
 
         return (ret_img_group, label)
 
@@ -179,16 +180,16 @@ class GroupMultiScaleCrop(object):
 
 class Stack(object):
 
-    def __init__(self, roll=False, use_preprocessed_flow=False):
+    def __init__(self, roll=False, flow_mode=""):
         self.roll = roll
-        self.use_preprocessed_flow = use_preprocessed_flow
+        self.flow_mode = flow_mode
 
     def __call__(self, img_tuple):
         img_group, label = img_tuple
 
         img_group_np = self._stack(img_group)
 
-        if self.use_preprocessed_flow:
+        if self.flow_mode == "local":
             uflows, vflows = label
             assert len(uflows) == len(vflows), "Number of optical flow images u v should be equal"
 
@@ -214,16 +215,16 @@ class Stack(object):
 class ToTorchFormatTensor(object):
     """ Converts a PIL.Image (RGB) or numpy.ndarray (H x W x C) in the range [0, 255]
     to a torch.FloatTensor of shape (C x H x W) in the range [0.0, 1.0] """
-    def __init__(self, div=True, use_preprocessed_flow=False):
+    def __init__(self, div=True, flow_mode=""):
         self.div = div
-        self.use_preprocessed_flow = use_preprocessed_flow
+        self.flow_mode = flow_mode
 
     def __call__(self, pic_tuple):
         pic, label = pic_tuple
 
         img = self._totensor(pic)
 
-        if self.use_preprocessed_flow:
+        if self.flow_mode == "local":
             flow = torch.from_numpy(label).permute(3, 2, 0, 1).contiguous()
             return (img.float().div(255.) if self.div else img.float(), flow.float().div(255.) if self.div else flow.float())
 

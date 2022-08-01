@@ -8,6 +8,7 @@ import torch.backends.cudnn as cudnn
 import json
 import os
 from pathlib import Path
+from flow_extractor import flowExtractor
 from timm.models import create_model
 from optim_factory import create_optimizer
 from datasets import build_pretraining_dataset
@@ -21,7 +22,7 @@ import logging
 import socket
 from epickitchens_utils import CacheManager
 from multiprocessing.managers import SyncManager
-import multiprocessing as mlp
+import multiprocessing as mp
 
 from config_utils import parse_yml, combine
 
@@ -198,26 +199,17 @@ def main(args):
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
-    # start cache manager by local main process
-    # cache_address = ("127.0.0.1", 51225)
-    # cache_log_path = os.path.join(args.output_dir, args.name)
-    # if args.gpu == 0:
-    #     cache_sub_process = mlp.Process(target=cache_worker, args=(cache_address, args.local_world_size, cache_log_path))
-    #     cache_sub_process.start()
-    #     print("Cache Manager started. Waiting for processes to connect")
+    if args.flow_mode == "online":
+        mp.set_start_method('spawn')
+        SyncManager.register("flowExtractor", flowExtractor)
+        m = SyncManager()
+        m.start()
+        flow_extractor = m.flowExtractor(device=f"cuda:{args.gpu}")
+        print(f"Flow extractor manager started by {os.getpid()}.")
+    else:
+        flow_extractor = None
 
-    # cache_manager = CacheManager(address=cache_address, local_world_size=args.local_world_size, log_path=cache_log_path)
-    # retry = 20
-    # for i in range(retry):
-    #     try:
-    #         cache_manager.connect()
-    #         break
-    #     except ConnectionRefusedError as e:
-    #         time.sleep(1)
-
-    cache_manager = None
-    # get dataset
-    dataset_train = build_pretraining_dataset(args, cache_manager=cache_manager)
+    dataset_train = build_pretraining_dataset(args, flow_extractor=flow_extractor)
 
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -246,6 +238,7 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
+        multiprocessing_context="spawn" if args.flow_mode == "online" else None,
         worker_init_fn=utils.seed_worker
     )
 
@@ -258,9 +251,10 @@ def main(args):
 
     total_batch_size = args.batch_size * utils.get_world_size()
 
-    args.lr = args.lr * total_batch_size / 256
-    args.min_lr = args.min_lr * total_batch_size / 256
-    args.warmup_lr = args.warmup_lr * total_batch_size / 256
+    # args.lr = args.lr * total_batch_size / 256
+    # args.min_lr = args.min_lr * total_batch_size / 256
+    # args.warmup_lr = args.warmup_lr * total_batch_size / 256
+
     print("LR = %.8f" % args.lr)
     print("Batch size = %d" % total_batch_size)
     print("Number of training steps = %d" % num_training_steps_per_epoch)
@@ -273,13 +267,13 @@ def main(args):
     optimizer = create_optimizer(
         args, model_without_ddp)
 
-
     loss_scaler = NativeScaler()
 
     print("Use step level LR & WD scheduler!")
     lr_schedule_values = utils.cosine_scheduler(
         args.lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
-        warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+        start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+        # strategy="fixed_in_epoch",
     )
     if args.weight_decay_end is None:
         args.weight_decay_end = args.weight_decay
@@ -310,11 +304,10 @@ def main(args):
                 wd_schedule_values=wd_schedule_values,
                 patch_size=patch_size[0],
                 normlize_target=args.normlize_target,
-
                 # use mixed precision or not
                 train_wo_amp = args.train_wo_amp, 
                 # whether predict given flow images or recons input based on flow images
-                predict_preprocessed_flow = args.predict_preprocessed_flow,
+                predict_preprocessed_flow = (args.flow_mode != ""),
             )
         else:
             train_stats = train_tsvit_one_epoch(
@@ -326,8 +319,10 @@ def main(args):
                 wd_schedule_values=wd_schedule_values,
                 patch_size=patch_size[0],
                 normlize_target=args.normlize_target,
+
+                ctr = args.ctr,
                 tau = args.tau,
-                lamb=args.lamb,
+                lamb = args.lamb,
             ) 
 
         if args.output_dir:
