@@ -443,6 +443,9 @@ def main(args, ds_init):
                 new_dict[key[9:]] = checkpoint_model[key]
             elif key.startswith('encoder.'):
                 new_dict[key[8:]] = checkpoint_model[key]
+            elif key.startswith("rgb_encoder."):
+                # two stream rgb encoder
+                new_dict[key[12:]] = checkpoint_model[key]
             else:
                 new_dict[key] = checkpoint_model[key]
         checkpoint_model = new_dict

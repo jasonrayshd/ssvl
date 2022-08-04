@@ -4,7 +4,7 @@ update_freq: 1
 save_ckpt_freq: 10
 
 # Model parameters
-model: 'vit_twohead_small_patch16_224'
+model: 'vit_twohead_base_patch16_224'
 tubelet_size: 2
 input_size: 224       # 'videos input size'
 
