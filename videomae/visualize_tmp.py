@@ -9,7 +9,7 @@ import modeling_pretrain
 from pathlib import Path
 import argparse
 from config_utils import parse_yml, combine
-
+from masking_generator import TubeMaskingGenerator
 import numpy as np
 from einops import rearrange
 from flow_vis import flow_to_color
@@ -27,10 +27,13 @@ def get_args():
     parser.add_argument('--config', default='none', type=str,
                         help='path to configuration file')
 
+    parser.add_argument('--mask_ratio', default='none', type=str,
+                        help='mask ratio')
+
     parser.add_argument('--ckpt', default='none', type=str,
                         help='path to checkpoint')
 
-    parser.add_argument('--overwrite', default='command-line', type=str,
+    parser.add_argument('--overwrite', default='config-file', type=str,
                         help='overwrite args in command-line or configuration file')
     return parser.parse_args()
 
@@ -66,8 +69,13 @@ def main(args):
     model = get_model(args)
 
     checkpoints = []
+    mask_ratios = []
     for ckpt in args.ckpt.split(","):
         checkpoints.append(torch.load(ckpt, map_location='cpu'))
+    
+    for ratio in args.mask_ratio.split(","):
+        mask_ratios.append(float(ratio))
+
 
     if args.ts_pretrain:
         patch_size = model.rgb_encoder.patch_embed.patch_size
@@ -79,7 +87,27 @@ def main(args):
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
+    args.mask_ratio = 0.5
     dataset_train = build_pretraining_dataset(args, cache_manager=None)
+
+    flow_model =  create_model(
+        "pretrain_videomae_flow_local_small_patch16_224",
+        pretrained=False,
+        drop_path_rate=0,
+        drop_block_rate=None,
+        decoder_depth=4
+    )
+
+    ts_model = model = create_model(
+        "pretrain_tsvit_base_patch16_224",
+        pretrained=False,
+        drop_path_rate=0.0,
+        drop_block_rate=None,
+        decoder_depth=4,
+
+        fuse_scheme = "concate",
+        tokenizer_backbone = "simplecnn",
+    )
 
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train,
@@ -93,12 +121,17 @@ def main(args):
     mean = torch.tensor([0.485, 0.456, 0.406]).reshape(3, 1, 1, 1).repeat(1, 1, 224, 224).to(device)
     std = torch.tensor([0.229, 0.224, 0.225]).reshape(3, 1, 1, 1).repeat(1, 1, 224, 224).to(device)
 
-    model.to(device)
-    model.eval()
+    flow_model.to(device)
+    flow_model.load_state_dict(checkpoints[0])
+    flow_model.eveal()
+
+    ts_model.to(device)
+    ts_model.load_state_dict(checkpoints[1])
+    ts_model.eval()
     for i, batch in enumerate(data_loader_train):
 
         for j, weights in enumerate(checkpoints):
-            model.load_state_dict(weights['model'], strict=True)
+            g = TubeMaskingGenerator(input_size=(8, 14, 14), mask_ratio=mask_ratios[j])
 
             if args.ts_pretrain:
                 frame, mask, flows = batch[0].to(device), batch[1].to(device), batch[2].to(device)
@@ -106,6 +139,8 @@ def main(args):
                 output = model(frame, flows, mask, all_token=True)
             elif args.flow_mode != "":
                 frame, mask, flows = batch[0].to(device), batch[1].to(device), batch[2].to(device)
+                mask = torch.from_numpy(g()).unsqueeze(0)
+                print(mask.shape)
                 mask = mask.flatten(1).to(torch.bool).cpu()
                 output = model(frame, mask, all_token=True)
             else:
@@ -131,7 +166,7 @@ def main(args):
                 # flow_hat = flow_hat.squeeze()
                 # flow_hat_reshape = rearrange(flow_hat, "(t h w) (p1 p2 c) -> c t (h p1) (w p2)", c=2, t=8, h=14, w=14, p1=16, p2=16)
 
-                masked_tokens = int(14*14*args.mask_ratio)*8
+                masked_tokens = int(14*14*mask_ratios[j])*8
                 flow_hat_reshape = unpatchify_flow(output, mask, masked_tokens=masked_tokens)
 
                 flows_rgb = []

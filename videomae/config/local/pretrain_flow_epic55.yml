@@ -1,15 +1,15 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 12
-epochs: 100
+batch_size: 24
+epochs: 300
 save_ckpt_freq: 10
 
 # Model parameters
 model: "pretrain_videomae_flow_local_base_patch16_224"
 decoder_depth: 4
 mask_type: "tube"         # choices=['tube']
-mask_ratio: 0.9
+mask_ratio: 0.5
 input_size: 224           # videos input size for backbone
 drop_path: 0.0            # help='Drop path rate (default: 0.1)    
 normlize_target: false     #help='normalized the target patch pixels
@@ -26,10 +26,10 @@ weight_decay_end: null    # help="""Final value of the
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
 
 lr: 1.5e-4                # metavar='LR help='learning rate (default: 1.5e-4)
-warmup_lr: 3.0e-7          # metavar='LR help='warmup learning rate (default: 1e-6)
-min_lr: 3.0e-6              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
+warmup_lr: 1.0e-6          # metavar='LR help='warmup learning rate (default: 1e-6)
+min_lr: 3.0e-7              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
-warmup_epochs: 30         # metavar='N help='epochs to warmup LR, if scheduler supports
+warmup_epochs: 40         # metavar='N help='epochs to warmup LR, if scheduler supports
 warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
 
 # Augmentation parameters

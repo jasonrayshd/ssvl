@@ -228,6 +228,7 @@ def get_args():
     parser.add_argument('--neg_clip_save_path', type=str, default="", help="save path of negative clips of ego4d state change")
 
     parser.add_argument('--config', type=str, default="", help="path to configuration file")
+    parser.add_argument('--project', type=str, default="", help="project name for wandb log")
     parser.add_argument('--overwrite', type=str, default="command-line", help="overwrite command-line argument or arguments from configuration file")
     known_args, _ = parser.parse_known_args()
 
@@ -253,9 +254,9 @@ def main(args, ds_init):
     # codes below should be called after distributed initialization
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
-    print(global_rank)
+    # print(global_rank)
     if global_rank == 0 and not args.debug:
-        wandb.init(project="ego4d-state-change-videomae", config=vars(opts))
+        wandb.init(project=args.project, config=vars(opts))
 
     if ds_init is not None:
         utils.create_ds_config(args)

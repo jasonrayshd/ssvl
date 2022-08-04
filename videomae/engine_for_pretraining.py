@@ -138,7 +138,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             _, _, T, H, W = videos.shape
             assert T%N == 0, f"Number of flows:{T} to be predicted should be divisible by number of frames:{N}"
             # print(labels.shape)
-            print(f"label shape: {labels.shape}")
+            # print(f"label shape: {labels.shape}")
             labels = rearrange(labels, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
 
             tublet_size = 2

@@ -54,7 +54,7 @@ pin_mem: true
 # flow images
 ts_pretrain: true
 # predict_preprocessed_flow: true               # whether use preprocessed flow images as target at pretraining
-flow_mode: "oneline"                                # mode of sampling flow images  [A]
+flow_mode: "local"                                # mode of sampling flow images  [A]
 fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
 

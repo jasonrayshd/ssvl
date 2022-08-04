@@ -768,7 +768,7 @@ def pretrain_videomae_large_patch16_224(pretrained=False, **kwargs):
 
 
 @register_model
-def pretrain_videomae_flowA_small_patch16_224(pretrained=False, **kwargs):
+def pretrain_videomae_flow_local_small_patch16_224(pretrained=False, **kwargs):
 
     model = PretrainVisionTransformer(
         img_size=224,

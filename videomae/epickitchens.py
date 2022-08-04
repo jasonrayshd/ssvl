@@ -464,6 +464,7 @@ class Epickitchens(torch.utils.data.Dataset):
             )
         else:
             # frames, flows share the same mask
+            flows = None
             if self.flow_mode == "local":
                 flows = [uflows, vflows]
 
@@ -476,7 +477,7 @@ class Epickitchens(torch.utils.data.Dataset):
                 frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) 
 
                 if self.flow_mode == "online":
-                # denormalize frames
+                    # denormalize frames
                     mean = torch.as_tensor(IMAGENET_DEFAULT_MEAN)[:, None, None, None]
                     std = torch.as_tensor(IMAGENET_DEFAULT_STD)[:, None, None, None]
 

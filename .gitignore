@@ -11,5 +11,8 @@ videomae/log/**
 videomae/output/**
 wandb
 
+*/*.pth
+*/*.png
+*/*.jpg
 
 events.out.tfevents*
