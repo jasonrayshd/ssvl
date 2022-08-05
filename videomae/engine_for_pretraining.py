@@ -248,7 +248,6 @@ class TwoStreamVitLoss(nn.Module):
         output = torch.cat(tensors_gather, dim=0)
         return output
 
-
     def ctr(self, q, k):
         if self.ctr_type == "easy":
             return self.easy_ctr(q, k)
@@ -297,7 +296,10 @@ class TwoStreamVitLoss(nn.Module):
 
         # gather cross rank negative
         k_all = self.concat_all_gather(k)
+        q_all = self.concat_all_gather(q)
+        B_all, N_all, C_all = q_all.shape
 
+        # positive pairs accross modality
         B,N,C = q.shape
         q_vs_k = torch.einsum("bmd,cnd->bcmn", q, k) # (B, B, N1, N2)
         q_vs_k = q_vs_k.flatten(2)
@@ -306,13 +308,25 @@ class TwoStreamVitLoss(nn.Module):
         q_vs_k = q_vs_k.reshape(B, N, N)
         pos_sim = torch.einsum("bnn -> bn", q_vs_k)
 
-        q_vs_q =  torch.einsum("bmd,cnd -> bcmn", q, q)
-        q_vs_q = q_vs_q.flatten(2)
-        q_vs_q =  torch.einsum("bbn -> bn", q_vs_q)
-        intra_neg_sim = q_vs_q[:, :-1].reshape(B, N-1, N+1)[..., 1:].flatten(1)
+        # q_vs_q =  torch.einsum("bmd,cnd -> bcmn", q, q)
+        # q_vs_q = q_vs_q.flatten(2)
+        # q_vs_q =  torch.einsum("bbn -> bn", q_vs_q)
+        # intra_neg_sim = q_vs_q[:, :-1].reshape(B, N-1, N+1)[..., 1:].flatten(1) # (B, N3)
 
+        # negative pairs within the same modality
+        q_vs_q_all =  torch.einsum("bmd,cnd -> bcmn", q, q_all)
+        q_vs_q_all = q_vs_q_all.flatten(2)
+        # q_all_vs_q_all = torch.einsum("bbnn -> bbn", q_all_vs_q_all)
+        # q_all_vs_q_all = torch.einsum("bbn -> ")
+        # q_all_vs_q_all = q_all_vs_q_all.flatten(1)
+        q_vs_q_all = q_vs_q_all[..., :-1].reshape(B, B_all, N_all-1, N_all+1)[..., 1:].flatten(1)
+
+        # negative pairs across modality
         q_vs_kall = torch.einsum("bmd,cnd->bcmn", q, k_all) # (B, B_all, N1, N2)
         q_vs_kall = q_vs_kall.flatten(1)
+
+        all_sim = torch.cat((q_vs_q_all, q_vs_kall), dim=1)
+
 
         # NOTE: [07.24 by jiachen]
         # when training in half-precision (16-bit), intermediate result of logsumexp
@@ -320,10 +334,11 @@ class TwoStreamVitLoss(nn.Module):
         # Simple solution: convert input tensor to 32-bit floating point before compute logsumexp
         # and back to 16-bit after
         logsumexp_pos = torch.logsumexp(pos_sim.float()/self.tau, dim=1).half()
-        logsumexp_all = torch.logsumexp(q_vs_kall.float()/self.tau, dim=1).half()
-        logsumexp_intra_neg = torch.logsumexp(intra_neg_sim.float()/self.tau, dim=1).half()
+        logsumexp_all = torch.logsumexp(all_sim.float()/self.tau, dim=1).half()
 
-        nce = logsumexp_all + logsumexp_intra_neg - logsumexp_pos
+        # logsumexp_intra_neg = torch.logsumexp(intra_neg_sim.float()/self.tau, dim=1).half()
+
+        nce = logsumexp_all  - logsumexp_pos
 
         # according to implementation of VAAT
         # if none of the samples are valid, the logsumexp could be NaN, hence
