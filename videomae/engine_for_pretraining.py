@@ -106,8 +106,8 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
 
         if len(videos.shape) == 6: # repeated sampling is used
             B, Repeat, C, T, H, W = videos.shape
-            videos = videos.reshape(-1, videos.shape[2:])
-            bool_masked_pos = bool_masked_pos.reshape(-1, bool_masked_pos.shape[2: ])
+            videos = videos.reshape(-1, *videos.shape[2:])
+            bool_masked_pos = bool_masked_pos.reshape(-1, *bool_masked_pos.shape[2: ])
 
         videos = videos.to(device, non_blocking=True)
         bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
@@ -142,7 +142,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             labels = batch[2] # bs, 2, flow nubmers, h, w
 
             if len(labels.shape) == 6: # repeated sampling is used
-                labels = labels.reshape(-1, labels.shape[2:])
+                labels = labels.reshape(-1, *labels.shape[2:])
 
             B, _, N, H, W = labels.shape
             _, _, T, H, W = videos.shape
@@ -405,9 +405,9 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
         videos, bool_masked_pos, flows = batch[0], batch[1], batch[2]
 
         if len(videos.shape) == 6: # repeated sampling is used
-            videos = videos.reshape(-1, videos.shape[2:])
-            bool_masked_pos = bool_masked_pos.reshape(-1, bool_masked_pos.shape[2:])
-            flows = flows.reshape(-1, flows.shape[2:])
+            videos = videos.reshape(-1, *videos.shape[2:])
+            bool_masked_pos = bool_masked_pos.reshape(-1, *bool_masked_pos.shape[2:])
+            flows = flows.reshape(-1, *flows.shape[2:])
 
         videos = videos.to(device, non_blocking=True)
         bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
