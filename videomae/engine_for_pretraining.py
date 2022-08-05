@@ -253,8 +253,7 @@ class TwoStreamVitLoss(nn.Module):
         if self.ctr_type == "easy":
             return self.easy_ctr(q, k)
         elif self.ctr_type == "hard":
-            pass
-            # return self.hard_ctr(q, k)
+            return self.hard_ctr(q, k)
 
     # referred to VAAT
     # https://github.com/google-research/google-research/blob/master/vatt/utils/train/objectives.py
