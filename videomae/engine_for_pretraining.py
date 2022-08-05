@@ -451,7 +451,7 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
         bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
 
         flow_target = flow_target[bool_masked_pos_label]
-        flow_target = rearrange(flow_target, '(b t n) d -> b (t n) d', b=B, t=N//tublet_size)
+        flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
 
         flow_target = flow_target.to(device, non_blocking=True)
         # print(f"final label: {flows.shape}")
