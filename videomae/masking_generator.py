@@ -22,3 +22,38 @@ class TubeMaskingGenerator:
         np.random.shuffle(mask_per_frame)
         mask = np.tile(mask_per_frame, (self.frames,1)).flatten()
         return mask
+
+class AgnosticMaskingGenerator:
+    def __init__(self, input_size, mask_ratio):
+        self.frames, self.height, self.width = input_size
+        self.num_patches_per_frame =  self.height * self.width
+        self.total_patches = self.frames * self.num_patches_per_frame 
+        self.total_masks = int(mask_ratio * self.total_patches)
+
+    def __repr__(self):
+        repr_str = "Maks: total patches {}, mask patches {}".format(
+            self.total_patches, self.total_masks
+        )
+        return repr_str
+
+    def __call__(self):
+        mask = np.hstack([
+            np.zeros(self.total_patches - self.total_masks),
+            np.ones(self.total_masks),
+        ]) # (1568, )
+
+        np.random.shuffle(mask)
+
+        return mask
+
+
+
+if __name__ == "__main__":
+
+    g = AgnosticMaskingGenerator((8, 14, 14), 0.9)
+    print(g)
+    print(g().sum())
+
+    g = TubeMaskingGenerator((8, 14, 14), 0.9)
+    print(g)
+    print(g().shape)

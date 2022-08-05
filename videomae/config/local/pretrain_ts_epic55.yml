@@ -1,18 +1,18 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 4
-epochs: 1200
+batch_size: 3
+epochs: 75
 save_ckpt_freq: 10
 
 # Model parameters
 model: "pretrain_tsvit_base_patch16_224"
 decoder_depth: 4
-mask_type: "tube"         # choices=['tube']
-mask_ratio: 0.4
+mask_type: "agnostic"         # choices=['tube']
+mask_ratio: 0.9
 input_size: 224           # videos input size for backbone
 drop_path: 0.0            # help='Drop path rate (default: 0.1)    
-normlize_target: True     #help='normalized the target patch pixels
+normlize_target: False     #help='normalized the target patch pixels
 
 # Optimizer parameters
 opt: "adamw"               # help='Optimizer, default: "adamw"
@@ -29,7 +29,7 @@ lr: 1.5e-4                # metavar='LR help='learning rate (default: 1.5e-4)
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
 min_lr: 1.0e-5              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
-warmup_epochs: 40         # metavar='N help='epochs to warmup LR, if scheduler supports
+warmup_epochs: 10         # metavar='N help='epochs to warmup LR, if scheduler supports
 warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
 
 # Augmentation parameters
@@ -60,7 +60,7 @@ tokenizer_backbone: "simplecnn"
 
 tau: 0.1
 lamb: [1, 1, 1, 1, 1, 1]
-ctr: "easy"
+ctr: "hard"
 # configuration file
 # config: ""                                  # help='path to configuration file
 
@@ -95,6 +95,7 @@ cfg:
     TRAIN_JITTER_SCALES: [256, 320]
     TRAIN_CROP_SIZE: 224
     TEST_CROP_SIZE: 224
+    REPEATED_SAMPLING: 4
   TEST:
     NUM_SPATIAL_CROPS: ""
     NUM_ENSEMBLE_VIEWS: ""

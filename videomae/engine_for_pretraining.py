@@ -103,6 +103,12 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
                     param_group["weight_decay"] = wd_schedule_values[it]
 
         videos, bool_masked_pos = batch[0], batch[1]
+
+        if len(videos.shape) == 6: # repeated sampling is used
+            B, Repeat, C, T, H, W = videos.shape
+            videos = videos.reshape(-1, videos.shape[2:])
+            bool_masked_pos = bool_masked_pos.reshape(-1, bool_masked_pos.shape[2: ])
+
         videos = videos.to(device, non_blocking=True)
         bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
 
@@ -134,6 +140,10 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             # target will be processed in dataset code
             # reconstruct entire given flow images
             labels = batch[2] # bs, 2, flow nubmers, h, w
+
+            if len(labels.shape) == 6: # repeated sampling is used
+                labels = labels.reshape(-1, labels.shape[2:])
+
             B, _, N, H, W = labels.shape
             _, _, T, H, W = videos.shape
             assert T%N == 0, f"Number of flows:{T} to be predicted should be divisible by number of frames:{N}"
@@ -281,6 +291,48 @@ class TwoStreamVitLoss(nn.Module):
 
         return nce
 
+    def hard_ctr(self, q, k):
+        # normalize embeddings
+        q = F.normalize(q, p=2, dim=2) # B, N1, C
+        k = F.normalize(k, p=2, dim=2) # B, N2, C
+
+        # gather cross rank negative
+        k_all = self.concat_all_gather(k)
+
+        B,N,C = q.shape
+        q_vs_k = torch.einsum("bmd,cnd->bcmn", q, k) # (B, B, N1, N2)
+        q_vs_k = q_vs_k.flatten(2)
+
+        q_vs_k = torch.einsum("bbn -> bn", q_vs_k)
+        q_vs_k = q_vs_k.reshape(B, N, N)
+        pos_sim = torch.einsum("bnn -> bn", q_vs_k)
+
+        q_vs_q =  torch.einsum("bmd,cnd -> bcmn", q, q)
+        q_vs_q = q_vs_q.flatten(2)
+        q_vs_q =  torch.einsum("bbn -> bn", q_vs_q)
+        intra_neg_sim = q_vs_q[:, :-1].reshape(B, N-1, N+1)[..., 1:].flatten(1)
+
+        q_vs_kall = torch.einsum("bmd,cnd->bcmn", q, k_all) # (B, B_all, N1, N2)
+        q_vs_kall = q_vs_kall.flatten(1)
+
+        # NOTE: [07.24 by jiachen]
+        # when training in half-precision (16-bit), intermediate result of logsumexp
+        # will always exceed the range of 16-bit floating point number
+        # Simple solution: convert input tensor to 32-bit floating point before compute logsumexp
+        # and back to 16-bit after
+        logsumexp_pos = torch.logsumexp(pos_sim.float()/self.tau, dim=1).half()
+        logsumexp_all = torch.logsumexp(q_vs_kall.float()/self.tau, dim=1).half()
+        logsumexp_intra_neg = torch.logsumexp(intra_neg_sim.float()/self.tau, dim=1).half()
+
+        nce = logsumexp_all + logsumexp_intra_neg - logsumexp_pos
+
+        # according to implementation of VAAT
+        # if none of the samples are valid, the logsumexp could be NaN, hence
+        # we manually set them to zero
+        nce = torch.where(torch.isnan(nce), torch.zeros(nce.shape).half().to(nce.device), nce).mean()
+
+        return nce
+
     def _ctr_raw(self, feat, token):
         # feat, token: (B, N, C)
         logits = torch.mm(feat.flatten(1), token.flatten(1).t())
@@ -351,6 +403,12 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
                     param_group["weight_decay"] = wd_schedule_values[it]
 
         videos, bool_masked_pos, flows = batch[0], batch[1], batch[2]
+
+        if len(videos.shape) == 6: # repeated sampling is used
+            videos = videos.reshape(-1, videos.shape[2:])
+            bool_masked_pos = bool_masked_pos.reshape(-1, bool_masked_pos.shape[2:])
+            flows = flows.reshape(-1, flows.shape[2:])
+
         videos = videos.to(device, non_blocking=True)
         bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
 
@@ -473,3 +531,42 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
+if __name__ == "__main__":
+    # B = 2
+    # N = 3
+    # C = 4
+    # q = F.normalize( torch.rand(B, N, C), p=2, dim=2 )
+    # k = F.normalize( torch.rand(B, N, C), p=2, dim=2 )
+    # print(q)
+    # print(k)
+    # q_vs_k = torch.einsum("bmd,cnd->bcmn", q, k) # (B, B, N1, N2)
+    # print(q_vs_k)
+    # q_vs_k = q_vs_k.flatten(2)
+
+    # q_vs_k = torch.einsum("bbn -> bn", q_vs_k)
+    # print(q_vs_k)
+
+    # q_vs_k = q_vs_k.reshape(B, N, N)
+    # print(q_vs_k)
+    
+    # pos_sim = torch.einsum("bnn -> bn", q_vs_k)
+    # print(pos_sim)
+
+    # pos = logsumexp_pos = torch.logsumexp(pos_sim.float(), dim=1)
+
+    # print(pos)
+
+    q = torch.randn(2, 3, 4)
+    print(q)
+    q_vs_q =  torch.einsum("bmd,cnd -> bcmn", q, q)
+    print(q_vs_q)
+    q_vs_q = q_vs_q.flatten(2)
+    
+    q_vs_q =  torch.einsum("bbn -> bn", q_vs_q)
+    print(q_vs_q)
+    q_vs_q = q_vs_q[:, :-1].reshape(2, 2, 4)[..., 1:].flatten()
+
+    print(q_vs_q)
+

@@ -1,7 +1,7 @@
 import os
 from torchvision import transforms
 from transforms import *
-from masking_generator import TubeMaskingGenerator
+from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 from kinetics import VideoClsDataset, VideoMAE
 from ssv2 import SSVideoClsDataset
 
@@ -29,6 +29,10 @@ class DataAugmentationForVideoMAE(object):
         ])
         if args.mask_type == 'tube':
             self.masked_position_generator = TubeMaskingGenerator(
+                args.window_size, args.mask_ratio
+            )
+        elif args.mask_type == "agnostic":
+            self.masked_position_generator = AgnosticMaskingGenerator(
                 args.window_size, args.mask_ratio
             )
         else:

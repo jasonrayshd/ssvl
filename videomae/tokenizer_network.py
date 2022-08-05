@@ -31,20 +31,22 @@ class SimpleCNN(nn.Module):
     def forward(self, x):
 
         x = self.patch_embed(x)
-
+        print(x.shape)
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        print(x.shape)
 
         x = self.conv2(x)
         x = self.bn2(x)
         x = self.relu(x)
+        print(x.shape)
 
         x = self.conv3(x)
         x = self.bn3(x)
         x = self.relu(x)
+        print(x.shape)
 
-        # print(x.shape)
         return x
 
 
@@ -200,3 +202,11 @@ class I3Res50(nn.Module):
         x = x.view(x.shape[0], -1)
         x = self.fc(x)
         return x
+
+
+if __name__ == "__main__":
+    model = SimpleCNN()
+
+    x =  torch.randn(2, 3, 16, 224, 224)
+
+    model(x)

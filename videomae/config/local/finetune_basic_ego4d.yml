@@ -89,7 +89,7 @@ log_dir: /mnt/code/ssvl/videomae/output       # help='path where to tensorboard 
 # device: 'cuda'      # help='device to use for training / testing')
 # seed: 0
 resume: ''          # help='resume from checkpoint')
-auto_resume: false
+auto_resume: true
 
 save_ckpt: true
 start_epoch: 0      # help='start epoch')

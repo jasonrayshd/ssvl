@@ -509,6 +509,16 @@ class Epickitchens(torch.utils.data.Dataset):
             return frames, label, index, metadata
 
         else:
+            if self.cfg.DATA.REPEATED_SAMPLING:
+                frames = [frames for i in range(int(self.cfg.DATA.REPEATED_SAMPLING))]
+                mask = [mask for i in range(int(self.cfg.DATA.REPEATED_SAMPLING))]
+                flows = [flows for i in range(int(self.cfg.DATA.REPEATED_SAMPLING))]
+
+                frames = torch.stack(frames, dim=0)
+                mask = np.stack(mask, axis=0)
+                flows = torch.stack(flows, dim=0)
+
+            # print(frames.shape, mask.shape, flows.shape)
             # is pretrain, then
             if self.flow_mode == "":
                 # if do not use flow images
@@ -567,4 +577,65 @@ class Epickitchens(torch.utils.data.Dataset):
 
     
 if __name__ == "__main__":
-    pass
+    from datasets import DataAugmentationForVideoMAE
+    from argparse import Namespace
+    from torch.utils.data import DataLoader
+
+    cfg = {
+        "EPICKITCHENS":Namespace(**{
+        # epic-kitchen100: path to directory that contains each participant's data
+        # epic-kitchen50: path to directory that contains two directories: flow and rgb
+        # VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
+            "VISUAL_DATA_DIR": "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow",
+            # path to annotation file
+            # ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
+            "ANNOTATIONS_DIR": "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations",
+            # annotation file name of train/val/test data
+            "TRAIN_LIST": "EPIC_train_action_labels.pkl",
+            "VAL_LIST": "",
+            "TEST_LIST": "",
+        }),
+        "DATA":Namespace(**{
+            # do not need in pretrain
+            # - MEAN: ""
+            # - STD: ""
+            "SAMPLING_RATE": 2,
+            "NUM_FRAMES": 16,
+            "TRAIN_JITTER_SCALES": [256, 320],
+            "TRAIN_CROP_SIZE": 224,
+            "TEST_CROP_SIZE": 224,
+
+            "REPEATED_SAMPLING": 4,
+        }),
+        "TEST":Namespace(**{
+            "NUM_SPATIAL_CROPS": "",
+            "NUM_ENSEMBLE_VIEWS": "",
+        }),
+        "VERSION": 55,
+        "ONINE_EXTRACTING": True
+        
+    }
+    args = {
+        "input_size": 224,
+        "mask_type": "agnostic",
+        "window_size": (8, 14, 14),
+        "mask_ratio": 0.9,
+    }
+    cfg = Namespace(**cfg)
+    args = Namespace(**args)
+
+    flow_mode = "local"
+
+    transform = DataAugmentationForVideoMAE(args=args, flow_mode = flow_mode)
+    dataset = Epickitchens(cfg, "train",
+                 pretrain=True,  pretrain_transform=transform,  flow_mode = flow_mode,)
+    
+    loader = DataLoader(
+        dataset,
+        num_workers= 5,
+        batch_size=8,
+    )
+    
+    for batch in loader:
+        frame, mask, flows = batch[:3]
+        print(frame.shape, mask.shape, flows.shape)

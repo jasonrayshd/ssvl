@@ -854,7 +854,7 @@ def pretrain_tsvit_base_patch16_224(pretrained=False, **kwargs):
         encoder_depth=12,        # original: 12
         encoder_num_heads=12,
         encoder_num_classes=0,
-    
+
         rgb_num_classes=1536,
         flow_num_classes=16*16*2*1, # patch_size * patch_size * number of flow axis * N
         decoder_embed_dim=384,
@@ -873,7 +873,7 @@ def pretrain_tsvit_base_patch16_224(pretrained=False, **kwargs):
         # share_pos_embed = False,
 
         # fuse_scheme = "concate",
-        # tokenizer_backbone = "I3DResNet",
+        # tokenizer_backbone = "simplecnn",
 
         **kwargs)
 
