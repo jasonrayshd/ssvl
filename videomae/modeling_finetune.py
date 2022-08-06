@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 
-from tokenizer_network import Tokenizer
+from tokenizer_network import SimpleCNN
 
 import einops
 
@@ -501,7 +501,10 @@ class Ego4dTwoHeadwTokenizerVisionTransformer(nn.Module):
         self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
         self.temporal_norm = norm_layer(embed_dim)
 
-        self.rgb_tokenizer = Tokenizer(3, feature_dim, tubelet_size, [patch_size, patch_size], backbone=tokenizer_backbone)
+        if tokenizer_backbone == "simplecnn":
+            self.tokenizer = SimpleCNN(3, feature_dim, tubelet_size, [patch_size, patch_size])
+        else:
+            raise ValueError(f"unkown tokenizer type: {tokenizer_backbone} expected one of [simplecnn, ]")
 
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
