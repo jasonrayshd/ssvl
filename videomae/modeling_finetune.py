@@ -497,9 +497,15 @@ class Ego4dTwoHeadwTokenizerVisionTransformer(nn.Module):
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
                 init_values=init_values)
             for i in range(depth)])
-        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
-        self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
-        self.temporal_norm = norm_layer(embed_dim)
+
+        self.use_mean_pooling = use_mean_pooling
+
+        self.rgb_spatial_norm = norm_layer(embed_dim) 
+        self.cross_spatial_norm = norm_layer(embed_dim)
+
+        # self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        self.rgb_temporal_norm = norm_layer(embed_dim)
+        self.cross_temporal_norm = norm_layer(embed_dim)
 
         if tokenizer_backbone == "simplecnn":
             self.tokenizer = SimpleCNN(3, tubelet_size, [patch_size, patch_size], feature_dim)
@@ -563,9 +569,9 @@ class Ego4dTwoHeadwTokenizerVisionTransformer(nn.Module):
             x = blk(x) 
 
         # concatenate features from rgb encoder and rgb tokenizer
-        x = torch.cat((f, x), dim=2)
+        # x = torch.cat((f, x), dim=2)
 
-        return x
+        return x, f
 
 
     def forward(self, x):
@@ -575,21 +581,27 @@ class Ego4dTwoHeadwTokenizerVisionTransformer(nn.Module):
         # Thus, if no transformations are used to augment x, the shape of x will be:
         # bs, C, T, H, W
         B, C, T, H, W = x.shape
-        x = self.forward_features(x)
+        x, f = self.forward_features(x)
         # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
 
-        if self.fc_norm is not None:
-            cls = self.cls_head( self.fc_norm(x.mean(1)) )
+        if self.use_mean_pooling:
+            cls = self.cls_head( torch.cat((self.rgb_spatial_norm(x.mean(1)), self.cross_spatial_norm(f.mean(1))), dim=1) )
         else:
-            cls = self.cls_head( self.norm(x)[:, 0] )
+            cls = self.cls_head( torch.cat((self.rgb_spatial_norm(x)[:, 0], self.cross_spatial_norm(f)[:, 0]), dim=1)  )
 
         num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
         tubelet_size = self.patch_embed.tubelet_size
         x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
         x = x.mean(dim=2).squeeze()
-        x = self.temporal_norm(x)
+        x = self.rgb_temporal_norm(x)
         x = x.flatten(1)
-        loc = self.loc_head(x) # shape: bs, frame num
+
+        f = einops.rearrange(f, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+        f = f.mean(dim=2).squeeze()
+        f = self.cross_temporal_norm(f)
+        f = f.flatten(1)
+
+        loc = self.loc_head(torch.cat((x, f), dim=1)) # shape: bs, frame num
         # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
 
         return loc, cls
