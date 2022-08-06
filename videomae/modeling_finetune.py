@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 
-from modeling_pretrain import Tokenizer
+from tokenizer_network import Tokenizer
 
 import einops
 
