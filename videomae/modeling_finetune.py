@@ -502,7 +502,7 @@ class Ego4dTwoHeadwTokenizerVisionTransformer(nn.Module):
         self.temporal_norm = norm_layer(embed_dim)
 
         if tokenizer_backbone == "simplecnn":
-            self.tokenizer = SimpleCNN(3, feature_dim, tubelet_size, [patch_size, patch_size])
+            self.tokenizer = SimpleCNN(3, tubelet_size, [patch_size, patch_size], feature_dim)
         else:
             raise ValueError(f"unkown tokenizer type: {tokenizer_backbone} expected one of [simplecnn, ]")
 
