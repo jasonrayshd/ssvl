@@ -95,7 +95,7 @@ save_ckpt: true
 start_epoch: 0      # help='start epoch')
 # eval: false         # help='Perform evaluation only')
 # dist_eval: true    # help='Enabling distributed evaluation')
-num_workers: 4
+num_workers: 8
 # pin_mem: true
 
 # # distributed training parameters

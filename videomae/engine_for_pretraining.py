@@ -1,4 +1,5 @@
 import math
+import os
 import sys
 from typing import Iterable
 import torch
@@ -313,20 +314,18 @@ class TwoStreamVitLoss(nn.Module):
         # q_vs_q =  torch.einsum("bbn -> bn", q_vs_q)
         # intra_neg_sim = q_vs_q[:, :-1].reshape(B, N-1, N+1)[..., 1:].flatten(1) # (B, N3)
 
-        # negative pairs within the same modality
+        # negative pairs within the same modality but across batch
+        rank = os.environ["RANK"]
         q_vs_q_all =  torch.einsum("bmd,cnd -> bcmn", q, q_all)
-        q_vs_q_all = q_vs_q_all.flatten(2)
-        # q_all_vs_q_all = torch.einsum("bbnn -> bbn", q_all_vs_q_all)
-        # q_all_vs_q_all = torch.einsum("bbn -> ")
-        # q_all_vs_q_all = q_all_vs_q_all.flatten(1)
-        q_vs_q_all = q_vs_q_all[..., :-1].reshape(B, B_all, N_all-1, N_all+1)[..., 1:].flatten(1)
+        q_vs_q_all = [ torch.cat((q_vs_q_all[i, :rank*B + i], q_vs_q_all[i, rank*B + i + 1:]), dim=0)  for i in range(B)]
+        q_vs_q_all = torch.stack(q_vs_q_all, dim=0) # (B, B_all-1, N1, N2)
+        q_vs_q_all = q_vs_q_all.flatten(1)
 
         # negative pairs across modality
         q_vs_kall = torch.einsum("bmd,cnd->bcmn", q, k_all) # (B, B_all, N1, N2)
         q_vs_kall = q_vs_kall.flatten(1)
 
         all_sim = torch.cat((q_vs_q_all, q_vs_kall), dim=1)
-
 
         # NOTE: [07.24 by jiachen]
         # when training in half-precision (16-bit), intermediate result of logsumexp
