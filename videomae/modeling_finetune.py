@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 
+from modeling_pretrain import Tokenizer
+
 import einops
 
 def _cfg(url='', **kwargs):
@@ -440,144 +442,153 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
         return loc, cls
 
 
+class Ego4dTwoHeadwTokenizerVisionTransformer(nn.Module):
 
-# class Ego4dTwoHead_TwoStreamVisionTransformer(nn.Module):
+    def __init__(self, 
+                img_size=224, 
+                patch_size=16, 
+                in_chans=3, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
+                # keep_dim = False,
 
-#     def __init__(self, 
-#                 img_size=224, 
-#                 patch_size=16, 
-#                 in_chans=3, 
-#                 num_classes=1000, 
-#                 embed_dim=768, 
-#                 depth=12,
-#                 num_heads=12, 
-#                 mlp_ratio=4., 
-#                 qkv_bias=False, 
-#                 qk_scale=None, 
-#                 drop_rate=0., 
-#                 attn_drop_rate=0.,
-#                 drop_path_rate=0., 
-#                 norm_layer=nn.LayerNorm, 
-#                 init_values=0.,
-#                 use_learnable_pos_emb=False, 
-#                 init_scale=0.,
-#                 all_frames=16,
-#                 tubelet_size=2,
-#                 use_mean_pooling=True,
-#                 # keep_dim = False,
-#                 ):
+                
+                feature_dim = 768,  # feature dimension of extracted features by tokenizer
+                tokenizer_backbone = "simplecnn",
+                ):
 
-#         super().__init__()
-#         self.num_classes = num_classes
-#         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-#         self.tubelet_size = tubelet_size
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
 
-#         self.num_frames = all_frames
-#         self.patch_embed = PatchEmbed(
-#             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
-#         num_patches = self.patch_embed.num_patches
+        self.num_frames = all_frames
+        self.patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
+        num_patches = self.patch_embed.num_patches
 
-#         if use_learnable_pos_emb:
-#             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
-#         else:
-#             # sine-cosine positional embeddings is on the way
-#             self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
+        if use_learnable_pos_emb:
+            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+        else:
+            # sine-cosine positional embeddings is on the way
+            self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
 
-#         self.pos_drop = nn.Dropout(p=drop_rate)
+        self.pos_drop = nn.Dropout(p=drop_rate)
 
-#         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
-#         self.blocks = nn.ModuleList([
-#             Block(
-#                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-#                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-#                 init_values=init_values)
-#             for i in range(depth)])
-#         self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
-#         self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
-#         self.temporal_norm = norm_layer(embed_dim)
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        self.temporal_norm = norm_layer(embed_dim)
 
-#         if use_learnable_pos_emb:
-#             trunc_normal_(self.pos_embed, std=.02)
+        self.rgb_tokenizer = Tokenizer(3, feature_dim, tubelet_size, [patch_size, patch_size], backbone=tokenizer_backbone)
 
-#         self.apply(self._init_weights)
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
 
-#         self.cls_head = nn.Linear(embed_dim, 2)
-#         self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
+        self.apply(self._init_weights)
 
-#         trunc_normal_(self.cls_head.weight, std=.02)
-#         self.cls_head.weight.data.mul_(init_scale)
-#         self.cls_head.bias.data.mul_(init_scale)
+        self.cls_head = nn.Linear(embed_dim + feature_dim, 2)
+        self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * (embed_dim + feature_dim), self.num_frames+1) # state change localization has num_frames+1
 
-#         trunc_normal_(self.loc_head.weight, std=.02)
-#         self.loc_head.weight.data.mul_(init_scale)
-#         self.loc_head.bias.data.mul_(init_scale)
+        trunc_normal_(self.cls_head.weight, std=.02)
+        self.cls_head.weight.data.mul_(init_scale)
+        self.cls_head.bias.data.mul_(init_scale)
 
-#     def _init_weights(self, m):
-#         if isinstance(m, nn.Linear):
-#             trunc_normal_(m.weight, std=.02)
-#             if isinstance(m, nn.Linear) and m.bias is not None:
-#                 nn.init.constant_(m.bias, 0)
-#         elif isinstance(m, nn.LayerNorm):
-#             nn.init.constant_(m.bias, 0)
-#             nn.init.constant_(m.weight, 1.0)
+        trunc_normal_(self.loc_head.weight, std=.02)
+        self.loc_head.weight.data.mul_(init_scale)
+        self.loc_head.bias.data.mul_(init_scale)
 
-#     def get_num_layers(self):
-#         return len(self.blocks)
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
 
-#     @torch.jit.ignore
-#     def no_weight_decay(self):
-#         return {'pos_embed', 'cls_token'}
+    def get_num_layers(self):
+        return len(self.blocks)
 
-#     # def get_classifier(self):
-#     #     return self.head
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token'}
 
-#     # def reset_classifier(self, num_classes, global_pool=''):
-#     #     self.num_classes = num_classes
-#     #     self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+    # def get_classifier(self):
+    #     return self.head
+
+    # def reset_classifier(self, num_classes, global_pool=''):
+    #     self.num_classes = num_classes
+    #     self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
     
-#     def forward_features(self, x):
-#         # input shape: B, C, T, H, W
-#         x = self.patch_embed(x) # patch embedding
-#         B, _, _ = x.size()
-#         # shape: B, T x patch_height x patch_width, hidden_dim
-#         # e.g. (32, 16/2 x 224/16 x 224/16, 768) -> (32, 1568, 768)
+    def forward_features(self, x):
+        # input shape: B, C, T, H, W
+        f = self.rgb_tokenizer(x)
+        x = self.patch_embed(x) # patch embedding
+        B, _, _ = x.size()
+        # shape: B, T x patch_height x patch_width, hidden_dim
+        # e.g. (32, 16/2 x 224/16 x 224/16, 768) -> (32, 1568, 768)
 
-#         # add positional embedding
-#         if self.pos_embed is not None:
-#             x = x + self.pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
-#         x = self.pos_drop(x) # dropout
-#         # encoder
-#         for blk in self.blocks:
-#             x = blk(x) 
+        # add positional embedding
+        if self.pos_embed is not None:
+            x = x + self.pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
+        x = self.pos_drop(x) # dropout
+        # encoder
+        for blk in self.blocks:
+            x = blk(x) 
 
-#         return x
+        # concatenate features from rgb encoder and rgb tokenizer
+        x = torch.cat((f, x), dim=2)
+
+        return x
 
 
-#     def forward(self, x):
-#         # NOTE                            Jiachen 2022.05.25
-#         # from ego4d state change classification and localization
-#         # the raw tensor frames from __getitem__() shape like: C, T, H, W
-#         # Thus, if no transformations are used to augment x, the shape of x will be:
-#         # bs, C, T, H, W
-#         B, C, T, H, W = x.shape
-#         x = self.forward_features(x)
-#         # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
+    def forward(self, x):
+        # NOTE                            Jiachen 2022.05.25
+        # from ego4d state change classification and localization
+        # the raw tensor frames from __getitem__() shape like: C, T, H, W
+        # Thus, if no transformations are used to augment x, the shape of x will be:
+        # bs, C, T, H, W
+        B, C, T, H, W = x.shape
+        x = self.forward_features(x)
+        # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
 
-#         if self.fc_norm is not None:
-#             cls = self.cls_head( self.fc_norm(x.mean(1)) )
-#         else:
-#             cls = self.cls_head( self.norm(x)[:, 0] )
+        if self.fc_norm is not None:
+            cls = self.cls_head( self.fc_norm(x.mean(1)) )
+        else:
+            cls = self.cls_head( self.norm(x)[:, 0] )
 
-#         num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
-#         tubelet_size = self.patch_embed.tubelet_size
-#         x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
-#         x = x.mean(dim=2).squeeze()
-#         x = self.temporal_norm(x)
-#         x = x.flatten(1)
-#         loc = self.loc_head(x) # shape: bs, frame num
-#         # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
+        num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
+        tubelet_size = self.patch_embed.tubelet_size
+        x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+        x = x.mean(dim=2).squeeze()
+        x = self.temporal_norm(x)
+        x = x.flatten(1)
+        loc = self.loc_head(x) # shape: bs, frame num
+        # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
 
-#         return loc, cls
+        return loc, cls
 
 
 @register_model
@@ -590,6 +601,15 @@ def vit_twohead_base_patch16_224(pretrained=False, **kwargs):
     model.default_cfg = _cfg()
     return model
 
+@register_model
+def vit_twohead_wtokenizer_base_patch16_224(pretrained=False, **kwargs):
+
+    model = Ego4dTwoHeadwTokenizerVisionTransformer(
+            patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+    model.default_cfg = _cfg()
+    return model
 
 # @register_model
 # def vit_ts_twohead_base_patch16_224(pretrained=False, **kwargs):
