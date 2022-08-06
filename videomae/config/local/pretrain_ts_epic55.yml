@@ -1,8 +1,8 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 3
-epochs: 75
+batch_size: 8
+epochs: 300
 save_ckpt_freq: 10
 
 # Model parameters
@@ -29,7 +29,7 @@ lr: 1.5e-4                # metavar='LR help='learning rate (default: 1.5e-4)
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
 min_lr: 1.0e-5              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
-warmup_epochs: 10         # metavar='N help='epochs to warmup LR, if scheduler supports
+warmup_epochs: 40         # metavar='N help='epochs to warmup LR, if scheduler supports
 warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
 
 # Augmentation parameters
@@ -59,7 +59,7 @@ fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
 
 tau: 0.1
-lamb: [1, 1, 1, 1, 1, 1]
+lamb: [1, 1, 1, 1, 0.1, 0.1]
 ctr: "hard"
 # configuration file
 # config: ""                                  # help='path to configuration file
@@ -95,7 +95,7 @@ cfg:
     TRAIN_JITTER_SCALES: [256, 320]
     TRAIN_CROP_SIZE: 224
     TEST_CROP_SIZE: 224
-    REPEATED_SAMPLING: 4
+    REPEATED_SAMPLING: false
   TEST:
     NUM_SPATIAL_CROPS: ""
     NUM_ENSEMBLE_VIEWS: ""
