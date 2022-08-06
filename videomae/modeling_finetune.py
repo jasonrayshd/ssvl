@@ -547,7 +547,8 @@ class Ego4dTwoHeadwTokenizerVisionTransformer(nn.Module):
     
     def forward_features(self, x):
         # input shape: B, C, T, H, W
-        f = self.tokenizer(x)
+        f = self.tokenizer(x).flatten(2).transpose(1, 2)
+
         x = self.patch_embed(x) # patch embedding
         B, _, _ = x.size()
         # shape: B, T x patch_height x patch_width, hidden_dim
