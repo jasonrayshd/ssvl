@@ -1,7 +1,7 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 3
+batch_size: 4
 epochs: 75
 save_ckpt_freq: 10
 
@@ -41,15 +41,15 @@ data_path: '/path/to/list_kinetics-400'     # help='dataset path
 imagenet_default_mean_and_std: true         # action='store_true
 num_frames: 16
 sampling_rate: 4
-output_dir: "/mnt/code/ssvl/videomae/output"                              # help='path where to save, empty for no saving
-log_dir: "/mnt/code/ssvl/videomae/output"                              # help='path where to tensorboard log
+output_dir: "/data/shared/output"                              # help='path where to save, empty for no saving
+log_dir: "/data/shared/output"                              # help='path where to tensorboard log
 # device: 'cuda'                              # help='device to use for training / testing
 # seed: 0
 resume: ""                                  # help='resume from checkpoint
 auto_resume: true                           # 
 
 start_epoch: 0                              # help='start epoch
-num_workers: 8
+num_workers: 10
 pin_mem: true
 # flow images
 ts_pretrain: true
@@ -78,10 +78,12 @@ cfg:
     # epic-kitchen100: path to directory that contains each participant's data
     # epic-kitchen50: path to directory that contains two directories: flow and rgb
     # VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
-    VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
+    # VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
+    VISUAL_DATA_DIR: "/data/shared/epic-kitchens55/frames_rgb_flow"
     # path to annotation file
     # ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
-    ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations"
+    # ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations"
+    ANNOTATIONS_DIR: "/data/shared/epic-kitchens55/annotations"
     # annotation file name of train/val/test data
     TRAIN_LIST: "EPIC_train_action_labels.pkl"
     VAL_LIST: ""
