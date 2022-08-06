@@ -253,7 +253,6 @@ def main(args, ds_init):
 
     utils.init_distributed_mode(args)
 
-
     # codes below should be called after distributed initialization
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -449,8 +448,12 @@ def main(args, ds_init):
             elif key.startswith("rgb_encoder."):
                 # two stream rgb encoder
                 new_dict[key[12:]] = checkpoint_model[key]
+            elif key.startswith("rgb_tokenizer."):
+                # two stream rgb tokenizer
+                new_dict[key[14:]] = checkpoint_model[key]
             else:
                 new_dict[key] = checkpoint_model[key]
+
         checkpoint_model = new_dict
 
         # interpolate position embedding
