@@ -20,7 +20,7 @@ from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValu
 from datasets import build_dataset
 from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
 from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate, multiple_samples_collate_ego4d, samples_collate_ego4d, collate_func_debug_val
+from utils import  multiple_samples_collate, multiple_samples_collate_ego4d, samples_collate_ego4d
 import utils
 import modeling_finetune
 
