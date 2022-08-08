@@ -612,28 +612,8 @@ def samples_collate_ego4d(batch):
     return inputs, [labels, states], fps, info
 
 
-def collate_func_debug_val(batch):
-    inputs, target, fps, info = zip(*batch)
-
-    labels = []
-    states = []
-    for i, item in enumerate(target):
-        try:
-            labels.append(item[0])
-            states.append(item[1])
-            if item[0] is None or item[1] is None:
-                raise Exception(f"Error occurs: {info[i]}")
-                import sys
-                sys.exit(0)
-        except:
-            raise Exception(f"Error occurs: {info[i]}")
-            import sys
-            sys.exit(0)
-
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
-
-    return inputs, [labels, states], fps, info
+def samples_collate_ego4d_test(batch):
+    inputs, info = zip(*batch)
+    # print(f"worker: inputs[0] shape:{inputs[0].shape}")
+    inputs = torch.stack(inputs, dim=0)
+    return inputs, info

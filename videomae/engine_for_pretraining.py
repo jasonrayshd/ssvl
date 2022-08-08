@@ -315,7 +315,7 @@ class TwoStreamVitLoss(nn.Module):
         # intra_neg_sim = q_vs_q[:, :-1].reshape(B, N-1, N+1)[..., 1:].flatten(1) # (B, N3)
 
         # negative pairs within the same modality but across batch
-        rank = os.environ["RANK"]
+        rank = int( os.environ["RANK"] )
         q_vs_q_all =  torch.einsum("bmd,cnd -> bcmn", q, q_all)
         q_vs_q_all = [ torch.cat((q_vs_q_all[i, :rank*B + i], q_vs_q_all[i, rank*B + i + 1:]), dim=0)  for i in range(B)]
         q_vs_q_all = torch.stack(q_vs_q_all, dim=0) # (B, B_all-1, N1, N2)
@@ -474,7 +474,7 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
             loss_dct = loss_func(outputs, [rgb_target, flow_target])
             loss = loss_dct["sum"]
 
-        loss_value = loss.item()
+        loss_value = new_func(loss)
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -544,6 +544,10 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+def new_func(loss):
+    loss_value = loss.item()
+    return loss_value
 
 
 if __name__ == "__main__":

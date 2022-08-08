@@ -168,7 +168,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 self.rand_erase = True
 
         # commented by Jiachen for debugging
-        self.ann_path = os.path.join(cfg.DATA.ANN_DIR, f'fho_oscc-pnr_{self.mode}.json')
+        self.ann_path = os.path.join(cfg.DATA.ANN_DIR, f'fho_oscc-pnr_{self.mode if self.mode != "test" else self.mode + "_unannotated"}.json')
 
         # NOTE line below should be modified when start finetuning
         # self.ann_path = os.path.join(cfg.DATA.ANN_DIR, f'partial_train.json')
@@ -264,7 +264,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             self.package[count] = {
                 'unique_id': unique_id,
                 'pnr_frame': pnr_frame,
-                'state': 0 if state_change is False else 1,
+                'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
                 'clip_start_sec': clip_start_sec,
                 'clip_end_sec': clip_end_sec,
                 'clip_start_frame': int(clip_start_frame),
@@ -301,7 +301,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                                                                                             # original transformations include: 
                                                                                             #     (1) random start frame
                                                                                             #     (2) resize to square (was commented)
-
+        # prepare label for state change localization
         if labels.sum() != 0:
             labels = labels.nonzero()[0].item()
         else:
@@ -310,6 +310,15 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         clip_len = info['clip_end_sec'] - info['clip_start_sec']
         clip_frame = info['clip_end_frame'] - info['clip_start_frame'] + 1
         fps = clip_frame / clip_len
+
+        if self.args.flow_mode == "online":
+            # flows =
+            pass
+        elif self.args.flow_mode == "":
+            pass # do nothing
+        else:
+            raise ValueError(f"Unknown flow mode used in ego4d data preparation:{self.args.flow_mode}, expected one of ['online', '']")
+
 
         if self.mode == "train":
             if self.args.num_sample > 1:
@@ -344,6 +353,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                     frames = self._aug_frame(frames)
 
             if self.pretrain:
+                # left for future development
                 pass
             else:
                 if self.args.nb_classes == -1:
@@ -374,18 +384,15 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             spatial_start = int(crop_num * spatial_step)
 
             if H >= W:
-                frames = frames[:, spatial_start:spatial_start + self.args.short_side_size, :, :]
+                frames = [frame[spatial_start:spatial_start + self.args.short_side_size, :, :] for frame in frames]
             else:
-                frames = frames[:, :, spatial_start:spatial_start + self.args.short_side_size, :]
+                frames = [frame[:, spatial_start:spatial_start + self.args.short_side_size, :] for frame in frames]
 
             frames = self.data_transform(frames)
 
-            if self.args.nb_classes == -1:
-                return frames, [labels, state], fps, info
-            elif self.args.nb_classes == 2:
-                return frames, state, fps, info
-            else:
-                return frames, labels, fps, info
+            # edited by jiachen
+            # Ego4d challenge is currently undergoing, annotations of state change test set are not published.
+            return frames, info
 
 
     # _aug_frame edited by Jiachen Lei
