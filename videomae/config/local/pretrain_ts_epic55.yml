@@ -58,8 +58,8 @@ flow_mode: "local"                                # mode of sampling flow images
 fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
 
-tau: 0.1
-lamb: [1, 1, 1, 1, 0.1, 0.1]
+tau: 0.01
+lamb: [1, 1, 1, 1, 0.05, 0.05]
 ctr: "hard"
 # configuration file
 # config: ""                                  # help='path to configuration file

@@ -151,7 +151,13 @@ def main(args):
 
             elif args.ts_pretrain:
                 rgb_rgb_hat, rgb_flow_hat, flow_rgb_hat, flow_flow_hat, rgb_vis, flow_vis, rgb_token, flow_token = output
-                masked_tokens = int(14*14*args.mask_ratio)*8
+                masked_tokens = int(14*14*args.mask_ratio*8)
+
+                unnormed_frame = frame.squeeze() * std + mean
+                unnormed_frame = unnormed_frame.transpose(0, 1)
+
+                rgb_rgb_hat_reshape = unpatchify_rgb(rgb_rgb_hat, mask, masked_tokens)
+                flow_rgb_hat_reshape = unpatchify_rgb(flow_rgb_hat, mask, masked_tokens)
 
                 rgb_flow_hat_reshape = unpatchify_flow(rgb_flow_hat, mask, masked_tokens)
                 flow_flow_hat_reshape = unpatchify_flow(flow_flow_hat, mask, masked_tokens)
@@ -168,7 +174,7 @@ def main(args):
                 rgb_flow_hat_rgb = torch.from_numpy(np.stack(rgb_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
                 flow_flow_hat_rgb = torch.from_numpy(np.stack(flow_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
 
-                all_cat = torch.cat((flows_rgb, rgb_flow_hat_rgb, flow_flow_hat_rgb), dim=0) / 255
+                all_cat = torch.cat((flows_rgb/255, rgb_flow_hat_rgb/255, flow_flow_hat_rgb/255, unnormed_frame.cpu(), flow_rgb_hat_reshape.cpu().transpose(0, 1), rgb_rgb_hat_reshape.cpu().transpose(0, 1)), dim=0)
                 save_image(all_cat, f"./log/flow_vis_{i}.png")
 
             elif args.flow_mode == "":
@@ -185,7 +191,7 @@ def main(args):
 
                 masked_tokens = int(14*14*args.mask_ratio)*8
                 rgb_hat_reshape = unpatchify_rgb(output, mask, masked_tokens=masked_tokens)
-                all_concat = torch.cat((unnormed_frame, rgb_hat_reshape.transpose(0, 1)), axis=0)
+                all_concat = torch.cat((unnormed_frame, rgb_hat_reshape.transpose(0, 1)), dim=0)
 
                 save_image(all_concat, f"./log/flow_vis_{i}.png")
                 # unnormed_rgb_hat = rgb_hat_reshape * std + mean
@@ -217,7 +223,7 @@ def unpatchify_rgb(rgb_raw, mask, masked_tokens):
         ---
         rgb_hat_reshape: reconstructed RGB image, (3, T, H, W)
     """
-    mask = mask.squeeze() # N
+    # mask = mask.squeeze() # N
     img = torch.zeros_like(rgb_raw) # 1, N ,C
     img[mask] = rgb_raw[:, -masked_tokens:]
     img[~mask] = rgb_raw[:, :-masked_tokens]
