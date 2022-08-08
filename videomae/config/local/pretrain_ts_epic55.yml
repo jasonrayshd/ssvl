@@ -25,9 +25,9 @@ weight_decay_end: null    # help="""Final value of the
                           # weight decay. We use a cosine schedule for WD. 
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
 
-lr: 1.5e-4                # metavar='LR help='learning rate (default: 1.5e-4)
+lr: 1.5e-5                # metavar='LR help='learning rate (default: 1.5e-4)
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
-min_lr: 1.0e-5              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
+min_lr: 1.0e-9              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
 warmup_epochs: 40         # metavar='N help='epochs to warmup LR, if scheduler supports
 warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports

@@ -207,7 +207,6 @@ def main(args):
 
 def merge(eval_path, num_tasks):
     dict_feats = {}
-    dict_label = {}
     dict_pos = {}
     print("Reading individual output files")
 
@@ -216,20 +215,18 @@ def merge(eval_path, num_tasks):
         lines = open(file, 'r').readlines()[1:]
         for line in lines:
             line = line.strip()
-            name = line.split('[')[0]
-            label = line.split(']')[1].split(' ')[1]
-            chunk_nb = line.split(']')[1].split(' ')[2]
-            split_nb = line.split(']')[1].split(' ')[3]
+            name = line.split(' ')[0]
+
+            crop_num = line.split(']')[1].split(' ')[3]
             data = np.fromstring(line.split('[')[1].split(']')[0], dtype=np.float, sep=',')
             if not name in dict_feats:
                 dict_feats[name] = []
-                dict_label[name] = 0
                 dict_pos[name] = []
             if chunk_nb + split_nb in dict_pos[name]:
                 continue
             dict_feats[name].append(data)
             dict_pos[name].append(chunk_nb + split_nb)
-            dict_label[name] = label
+
     print("Computing final results")
 
     input_lst = []
@@ -242,13 +239,12 @@ def merge(eval_path, num_tasks):
 
 
 def compute_video(lst):
-    i, video_id, data, label = lst
+    i, video_id, data = lst
     feat = [x for x in data]
     feat = np.mean(feat, axis=0)
     pred = np.argmax(feat)
-    top1 = (int(pred) == int(label)) * 1.0
-    top5 = (int(label) in np.argsort(-feat)[:5]) * 1.0
-    return [pred, top1, top5, int(label)]
+
+    return pred
 
 
 
