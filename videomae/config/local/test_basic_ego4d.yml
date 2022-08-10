@@ -1,4 +1,4 @@
-batch_size: 64
+batch_size: 16
 # epochs: 100 
 # update_freq: 1
 # save_ckpt_freq: 10

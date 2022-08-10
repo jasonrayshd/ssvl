@@ -255,6 +255,11 @@ def test_on_ego4d(data_loader, model, device, file):
     model.eval()
     final_result = []
 
+    if not os.path.exists(file):
+        os.mknod(file)
+    open(file,"w").close() # clear previous content
+    f =  open(file, 'a+')
+
     for batch in tqdm(data_loader):
         # print(len(batch))
         
@@ -282,15 +287,11 @@ def test_on_ego4d(data_loader, model, device, file):
                                                     str(info[i]["crop"])
                                                     )
 
-    
-            final_result.append(string)
 
+            f.write(string)
 
-    if not os.path.exists(file):
-        os.mknod(file)
-    with open(file, 'w') as f:
-        for line in final_result:
-            f.write(line)
+        f.close()
+
 
 
 if __name__ == '__main__':
