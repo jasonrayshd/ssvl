@@ -1,5 +1,5 @@
 OMP_NUM_THREADS=1 python -m torch.distributed.launch \
-    --nproc_per_node=2 \
+    --nproc_per_node=4 \
     --master_port 51225 --nnodes=1  --node_rank=$1 --master_addr=$2 \
     ../test_on_ego4d.py \
     --dist_eval \
