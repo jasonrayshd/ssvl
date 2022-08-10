@@ -25,9 +25,9 @@ weight_decay_end: null    # help="""Final value of the
                           # weight decay. We use a cosine schedule for WD. 
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
 
-lr: 1.5e-4                # metavar='LR help='learning rate (default: 1.5e-4)
+lr: 1.5e-5                # metavar='LR help='learning rate (default: 1.5e-4)
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
-min_lr: 1.0e-5              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
+min_lr: 1.0e-9              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
 warmup_epochs: 40         # metavar='N help='epochs to warmup LR, if scheduler supports
 warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
@@ -41,15 +41,15 @@ data_path: '/path/to/list_kinetics-400'     # help='dataset path
 imagenet_default_mean_and_std: true         # action='store_true
 num_frames: 16
 sampling_rate: 4
-output_dir: "/data/shared/output"                              # help='path where to save, empty for no saving
-log_dir: "/data/shared/output"                              # help='path where to tensorboard log
+output_dir: "/mnt/code/ssvl/videomae/output"                              # help='path where to save, empty for no saving
+log_dir: "/mnt/code/ssvl/videomae/output"                              # help='path where to tensorboard log
 # device: 'cuda'                              # help='device to use for training / testing
 # seed: 0
 resume: ""                                  # help='resume from checkpoint
 auto_resume: true                           # 
 
 start_epoch: 0                              # help='start epoch
-num_workers: 10
+num_workers: 8
 pin_mem: true
 # flow images
 ts_pretrain: true
@@ -78,12 +78,10 @@ cfg:
     # epic-kitchen100: path to directory that contains each participant's data
     # epic-kitchen50: path to directory that contains two directories: flow and rgb
     # VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
-    # VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
-    VISUAL_DATA_DIR: "/data/shared/epic-kitchens55/frames_rgb_flow"
+    VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
     # path to annotation file
     # ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
-    # ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations"
-    ANNOTATIONS_DIR: "/data/shared/epic-kitchens55/annotations"
+    ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations"
     # annotation file name of train/val/test data
     TRAIN_LIST: "EPIC_train_action_labels.pkl"
     VAL_LIST: ""
