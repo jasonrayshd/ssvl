@@ -287,10 +287,9 @@ def test_on_ego4d(data_loader, model, device, file):
                                                     str(info[i]["crop"])
                                                     )
 
-
             f.write(string)
 
-        f.close()
+    f.close()
 
 
 
