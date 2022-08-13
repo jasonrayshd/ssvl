@@ -113,6 +113,7 @@ num_workers: 8
 # pos_clip_save_path: ""    # help="save path of positive clips of ego4d state change")
 # neg_clip_save_path: ""    # help="save path of negative clips of ego4d state change")
 
+flow_mode: ""
 
 lamb_cls: 1
 lamb_loc: 1
