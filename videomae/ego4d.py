@@ -340,7 +340,9 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             frames = self.data_transform(frames)
             flows = None
             if self.args.flow_mode == "online":
-                flows = self.flowExt.ext(frames)
+                shifted_frames = torch.roll(frames, -1, 0)
+                cat_frames = torch.cat((frames, shifted_frames), dim=1)
+                flows = self.flowExt.ext(cat_frames)
 
             frames = self.normalize(frames)
 
@@ -363,7 +365,9 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
     
             flows = None
             if self.args.flow_mode == "online":
-                flows = self.flowExt.ext(frames)
+                shifted_frames = torch.roll(frames, -1, 0)
+                cat_frames = torch.cat((frames, shifted_frames), dim=1)
+                flows = self.flowExt.ext(cat_frames)
 
             frames = self.normalize(frames)
 
@@ -436,8 +440,8 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         if self.args.flow_mode == "online":
             assert self.flowExt is not None, "flow extractor is None"
             shifted_frames = torch.roll(buffer, -1, 0)
-            buffer = torch.cat((buffer, shifted_frames), dim=1)
-            flows = self.flowExt.ext(buffer)
+            cat_frames = torch.cat((buffer, shifted_frames), dim=1)
+            flows = self.flowExt.ext(cat_frames)
 
         buffer = buffer.permute(0, 2, 3, 1) # T H W C 
         # print(buffer.shape)
