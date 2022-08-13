@@ -555,9 +555,10 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
     Returns:
         (tuple): collated data batch.
     """
-    inputs, target, fps, info = zip(*batch)
+    inputs, target, flows, fps, info = zip(*batch)
     # print(target)
     inputs = [item for sublist in inputs for item in sublist]
+    flows = [item for sublist in flows for item in sublist]
 
     if nb_classes == -1:
         labels = [label for sublist in target for label in sublist[0]]
@@ -569,9 +570,9 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
             default_collate(states),
         )
         if fold:
-            return [inputs], [labels, states], fps, info
+            return [inputs], [labels, states], flows, fps, info
         else:
-            return inputs, [labels, states], fps, info
+            return inputs, [labels, states], flows, fps, info
 
     elif nb_classes == 2:
         states = [item for sublist in target for item in sublist]
@@ -580,9 +581,9 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
             default_collate(states),
         )
         if fold:
-            return [inputs], states, fps, info
+            return [inputs], states, flows, fps, info
         else:
-            return inputs , states, fps, info
+            return inputs , states, flows, fps, info
 
     else:
         labels = [item for sublist in target for item in sublist]
@@ -591,25 +592,26 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
             default_collate(labels),
         )
         if fold:
-            return [inputs], labels, fps, info
+            return [inputs], labels, flows, fps, info
         else:
-            return inputs, labels, fps, info
+            return inputs, labels, flows, fps, info
 
 
 def samples_collate_ego4d(batch):
 
-    inputs, target, fps, info = zip(*batch)
+    inputs, target, flows, fps, info = zip(*batch)
 
     labels = [item[0] for item in target]
     states = [item[1] for item in target]
 
-    inputs, labels, states = (
+    inputs, labels, states, flows = (
         default_collate(inputs),
         default_collate(labels),
         default_collate(states),
+        default_collate(flows),
     )
 
-    return inputs, [labels, states], fps, info
+    return inputs, [labels, states], flows, fps, info
 
 
 def samples_collate_ego4d_test(batch):

@@ -173,6 +173,7 @@ def validation_one_epoch(data_loader, model, device, criterion):
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
         target = batch[1]
+        flows = batch[2]
         videos = videos.to(device, non_blocking=True)
         # print(target)
         if not isinstance(target, list):
@@ -182,8 +183,12 @@ def validation_one_epoch(data_loader, model, device, criterion):
             target = [labels, states]
         # compute output
         with torch.cuda.amp.autocast():
-            output = model(videos)
-            loss = criterion(output, target)
+            if flows is not None:
+                output = model(videos, flows)
+                loss = criterion(output, target)
+            else:
+                output = model(videos)
+                loss = criterion(output, target)
 
         batch_size = videos.shape[0]
         metric_logger.update(loss=loss.item())
@@ -213,7 +218,6 @@ def validation_one_epoch(data_loader, model, device, criterion):
     info += "\n"
     print(info)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
 
 
 @torch.no_grad()

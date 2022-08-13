@@ -9,7 +9,6 @@ https://github.com/EGO4D/hands-and-objects/tree/main/state-change-localization-c
 import os
 import json
 import time
-from tkinter import N
 
 import av
 import cv2
@@ -408,10 +407,12 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
         # buffer = aug_transform(buffer)
 
-        # buffer = [transforms.ToTensor()(img) for img in buffer]
+        buffer = [transforms.ToTensor()(img) for img in buffer]
         buffer = torch.stack(buffer) # T C H W
-        # T H W C -> C T H W.
-        buffer = buffer.permute(3, 0, 1, 2)
+        # print(buffer.shape)
+        # T C H W -> T H W C
+        # buffer = buffer.permute(0, 2, 3, 1)
+        # print(buffer.shape)
         # Perform data augmentation.
         scl, asp = (
             [0.08, 1.0],
@@ -437,11 +438,13 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             flows = self.flowExt(buffer)
 
         buffer = buffer.permute(0, 2, 3, 1) # T H W C 
+        # print(buffer.shape)
         # T H W C 
         buffer = tensor_normalize(
             buffer, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        ).permute(3, 0, 1, 2) # C T H W
+        ).permute(0, 3, 1, 2) # C T H W
 
+        print(buffer.shape)
         buffer = transforms.ColorJitter(brightness=0, saturation=0, hue=0)(buffer)
 
         # if self.rand_erase:

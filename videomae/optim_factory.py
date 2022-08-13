@@ -47,7 +47,7 @@ class LayerDecayValueAssigner(object):
         return get_num_layer_for_vit(var_name, len(self.values))
 
 
-def get_parameter_groups(model, weight_decay=1e-5, skip_list=(), get_num_layer=None, get_layer_scale=None, ignore_param=None):
+def get_parameter_groups(model, weight_decay=1e-5, skip_list=(), get_num_layer=None, get_layer_scale=None, ignore_param={}):
     parameter_group_names = {}
     parameter_group_vars = {}
 
