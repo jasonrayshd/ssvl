@@ -13,7 +13,12 @@ from loss import Ego4dTwoHead_Criterion
 
 def train_class_batch(model, samples, target, criterion):
     # print("train_class_batch")
-    outputs = model(samples)
+    frames, flows = samples
+    if flows is None:
+        outputs = model(frames)
+    else:
+        outputs = model(frames, flows)
+
     loss = criterion(outputs, target)
 
     return loss, outputs
@@ -43,7 +48,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     else:
         optimizer.zero_grad()
 
-    for data_iter_step, (samples, targets, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (samples, targets, flows, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
             continue
@@ -73,12 +78,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             # print("loss scaler is None")
             samples = samples.half()
             loss, output = train_class_batch(
-                model, samples, targets, criterion)
+                model, [samples, flows], targets, criterion)
 
         else:
             with torch.cuda.amp.autocast():
                 loss, output = train_class_batch(
-                    model, samples, targets, criterion)
+                    model, [samples, flows], targets, criterion)
         
         loss_value = loss.item()
 

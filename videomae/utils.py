@@ -624,7 +624,11 @@ def samples_collate_ego4d(batch):
 
 
 def samples_collate_ego4d_test(batch):
-    inputs, info = zip(*batch)
+    inputs, flows, info = zip(*batch)
     # print(f"worker: inputs[0] shape:{inputs[0].shape}")
     inputs = torch.stack(inputs, dim=0)
-    return inputs, info
+    if flows[0] is None:
+        flows = torch.stack(flows, dim=0)
+    else:
+        flows = None
+    return inputs, flows, info
