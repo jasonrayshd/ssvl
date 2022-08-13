@@ -442,10 +442,10 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         # T H W C 
         buffer = tensor_normalize(
             buffer, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        ).permute(0, 3, 1, 2) # C T H W
+        ).permute(0, 3, 1, 2) # T C H W
 
-        print(buffer.shape)
-        buffer = transforms.ColorJitter(brightness=0, saturation=0, hue=0)(buffer)
+        # print(buffer.shape)
+        buffer = transforms.ColorJitter(brightness=0, saturation=0, hue=0)(buffer).permute(1, 0, 2, 3)
 
         # if self.rand_erase:
         #     erase_transform = RandomErasing(
