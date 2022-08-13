@@ -25,9 +25,11 @@ weight_decay_end: null    # help="""Final value of the
                           # weight decay. We use a cosine schedule for WD. 
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
 
-lr: 1.5e-5                # metavar='LR help='learning rate (default: 1.5e-4)
+lr: 5.0e-5                # metavar='LR help='learning rate (default: 1.5e-4)
+flow_encoder_lr: 1.5e-5
+
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
-min_lr: 1.0e-9              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
+min_lr: 1.0e-7              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
 warmup_epochs: 40         # metavar='N help='epochs to warmup LR, if scheduler supports
 warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
@@ -46,7 +48,7 @@ log_dir: "/mnt/code/ssvl/videomae/output"                              # help='p
 # device: 'cuda'                              # help='device to use for training / testing
 # seed: 0
 resume: ""                                  # help='resume from checkpoint
-auto_resume: true                           # 
+auto_resume: false                           # 
 
 start_epoch: 0                              # help='start epoch
 num_workers: 8
@@ -59,7 +61,7 @@ fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
 
 tau: 0.01
-lamb: [1, 1, 1, 1, 0.05, 0.05]
+lamb: [1, 1, 1, 1, 0.05, 0.1]
 ctr: "hard"
 # configuration file
 # config: ""                                  # help='path to configuration file
@@ -77,11 +79,11 @@ cfg:
   EPICKITCHENS:
     # epic-kitchen100: path to directory that contains each participant's data
     # epic-kitchen50: path to directory that contains two directories: flow and rgb
-    VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
-    # VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
+    # VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
+    VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
     # path to annotation file
-    ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
-    # ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations"
+    # ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
+    ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations"
     # annotation file name of train/val/test data
     TRAIN_LIST: "EPIC_train_action_labels.pkl"
     VAL_LIST: ""

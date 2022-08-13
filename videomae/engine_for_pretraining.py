@@ -389,8 +389,9 @@ class TwoStreamVitLoss(nn.Module):
 def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
-                    lr_schedule_values=None, wd_schedule_values=None,
-
+                    lr_schedule_values=None,  flow_encoder_lr_schedule_values = None,
+                    wd_schedule_values=None,
+                    flow_optimizer = None,
                     ctr="easy",
                     tau = 0.8,
                     lamb = [0.25, 0.25, 0.25, 0.25],
@@ -408,10 +409,18 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
     for step, batch in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         # assign learning rate & weight decay for each step
         it = start_steps + step  # global training iteration
+
         if lr_schedule_values is not None or wd_schedule_values is not None:
             for i, param_group in enumerate(optimizer.param_groups):
                 if lr_schedule_values is not None:
                     param_group["lr"] = lr_schedule_values[it] * param_group["lr_scale"]
+                if wd_schedule_values is not None and param_group["weight_decay"] > 0:
+                    param_group["weight_decay"] = wd_schedule_values[it]
+
+        if flow_encoder_lr_schedule_values is not None or wd_schedule_values is not None:
+            for i, param_group in enumerate(flow_optimizer.param_groups):
+                if flow_encoder_lr_schedule_values is not None:
+                    param_group["lr"] = flow_encoder_lr_schedule_values[it] * param_group["lr_scale"]
                 if wd_schedule_values is not None and param_group["weight_decay"] > 0:
                     param_group["weight_decay"] = wd_schedule_values[it]
 
@@ -503,14 +512,24 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
         metric_logger.update(contrast_loss=loss_dct["rgb_contrast"] + loss_dct["flow_contrast"])
 
         metric_logger.update(loss_scale=loss_scale_value)
+
         min_lr = 10.
         max_lr = 0.
+        flow_encoder_min_lr = 10.
+        flow_encoder_max_lr = 0.
         for group in optimizer.param_groups:
             min_lr = min(min_lr, group["lr"])
             max_lr = max(max_lr, group["lr"])
 
+        for group in flow_optimizer.param_groups:
+            flow_encoder_min_lr = min(flow_encoder_min_lr, group["lr"])
+            flow_encoder_max_lr = max(flow_encoder_max_lr, group["lr"])
+
         metric_logger.update(lr=max_lr)
         metric_logger.update(min_lr=min_lr)
+        metric_logger.update(flow_encoder_lr=flow_encoder_max_lr)
+        metric_logger.update(flow_encoder_min_lr=flow_encoder_min_lr)
+        
         weight_decay_value = None
         for group in optimizer.param_groups:
             if group["weight_decay"] > 0:
@@ -534,6 +553,10 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
             log_writer.update(loss_scale=loss_scale_value, head="opt")
             log_writer.update(lr=max_lr, head="opt")
             log_writer.update(min_lr=min_lr, head="opt")
+            
+            log_writer.update(flow_encoder_lr=flow_encoder_max_lr, head="opt")
+            log_writer.update(flow_encoder_min_lr=flow_encoder_min_lr, head="opt")
+
             log_writer.update(weight_decay=weight_decay_value, head="opt")
             log_writer.update(grad_norm=grad_norm, head="opt")
             log_writer.set_step()

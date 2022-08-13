@@ -28,6 +28,10 @@ import wandb
 from loss import Ego4dTwoHead_Criterion
 from config_utils import parse_yml, combine
 
+from multiprocessing.managers import SyncManager
+import multiprocessing as mp
+from flow_extractor import flowExtractor
+
 class Ego4d_Compatible_Mixup(Mixup):
 
     def __init__(self, **kwargs):
@@ -275,16 +279,29 @@ def main(args, ds_init):
 
     cudnn.benchmark = True
 
-    dataset_train, args.nb_classes = build_dataset(is_train=True, test_mode=False, args=args)
+
+    if args.flow_mode == "online":
+        mp.set_start_method('spawn')
+        SyncManager.register("flowExtractor", flowExtractor)
+        m = SyncManager()
+        m.start()
+        flow_extractor = m.flowExtractor(device=f"cuda:{args.gpu}")
+        print(f"Flow extractor manager started by {os.getpid()}.")
+    else:
+        flow_extractor = None
+
+    dataset_train, args.nb_classes = build_dataset(is_train=True, test_mode=False, args=args, flow_extractor=flow_extractor)
     if args.disable_eval_during_finetuning:
         dataset_val = None
         dataset_test = None
     else:
-        dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
-        # commented since test set of ego4d is not annotated yet.
+        dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args, flow_extractor=flow_extractor)
+
+        # test set of ego4d is not annotated yet.
         if "ego4d" in args.data_set.lower():
             dataset_test = None
         else:
+            # if is test and dataset is not ego4d then we do not need to pass flow_extractor
             dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
 
 

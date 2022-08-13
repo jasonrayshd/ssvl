@@ -102,7 +102,7 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
                 else:
                     # replicate last frames
                     rep_flag = True
-                    print("Replicating last two frames")
+                    logger.debug("Replicating last two frames")
                     index.extend(index[-2:])
             else:
                 if raw_index[i] < start_frame + num_frames:
@@ -110,13 +110,13 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
                     index.append(raw_index[i])
                 else:
                     rep_flag = True
-                    print("Replicating last two frames")
+                    logger.debug("Replicating last two frames")
                     index.extend(index[-2:])
 
         index = torch.clamp( torch.as_tensor(index), start_frame, start_frame + num_frames - 1)
 
         if rep_flag:
-            print(raw_index, index, start_frame, start_frame + num_frames, num_frames)
+            logger.debug(f"{raw_index}, {index}, {start_frame}, {start_frame + num_frames}, {num_frames}")
 
         return index
 
