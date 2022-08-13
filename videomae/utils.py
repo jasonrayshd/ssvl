@@ -560,6 +560,11 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
     inputs = [item for sublist in inputs for item in sublist]
     flows = [item for sublist in flows for item in sublist]
 
+    if flows[0] is not None:
+        flows = default_collate(flows)
+    else:
+        flows = None
+
     if nb_classes == -1:
         labels = [label for sublist in target for label in sublist[0]]
         states = [state for sublist in target for state in sublist[1]]
@@ -604,11 +609,15 @@ def samples_collate_ego4d(batch):
     labels = [item[0] for item in target]
     states = [item[1] for item in target]
 
-    inputs, labels, states, flows = (
+    if flows[0] is not None:
+        flows =  default_collate(flows)
+    else:
+        flows = None
+
+    inputs, labels, states = (
         default_collate(inputs),
         default_collate(labels),
         default_collate(states),
-        default_collate(flows),
     )
 
     return inputs, [labels, states], flows, fps, info
