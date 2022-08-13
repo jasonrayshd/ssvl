@@ -26,7 +26,7 @@ weight_decay_end: null    # help="""Final value of the
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
 
 lr: 5.0e-5                # metavar='LR help='learning rate (default: 1.5e-4)
-flow_encoder_lr: 1.5e-5
+flow_encoder_lr: 2.5e-5
 
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
 min_lr: 1.0e-7              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)

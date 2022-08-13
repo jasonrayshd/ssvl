@@ -24,6 +24,8 @@ import volume_transforms as volume_transforms
 from random_erasing import RandomErasing
 from ego4d_trim import _get_frames
 
+import torch.nn.functional as F
+
 import io
 import decord
 import zipfile
@@ -341,8 +343,9 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             flows = None
             if self.args.flow_mode == "online":
                 shifted_frames = torch.roll(frames, -1, 0)
-                cat_frames = torch.cat((frames, shifted_frames), dim=1)
-                flows = self.flowExt.ext(cat_frames)
+                concat_frames = torch.cat((frames, shifted_frames), dim=1)
+                concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
+                flows = self.flowExt.ext(concat_frames)
 
             frames = self.normalize(frames)
 
@@ -366,8 +369,9 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             flows = None
             if self.args.flow_mode == "online":
                 shifted_frames = torch.roll(frames, -1, 0)
-                cat_frames = torch.cat((frames, shifted_frames), dim=1)
-                flows = self.flowExt.ext(cat_frames)
+                concat_frames = torch.cat((frames, shifted_frames), dim=1)
+                concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
+                flows = self.flowExt.ext(concat_frames)
 
             frames = self.normalize(frames)
 
@@ -440,8 +444,9 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         if self.args.flow_mode == "online":
             assert self.flowExt is not None, "flow extractor is None"
             shifted_frames = torch.roll(buffer, -1, 0)
-            cat_frames = torch.cat((buffer, shifted_frames), dim=1)
-            flows = self.flowExt.ext(cat_frames)
+            concat_frames = torch.cat((buffer, shifted_frames), dim=1)
+            concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
+            flows = self.flowExt.ext(concat_frames)
 
         buffer = buffer.permute(0, 2, 3, 1) # T H W C 
         # print(buffer.shape)
