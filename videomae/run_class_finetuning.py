@@ -10,6 +10,7 @@ import os
 from functools import partial
 from pathlib import Path
 from collections import OrderedDict
+from torch.utils.data._utils.collate import default_collate
 
 from timm.data.mixup import Mixup, mixup_target
 from timm.models import create_model
@@ -20,7 +21,7 @@ from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValu
 from datasets import build_dataset
 from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
 from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate, multiple_samples_collate_ego4d, samples_collate_ego4d
+from utils import  multiple_samples_collate
 import utils
 import modeling_finetune
 
@@ -56,6 +57,84 @@ class Ego4d_Compatible_Mixup(Mixup):
             target = [label ,state]
         
         return x, target
+
+
+# Codes below were edited by Jiachen Lei
+def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
+    """
+    Collate function for repeated augmentation. Each instance in the batch has
+    more than one sample.
+    Args:
+        batch (tuple or list): data batch to collate.
+    Returns:
+        (tuple): collated data batch.
+    """
+    inputs, target, flows, fps, info = zip(*batch)
+    # print(target)
+    inputs = [item for sublist in inputs for item in sublist]
+    flows = [item for sublist in flows for item in sublist]
+
+    if flows[0] is not None:
+        flows = default_collate(flows)
+    else:
+        flows = None
+
+    if nb_classes == -1:
+        labels = [label for sublist in target for label in sublist[0]]
+        states = [state for sublist in target for state in sublist[1]]
+
+        inputs, labels, states = (
+            default_collate(inputs),
+            default_collate(labels),
+            default_collate(states),
+        )
+        if fold:
+            return [inputs], [labels, states], flows, fps, info
+        else:
+            return inputs, [labels, states], flows, fps, info
+
+    elif nb_classes == 2:
+        states = [item for sublist in target for item in sublist]
+        inputs, states = (
+            default_collate(inputs),
+            default_collate(states),
+        )
+        if fold:
+            return [inputs], states, flows, fps, info
+        else:
+            return inputs , states, flows, fps, info
+
+    else:
+        labels = [item for sublist in target for item in sublist]
+        inputs, labels = (
+            default_collate(inputs),
+            default_collate(labels),
+        )
+        if fold:
+            return [inputs], labels, flows, fps, info
+        else:
+            return inputs, labels, flows, fps, info
+
+
+def samples_collate_ego4d(batch):
+
+    inputs, target, flows, fps, info = zip(*batch)
+
+    labels = [item[0] for item in target]
+    states = [item[1] for item in target]
+
+    if flows[0] is not None:
+        flows =  default_collate(flows)
+    else:
+        flows = None
+
+    inputs, labels, states = (
+        default_collate(inputs),
+        default_collate(labels),
+        default_collate(states),
+    )
+
+    return inputs, [labels, states], flows, fps, info
 
 
 def get_args():
