@@ -4,5 +4,5 @@ OMP_NUM_THREADS=40 python -m torch.distributed.launch --nproc_per_node=2 \
         --overwrite command-line \
         --config /data/shared/ssvl/videomae/config/temp/pretrain_ts_epic55.yml \
         --project pretrain_ts_epic55 \
-        --name ts_preepic55_A14 \
-        --debug \
+        --name ts_preepic55_A15 \
+        # --debug \

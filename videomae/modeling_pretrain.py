@@ -549,26 +549,17 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
     def get_num_layers(self):
         return len(self.blocks)
 
-    # @torch.jit.ignore
-    # def no_weight_decay(self):
-    #     result = set()
-    #     if self.share_mask_token:
-    #         result.add("mask_token")
-    #     else:
-    #         result.add("rgb_mask_token")
-    #         result.add("flow_mask_token")
-        
-    #     if self.share_pos_embed:
-    #         result.add("pos_embed")
-    #     else:
-    #         result.add("rgb_pos_embed")
-    #         result.add("flow_pos_embed")
-        
-    #     return {'pos_embed', 'cls_token', 'mask_token'}
+    @torch.jit.ignore
+    def no_weight_decay(self):
+
+        return {
+                'pos_embed', "rgb_pos_embed", "flow_pos_embed",
+                'cls_token', 
+                'mask_token', "rgb_mask_token", "flow_mask_token"
+                }
 
     def fuse(self, feat_e, feat_tok):
         if self.fuse_scheme == "concate":
-
             feat = torch.cat([feat_e, feat_tok], dim=2)
         else:
             raise NotImplementedError(f"Unknown fuse scheme:{self.fuse_scheme}, expected to be one of [concate, ]")

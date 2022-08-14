@@ -607,6 +607,154 @@ class Ego4dTwoHeadwTokenizerVisionTransformer(nn.Module):
         return loc, cls
 
 
+
+class Ego4dTwoHeadTwoStreamVisionTransformer(nn.Module):
+    """
+        Edited by jiachen
+        Two stream vision transformer
+    """
+    def __init__(self,
+                img_size=224, 
+                patch_size=16, 
+                # encoder_in_chans=3, 
+                encoder_num_classes=0, 
+                encoder_embed_dim=768, 
+                encoder_depth=12,
+                encoder_num_heads=12, 
+
+                rgb_num_classes = 1536, #  decoder_num_classes=768, 
+                flow_num_classes = 512,
+
+                decoder_embed_dim=512, 
+                decoder_depth=8,
+                decoder_num_heads=8, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False,
+                tubelet_size=2,
+                num_classes=0, # avoid the error from create_fn in timm
+                in_chans=0, # avoid the error from create_fn in timm
+
+                feature_dim = 768, # feature dimension of extracted features by tokenizer
+                # share_tokenizer = False,
+                # share_encoder = False,
+                share_decoder = True,
+                share_proj_layer = False,
+                share_mask_token = False,
+                # share_pos_embed = False,
+
+                fuse_scheme = "concate",
+                tokenizer_backbone = "I3DResNet",
+
+                 ):
+        super().__init__()
+
+        # self.share_tokenizer = share_tokenizer
+        # self.share_encoder = share_encoder
+        self.share_decoder = share_decoder
+        self.share_proj_layer = share_proj_layer
+        self.share_mask_token =share_mask_token
+        # self.share_pos_embed = share_pos_embed
+
+        self.fuse_scheme = fuse_scheme
+
+        # encoder
+        self.rgb_encoder = PretrainVisionTransformerEncoder(
+                        img_size=img_size, 
+                        patch_size=patch_size, 
+                        in_chans=3, 
+                        num_frames = 16,
+                        num_classes=encoder_num_classes, 
+                        embed_dim=encoder_embed_dim, 
+                        depth=encoder_depth,
+                        num_heads=encoder_num_heads, 
+                        mlp_ratio=mlp_ratio, 
+                        qkv_bias=qkv_bias, 
+                        qk_scale=qk_scale, 
+                        drop_rate=drop_rate, 
+                        attn_drop_rate=attn_drop_rate,
+                        drop_path_rate=drop_path_rate, 
+                        norm_layer=norm_layer, 
+                        init_values=init_values,
+                        tubelet_size=tubelet_size,
+                        use_learnable_pos_emb=use_learnable_pos_emb)
+
+        self.flow_encoder = PretrainVisionTransformerEncoder(
+                        img_size=img_size, 
+                        patch_size=patch_size, 
+                        in_chans=2, 
+                        num_frames = 8,
+                        num_classes=encoder_num_classes, 
+                        embed_dim=encoder_embed_dim, 
+                        depth=encoder_depth,
+                        num_heads=encoder_num_heads, 
+                        mlp_ratio=mlp_ratio, 
+                        qkv_bias=qkv_bias, 
+                        qk_scale=qk_scale, 
+                        drop_rate=drop_rate, 
+                        attn_drop_rate=attn_drop_rate,
+                        drop_path_rate=drop_path_rate, 
+                        norm_layer=norm_layer, 
+                        init_values=init_values,
+                        tubelet_size=tubelet_size//2,
+                        use_learnable_pos_emb=use_learnable_pos_emb)
+
+
+        # pos embedding is sinusoid, thus is not learnable
+        # if share_pos_embed:
+        #     self.pos_embed = get_sinusoid_encoding_table(self.encoder.patch_embed.num_patches, decoder_embed_dim)
+        # else:
+        self.rgb_pos_embed = get_sinusoid_encoding_table(self.rgb_encoder.patch_embed.num_patches, decoder_embed_dim)
+        self.flow_pos_embed = get_sinusoid_encoding_table(self.flow_encoder.patch_embed.num_patches, decoder_embed_dim)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+
+        return {
+                'pos_embed', "rgb_pos_embed", "flow_pos_embed",
+                'cls_token', 
+                'mask_token', "rgb_mask_token", "flow_mask_token"
+                }
+
+    def fuse(self, feat_e, feat_tok):
+        if self.fuse_scheme == "concate":
+            feat = torch.cat([feat_e, feat_tok], dim=2)
+        else:
+            raise NotImplementedError(f"Unknown fuse scheme:{self.fuse_scheme}, expected to be one of [concate, ]")
+
+        return feat
+
+    def forward(self, rgb, flows):
+        _, _, rgbT, _, _ = rgb.shape
+        _, _, flowT, _, _ = flows.shape
+
+        assert rgbT//flowT == 2, "number of rgb frames should be two times of flow images"
+
+        rgb_vis = self.rgb_encoder(rgb, mask) # [B, N_vis, C_e]
+        flow_vis = self.flow_encoder(flows, mask) # [B, N_vis, C_e]
+
+
+
+
 @register_model
 def vit_twohead_base_patch16_224(pretrained=False, **kwargs):
 
@@ -627,15 +775,15 @@ def vit_twohead_wtokenizer_base_patch16_224(pretrained=False, **kwargs):
     model.default_cfg = _cfg()
     return model
 
-# @register_model
-# def vit_ts_twohead_base_patch16_224(pretrained=False, **kwargs):
+@register_model
+def vit_ts_twohead_base_patch16_224(pretrained=False, **kwargs):
 
-#     model = Ego4dTwoHead_TwoStreamVisionTransformer(
-#             patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
-#             norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model = Ego4dTwoHeadTwoStreamVisionTransformer(
+            patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
 
-#     model.default_cfg = _cfg()
-#     return model
+    model.default_cfg = _cfg()
+    return model
 
 
 @register_model

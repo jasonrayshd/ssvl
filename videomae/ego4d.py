@@ -24,6 +24,8 @@ import volume_transforms as volume_transforms
 from random_erasing import RandomErasing
 from ego4d_trim import _get_frames
 
+import torch.nn.functional as F
+
 import io
 import decord
 import zipfile
@@ -145,7 +147,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
     all the videos using the `train.json`, `test_unnotated.json`, and
     'val.json' provided.
     """
-    def __init__(self, cfg, mode, args, pretrain=False, transform=None):
+    def __init__(self, cfg, mode, args, pretrain=False, transform=None, flow_extractor=None):
         assert mode in [
             'train',
             'val',
@@ -158,6 +160,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         self.pretrain_transform = transform
         self.crop_size = args.input_size
 
+        self.flowExt = flow_extractor
         self.save_as_zip = cfg.DATA.SAVE_AS_ZIP    # save frames in zip file
 
         # Added by Jiachen
@@ -189,16 +192,17 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
     def _init_trans_for_mode(self):
 
+        self.normalize =  video_transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                    std=[0.229, 0.224, 0.225])
+
         if self.mode == "train":
-            pass
+            self.data_transform = self._aug_frame
 
         elif self.mode == 'val':
             self.data_transform = video_transforms.Compose([
                 video_transforms.Resize(self.args.short_side_size, interpolation='bilinear'),
                 video_transforms.CenterCrop(size=(self.crop_size, self.crop_size)),
                 volume_transforms.ClipToTensor(),
-                video_transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                           std=[0.229, 0.224, 0.225])
             ])
 
         elif self.mode == 'test':
@@ -207,8 +211,6 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             ])
             self.data_transform = video_transforms.Compose([
                 volume_transforms.ClipToTensor(),
-                video_transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                           std=[0.229, 0.224, 0.225])
             ])
 
 
@@ -296,7 +298,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             print(f"error occurs while reading {info['video_id']}")
             raise e
 
-        frames, labels, _ = self._sample_frames_gen_labels(info, from_zip=self.save_as_zip)     # Sample given number of frames
+        frames, labels, _, frame_idx = self._sample_frames_gen_labels(info, from_zip=self.save_as_zip)     # Sample given number of frames
                                                                                             # Return contains two numpy.ndarray that contains sampeld frames and label
                                                                                             # original transformations include: 
                                                                                             #     (1) random start frame
@@ -311,67 +313,41 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         clip_frame = info['clip_end_frame'] - info['clip_start_frame'] + 1
         fps = clip_frame / clip_len
 
-        if self.args.flow_mode == "online":
-            # flows =
-            pass
-        elif self.args.flow_mode == "":
-            pass # do nothing
-        else:
-            raise ValueError(f"Unknown flow mode used in ego4d data preparation:{self.args.flow_mode}, expected one of ['online', '']")
-
-
         if self.mode == "train":
-            if self.args.num_sample > 1:
+            frame_list = []
+            label_list = []
+            state_list = []
+            flow_list = []
+            for _ in range(self.args.num_sample):
 
-                frame_list = []
-                label_list = []
-                state_list = []
-                for _ in range(self.args.num_sample):
-                    if self.pretrain:
-                        new_frames, mask = self.pretrain_transform((frames, None))
-                        #TODO augment flow
-                    else:
-                        new_frames = self._aug_frame(frames)
+                new_frames, flows = self.data_transform(frames)
 
-                    frame_list.append(new_frames)
-                    label_list.append(labels)
-                    state_list.append(state)
+                frame_list.append(new_frames)
+                label_list.append(labels)
+                state_list.append(state)
+                flow_list.append(flows)
 
-                if self.args.nb_classes == -1:
-                    return frame_list, [label_list, state_list], fps, info
-                elif self.args.nb_classes == 2:
-                    return frame_list, state_list, fps, info
-                else:
-                    return frame_list, label_list, fps, info
-
+            if len(frame_list) == 1:
+                frames = frame_list[0]
+                labels = label_list[0]
+                state = state_list[0]
+                flows = flow_list[0] if len(flow_list) > 0 else None
             else:
-                # frames = torch.as_tensor(frames).permute(3, 0, 1, 2)
-                if self.pretrain:
-                    frames, mask = self.pretrain_transform((frames, None))
-                    #TODO augment flow
-                else:
-                    frames = self._aug_frame(frames)
-
-            if self.pretrain:
-                # left for future development
-                pass
-            else:
-                if self.args.nb_classes == -1:
-                    return frames, [labels, state], fps, info
-                elif self.args.nb_classes == 2:
-                    return frames, state, fps, info
-                else:
-                    return frames, labels, fps, info
+                frames = frame_list
+                labels = label_list
+                state = state_list
+                flows = flow_list
 
         elif self.mode == "val":
             frames = self.data_transform(frames)
+            flows = None
+            if self.args.flow_mode == "online":
+                shifted_frames = torch.roll(frames, -1, 0)
+                concat_frames = torch.cat((frames, shifted_frames), dim=1)
+                concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
+                flows = self.flowExt.ext(concat_frames)
 
-            if self.args.nb_classes == -1:
-                return frames, [labels, state], fps, info
-            elif self.args.nb_classes == 2:
-                return frames, state, fps, info
-            else:
-                return frames, labels, fps, info
+            frames = self.normalize(frames)
 
         elif self.mode =="test":
             assert "crop" in info.keys()
@@ -389,11 +365,33 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 frames = [frame[:, spatial_start:spatial_start + self.args.short_side_size, :] for frame in frames]
 
             frames = self.data_transform(frames)
+    
+            flows = None
+            if self.args.flow_mode == "online":
+                shifted_frames = torch.roll(frames, -1, 0)
+                concat_frames = torch.cat((frames, shifted_frames), dim=1)
+                concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
+                flows = self.flowExt.ext(concat_frames)
+
+            frames = self.normalize(frames)
 
             # edited by jiachen
             # Ego4d challenge is currently undergoing, annotations of state change test set are not published.
-            return frames, info
+            return frames, flows, info, frame_idx
 
+
+        if self.pretrain:
+            # left for future development
+            pass
+        else:
+            if self.args.nb_classes == -1:
+                GT =  [labels, state]
+            elif self.args.nb_classes == 2:
+                GT = state
+            else:
+                GT = labels
+
+            return frames, GT, flows, fps, info
 
     # _aug_frame edited by Jiachen Lei
     def _aug_frame(
@@ -405,28 +403,24 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             buffer: np.ndarray
         
         """
-        aug_transform = video_transforms.create_random_augment(
-            input_size=(self.crop_size, self.crop_size),
-            auto_augment= self.args.aa,
-            interpolation= self.args.train_interpolation,
-        )
+        # aug_transform = video_transforms.create_random_augment(
+        #     input_size=(self.crop_size, self.crop_size),
+        #     auto_augment= self.args.aa,
+        #     interpolation= self.args.train_interpolation,
+        # )
         # print(f"frame raw shape: {buffer[0].shape}") # H, W, C
-        buffer = [
-            transforms.ToPILImage()(frame) for frame in buffer
-        ]
+        # buffer = [
+        #     transforms.ToPILImage()(frame) for frame in buffer
+        # ]
 
-        buffer = aug_transform(buffer)
+        # buffer = aug_transform(buffer)
 
         buffer = [transforms.ToTensor()(img) for img in buffer]
         buffer = torch.stack(buffer) # T C H W
-        buffer = buffer.permute(0, 2, 3, 1) # T H W C 
-
-        # T H W C 
-        buffer = tensor_normalize(
-            buffer, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        )
-        # T H W C -> C T H W.
-        buffer = buffer.permute(3, 0, 1, 2)
+        # print(buffer.shape)
+        # T C H W -> T H W C
+        # buffer = buffer.permute(0, 2, 3, 1)
+        # print(buffer.shape)
         # Perform data augmentation.
         scl, asp = (
             [0.08, 1.0],
@@ -439,26 +433,44 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             min_scale=256,
             max_scale=320,
             crop_size=self.crop_size,
-            random_horizontal_flip=False if  self.args.data_set == 'SSV2' else True ,
-            inverse_uniform_sampling=False,
+            random_horizontal_flip = False if  self.args.data_set == 'SSV2' else True ,
+            inverse_uniform_sampling = False,
             aspect_ratio=asp,
             scale=scl,
             motion_shift=False
         )
 
-        if self.rand_erase:
-            erase_transform = RandomErasing(
-                self.args.reprob,
-                mode= self.args.remode,
-                max_count= self.args.recount,
-                num_splits= self.args.recount,
-                device="cpu",
-            )
-            buffer = buffer.permute(1, 0, 2, 3)
-            buffer = erase_transform(buffer)
-            buffer = buffer.permute(1, 0, 2, 3)
+        flows = None
+        if self.args.flow_mode == "online":
+            assert self.flowExt is not None, "flow extractor is None"
+            shifted_frames = torch.roll(buffer, -1, 0)
+            concat_frames = torch.cat((buffer, shifted_frames), dim=1)
+            concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
+            flows = self.flowExt.ext(concat_frames)
 
-        return buffer
+        buffer = buffer.permute(0, 2, 3, 1) # T H W C 
+        # print(buffer.shape)
+        # T H W C 
+        buffer = tensor_normalize(
+            buffer, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        ).permute(0, 3, 1, 2) # T C H W
+
+        # print(buffer.shape)
+        buffer = transforms.ColorJitter(brightness=0, saturation=0, hue=0)(buffer).permute(1, 0, 2, 3)
+
+        # if self.rand_erase:
+        #     erase_transform = RandomErasing(
+        #         self.args.reprob,
+        #         mode= self.args.remode,
+        #         max_count= self.args.recount,
+        #         num_splits= self.args.recount,
+        #         device="cpu",
+        #     )
+        #     buffer = buffer.permute(1, 0, 2, 3)
+        #     buffer = erase_transform(buffer)
+        #     buffer = buffer.permute(1, 0, 2, 3)
+
+        return buffer, flows
 
 
     def _extract_clip_frames(self, info, save_as_zip=False):
@@ -786,7 +798,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
 
         # Commented by Jiachen Lei
         # return np.concatenate(frames), np.array(labels), effective_fps
-        return frames, np.array(labels), effective_fps
+        return frames, np.array(labels), effective_fps, candidate_frame_nums
 
 
     def assert_exist_wtolerance(self, path, message, retry=5):

@@ -7,6 +7,9 @@ import torch
 import torch.backends.cudnn as cudnn
 import json
 import os
+
+import copy
+
 from pathlib import Path
 from flow_extractor import flowExtractor
 from timm.models import create_model
@@ -164,8 +167,6 @@ def get_model(args):
     return model
 
 
-
-
 def cache_worker(address, local_world_size, log_path=""):
     cache_manager = CacheManager(address=address,local_world_size=local_world_size, log_path=log_path)
     cache_manager.start()
@@ -263,20 +264,52 @@ def main(args):
     print("Number of training examples per epoch = %d" % (total_batch_size * num_training_steps_per_epoch))
 
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
         model_without_ddp = model.module
 
-    optimizer = create_optimizer(
-        args, model_without_ddp)
+    ignore_param = {
+        # *["flow_encoder_to_decoder."+name for name, param in model.module.flow_encoder_to_decoder.named_parameters()],
+        *["flow_encoder."+name for name, param in model.module.flow_encoder.named_parameters() ]
+    }
+
+    print(ignore_param)
+    if args.ts_pretrain and args.flow_encoder_lr is not None:
+
+        optimizer = create_optimizer(
+            args, model_without_ddp, 
+            ignore_param = ignore_param
+        )
+
+        flow_optimizer = create_optimizer(
+            args, 
+            # torch.nn.Sequential(model.module.flow_encoder_to_decoder, model.module.flow_encoder),
+            torch.nn.Sequential( model.module.flow_encoder),
+            lr = args.flow_encoder_lr,
+        )
+
+    else:
+        optimizer = create_optimizer(
+            args, model_without_ddp)
+
+        flow_optimizer = None
 
     loss_scaler = NativeScaler()
 
     print("Use step level LR & WD scheduler!")
+
     lr_schedule_values = utils.cosine_scheduler(
         args.lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
         start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
         # strategy="fixed_in_epoch",
     )
+
+    if args.ts_pretrain and args.flow_encoder_lr is not None:
+        # lr scheduler for flow encoder
+        flow_encoder_lr_schedule_values = utils.cosine_scheduler(
+            args.flow_encoder_lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
+            start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+        )
+
     if args.weight_decay_end is None:
         args.weight_decay_end = args.weight_decay
     wd_schedule_values = utils.cosine_scheduler(
@@ -318,9 +351,11 @@ def main(args):
                 args.clip_grad, log_writer=log_writer,
                 start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values,
+                flow_encoder_lr_schedule_values = flow_encoder_lr_schedule_values,
                 wd_schedule_values=wd_schedule_values,
                 patch_size=patch_size[0],
                 normlize_target=args.normlize_target,
+                flow_optimizer = flow_optimizer,
 
                 ctr = args.ctr,
                 tau = args.tau,

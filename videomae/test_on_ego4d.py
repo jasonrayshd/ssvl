@@ -19,6 +19,10 @@ from utils import samples_collate_ego4d_test
 import modeling_finetune
 from config_utils import parse_yml, combine
 
+from multiprocessing.managers import SyncManager
+import multiprocessing as mp
+from flow_extractor import flowExtractor
+
 
 def get_args():
     parser = argparse.ArgumentParser('VideoMAE fine-tuning and evaluation script for video classification', add_help=False)
@@ -118,7 +122,17 @@ def main(args):
     # random.seed(seed)
     cudnn.benchmark = True
 
-    dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
+    if args.flow_mode == "online":
+        mp.set_start_method('spawn')
+        SyncManager.register("flowExtractor", flowExtractor)
+        m = SyncManager()
+        m.start()
+        flow_extractor = m.flowExtractor(device=f"cuda:{args.gpu}")
+        print(f"Flow extractor manager started by {os.getpid()}.")
+    else:
+        flow_extractor = None
+
+    dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args, flow_extractor=flow_extractor)
     if args.dist_eval:
         sampler_test = torch.utils.data.DistributedSampler(
             dataset_test, num_replicas=num_tasks, rank=global_rank, shuffle=False)
@@ -189,63 +203,9 @@ def main(args):
 
     torch.distributed.barrier()
 
-    # if global_rank == 0:
-    #     print("Start merging results...")
-    #     final_top1 ,final_top5 = merge(args.output_dir, num_tasks)
-    #     print(f"Accuracy of the network on the {len(dataset_test)} test videos: Top-1: {final_top1:.2f}%, Top-5: {final_top5:.2f}%")
-    #     log_stats = {'Final top-1': final_top1,
-    #                 'Final Top-5': final_top1}
-    #     if args.output_dir and utils.is_main_process():
-    #         with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-    #             f.write(json.dumps(log_stats) + "\n")
-    #     exit(0)
-
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-
-
-def merge(eval_path, num_tasks):
-    dict_feats = {}
-    dict_pos = {}
-    print("Reading individual output files")
-
-    for x in range(num_tasks):
-        file = os.path.join(eval_path, str(x) + '.txt')
-        lines = open(file, 'r').readlines()[1:]
-        for line in lines:
-            line = line.strip()
-            name = line.split(' ')[0]
-
-            crop_num = line.split(']')[1].split(' ')[3]
-            data = np.fromstring(line.split('[')[1].split(']')[0], dtype=np.float, sep=',')
-            if not name in dict_feats:
-                dict_feats[name] = []
-                dict_pos[name] = []
-            if chunk_nb + split_nb in dict_pos[name]:
-                continue
-            dict_feats[name].append(data)
-            dict_pos[name].append(chunk_nb + split_nb)
-
-    print("Computing final results")
-
-    input_lst = []
-    print(len(dict_feats))
-    for i, item in enumerate(dict_feats):
-        input_lst.append([i, item, dict_feats[item], dict_label[item]])
-    from multiprocessing import Pool
-    p = Pool(64)
-    ans = p.map(compute_video, input_lst)
-
-
-def compute_video(lst):
-    i, video_id, data = lst
-    feat = [x for x in data]
-    feat = np.mean(feat, axis=0)
-    pred = np.argmax(feat)
-
-    return pred
-
 
 
 @torch.no_grad()
@@ -264,14 +224,19 @@ def test_on_ego4d(data_loader, model, device, file):
         # print(len(batch))
         
         videos = batch[0]
-        info = batch[1]
+        flows = batch[1]
+        info = batch[2]
+        frame_idx = batch[3]
 
         # print(videos.shape)
         batch_size = videos.shape[0]
         videos = videos.to(device, non_blocking=True)
         # compute output
         with torch.cuda.amp.autocast():
-            output = model(videos)
+            if flows is not None:
+                output = model(videos, flows)
+            else:
+                output = model(videos)
 
         for i in range(batch_size):
 
@@ -279,12 +244,14 @@ def test_on_ego4d(data_loader, model, device, file):
                 string = "{} {} {} {}\n".format(info[i]["unique_id"],
                                                     str(output[0].data[i].cpu().numpy().tolist()),
                                                     str(output[1].data[i].cpu().numpy().tolist()),
-                                                    str(info[i]["crop"])
+                                                    str(info[i]["crop"]),
+                                                    str(frame_idx),
                                                     )
             else:
                 string = "{} {} {}\n".format(info[i]["unique_id"],
                                                     str(output.data[i].cpu().numpy().tolist()),
-                                                    str(info[i]["crop"])
+                                                    str(info[i]["crop"]),
+                                                    str(frame_idx),
                                                     )
 
             f.write(string)

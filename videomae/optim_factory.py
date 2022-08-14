@@ -47,14 +47,18 @@ class LayerDecayValueAssigner(object):
         return get_num_layer_for_vit(var_name, len(self.values))
 
 
-def get_parameter_groups(model, weight_decay=1e-5, skip_list=(), get_num_layer=None, get_layer_scale=None):
+def get_parameter_groups(model, weight_decay=1e-5, skip_list=(), get_num_layer=None, get_layer_scale=None, ignore_param={}):
     parameter_group_names = {}
     parameter_group_vars = {}
 
     for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue  # frozen weights
+
+        if not param.requires_grad or name in ignore_param:
+            print(f"{name} is ignored")
+            continue  # frozen weights or ignored weights
+
         if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
+            print(f"no weight decay on {name}")
             group_name = "no_decay"
             this_weight_decay = 0.
         else:
@@ -89,7 +93,9 @@ def get_parameter_groups(model, weight_decay=1e-5, skip_list=(), get_num_layer=N
     return list(parameter_group_vars.values())
 
 
-def create_optimizer(args, model, get_num_layer=None, get_layer_scale=None, filter_bias_and_bn=True, skip_list=None):
+def create_optimizer(args, model, get_num_layer=None, get_layer_scale=None, filter_bias_and_bn=True, skip_list=None, 
+                        ignore_param={}, lr=None,
+                    ):
     opt_lower = args.opt.lower()
     weight_decay = args.weight_decay
     if weight_decay and filter_bias_and_bn:
@@ -98,15 +104,19 @@ def create_optimizer(args, model, get_num_layer=None, get_layer_scale=None, filt
             skip = skip_list
         elif hasattr(model, 'no_weight_decay'):
             skip = model.no_weight_decay()
-        parameters = get_parameter_groups(model, weight_decay, skip, get_num_layer, get_layer_scale)
+        parameters = get_parameter_groups(model, weight_decay, skip, get_num_layer, get_layer_scale, ignore_param=ignore_param)
         weight_decay = 0.
     else:
         parameters = model.parameters()
 
     if 'fused' in opt_lower:
         assert has_apex and torch.cuda.is_available(), 'APEX and CUDA required for fused optimizers'
+    
+    if lr is None:
+        opt_args = dict(lr=args.lr, weight_decay=weight_decay)
+    else:
+        opt_args = dict(lr=lr, weight_decay=weight_decay)
 
-    opt_args = dict(lr=args.lr, weight_decay=weight_decay)
     if hasattr(args, 'opt_eps') and args.opt_eps is not None:
         opt_args['eps'] = args.opt_eps
     if hasattr(args, 'opt_betas') and args.opt_betas is not None:
