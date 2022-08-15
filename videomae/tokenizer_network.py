@@ -69,7 +69,11 @@ class Tokenizer(nn.Module):
         else:
             raise NotImplementedError(f"Unkown tokenizer backbone: {backbone}, expected to be one of [single, simplecnn]")
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, use_mask=True):
+        """
+        
+            all_tokens: whether return all tokens or only return unmasked tokens
+        """
         if self.backbone == "single":
             x = self.tokenizer(x).flatten(2).transpose(1, 2)
         elif self.backbone == "simplecnn":
@@ -78,7 +82,9 @@ class Tokenizer(nn.Module):
             raise NotImplementedError(f"Unkown tokenizer backbone: {self.backbone}, expected to be one of [single, simplecnn]")
 
         B, _, C = x.shape
-        x = x[~mask].reshape(B, -1, C)
+
+        if use_mask:
+            x = x[~mask].reshape(B, -1, C)
 
         return x
 

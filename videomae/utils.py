@@ -351,13 +351,30 @@ class NativeScalerWithGradNormCount:
         if update_grad:
             if clip_grad is not None:
                 assert parameters is not None
-                self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+
+                if not isinstance(optimizer, list):
+                    self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                else:
+                    for optim in optimizer:
+                        self._scaler.unscale_(optim)  # unscale the gradients of optimizer's assigned params in-place
+
                 norm = torch.nn.utils.clip_grad_norm_(parameters, clip_grad)
             else:
-                self._scaler.unscale_(optimizer)
+                if not isinstance(optimizer, list):
+                    self._scaler.unscale_(optimizer)
+                else:
+                    for optim in optimizer:
+                        self._scaler.unscale_(optim)
+
                 norm = get_grad_norm_(parameters)
-            self._scaler.step(optimizer)
+
+            if not isinstance(optimizer, list):
+                self._scaler.step(optimizer)
+            else:
+                for optim in optimizer:
+                    self._scaler.step(optim)
             self._scaler.update()
+
         else:
             norm = None
         return norm
