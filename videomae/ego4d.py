@@ -213,7 +213,6 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 volume_transforms.ClipToTensor(),
             ])
 
-
     def _construct_loader(self):
         self.package = dict()
         # NOTE ann_data should be list of clips or dictionary of which key "clips" contains a list of clips
@@ -345,7 +344,13 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 shifted_frames = torch.roll(frames, -1, 0)
                 concat_frames = torch.cat((frames, shifted_frames), dim=1)
                 concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
-                flows = self.flowExt.ext(concat_frames)
+                
+                flow_lst_dct = self.flowExt.ext(concat_frames)
+
+                flows = np.stack([flow_dict["flow"] for flow_dict in flow_lst_dct], axis=0)
+                T, H, W, C = flows.shape
+                flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
+                # flows = torch.from_numpy(flows)[:, 1:2:15, ...]
 
             frames = self.normalize(frames)
 
@@ -371,7 +376,12 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 shifted_frames = torch.roll(frames, -1, 0)
                 concat_frames = torch.cat((frames, shifted_frames), dim=1)
                 concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
-                flows = self.flowExt.ext(concat_frames)
+                flow_lst_dct = self.flowExt.ext(concat_frames)
+
+                flows = np.stack([flow_dict["flow"] for flow_dict in flow_lst_dct], axis=0)
+                T, H, W, C = flows.shape
+                flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
+                flows = torch.from_numpy(flows)
 
             frames = self.normalize(frames)
 
@@ -446,7 +456,13 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             shifted_frames = torch.roll(buffer, -1, 0)
             concat_frames = torch.cat((buffer, shifted_frames), dim=1)
             concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
-            flows = self.flowExt.ext(concat_frames)
+            flow_lst_dct = self.flowExt.ext(concat_frames)
+
+            flows = np.stack([flow_dict["flow"] for flow_dict in flow_lst_dct], axis=0)
+            T, H, W, C = flows.shape
+            flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
+            flows = torch.from_numpy(flows)
+            
 
         buffer = buffer.permute(0, 2, 3, 1) # T H W C 
         # print(buffer.shape)
