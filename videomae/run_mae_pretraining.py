@@ -161,6 +161,7 @@ def get_model(args):
             drop_block_rate=None,
             decoder_depth=args.decoder_depth,
 
+            use_rgb_stat = args.use_rgb_stat, 
             share_within_modality_proj_layer = args.share_within_modality_proj_layer,
             masked_tokenizer = args.masked_tokenizer,
             share_proj_layer = args.share_proj_layer,

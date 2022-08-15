@@ -81,10 +81,25 @@ class PretrainVisionTransformerEncoder(nn.Module):
         self.num_classes = num_classes
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_features(self, x, mask):
+    def forward_features(self, x, mask, stat=None):
         _, _, T, _, _ = x.shape
         x = self.patch_embed(x)
-        
+
+        x_stat = None
+        if stat is not None:
+            if isinstance(stat, torch.Tensor):
+                B, N, C = x.shape
+                # AdaIn operation
+                xmean = x.mean(2).unsqueeze(2)
+                xstd = x.std(2).unsqueeze(2)
+                stat_mean = stat.mean(2).unsqueeze(2)
+                stat_std = stat.std(2).unsqueeze(2) # B, N
+                # print(xmean.shape, stat_mean.shape, x.shape)
+                x = ((x-xmean.expand(-1, -1, C))/xstd.expand(-1, -1, C))*stat_std.expand(-1, -1, C) + stat_mean.expand(-1, -1, C)
+
+            elif isinstance(stat, bool):
+                x_stat = x
+
         x = x + self.pos_embed.type_as(x).to(x.device).clone().detach()
         # print(x.shape)
         B, _, C = x.shape
@@ -94,12 +109,22 @@ class PretrainVisionTransformerEncoder(nn.Module):
             x_vis = blk(x_vis)
 
         x_vis = self.norm(x_vis)
-        return x_vis
 
-    def forward(self, x, mask):
-        x = self.forward_features(x, mask)
-        x = self.head(x)
-        return x
+        if x_stat is not None:
+            return x_vis, x_stat
+        else:
+            return x_vis
+
+    def forward(self, x, mask, stat=None):
+        if stat is not None and isinstance(stat, bool):
+            # elif isinstance(stat, bool):
+            x, x_stat = self.forward_features(x, mask, stat=stat)
+            x = self.head(x)
+            return x, x_stat
+        else:
+            x = self.forward_features(x, mask, stat=stat)
+            x = self.head(x)
+            return x
 
 class PretrainVisionTransformerDecoder(nn.Module):
     """ Vision Transformer with support for patch or hybrid CNN input stage
@@ -388,7 +413,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
                 share_proj_layer = False, # share projection layer for each flow
                 share_within_modality_proj_layer = False, # share projection layer within one modality
                 share_mask_token = False,
-                use_rgb_mean = False,  # whether provide mean of each rgb frame patch for flow input (this might help flow-to-rgb reconstruction)
+                use_rgb_stat = False,  # whether provide mean of each rgb frame patch for flow input (this might help flow-to-rgb reconstruction)
                                        # if true, then add mean of each rgb frame patch to corresponding flow patch after patchify
                 # share_pos_embed = False,
 
@@ -410,7 +435,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
         self.masked_tokenizer = masked_tokenizer
         self.tokenizer_backbone = tokenizer_backbone
         self.fuse_scheme = fuse_scheme
-        self.use_rgb_mean = use_rgb_mean
+        self.use_rgb_stat = use_rgb_stat
 
         self.encoder_embed_dim = encoder_embed_dim
         self.decoder_embed_dim = decoder_embed_dim
@@ -606,8 +631,12 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
 
         assert rgbT//flowT == 2, "number of rgb frames should be two times of flow images"
 
-        rgb_vis = self.rgb_encoder(rgb, mask) # [B, N_vis, C_e]
-        flow_vis = self.flow_encoder(flows, mask) # [B, N_vis, C_e]
+        if self.use_rgb_stat:
+            rgb_vis, rgb_stat = self.rgb_encoder(rgb, mask, stat=True) # [B, N_vis, C_e]
+            flow_vis = self.flow_encoder(flows, mask, stat=rgb_stat)
+        else:
+            rgb_vis = self.rgb_encoder(rgb, mask) # [B, N_vis, C_e]
+            flow_vis = self.flow_encoder(flows, mask) # [B, N_vis, C_e]
 
         rgb_token = self.rgb_tokenizer(rgb, mask, use_mask=False)     # [B, T, C_tok]
         flow_token = self.flow_tokenizer(flows, mask, use_mask=False)  # [B, T, C_tok]
