@@ -59,6 +59,9 @@ ts_pretrain: true
 flow_mode: "local"                                # mode of sampling flow images  [A]
 fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
+masked_tokenizer: true
+share_proj_layer: false
+share_within_modality_proj_layer: false
 
 tau: 0.01
 lamb: [1, 1, 1, 1, 0.05, 0.1]

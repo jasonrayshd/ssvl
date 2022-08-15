@@ -171,6 +171,7 @@ def main(args):
                     flow_flow_hat_rgb.append(flow_to_color(flow_flow_hat_reshape[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
 
                 flows_rgb = torch.from_numpy(np.stack(flows_rgb, axis=0).transpose(0, 3, 1, 2))
+                print(flows_rgb.shape)
                 rgb_flow_hat_rgb = torch.from_numpy(np.stack(rgb_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
                 flow_flow_hat_rgb = torch.from_numpy(np.stack(flow_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
 

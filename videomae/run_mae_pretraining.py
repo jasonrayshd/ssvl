@@ -161,6 +161,9 @@ def get_model(args):
             drop_block_rate=None,
             decoder_depth=args.decoder_depth,
 
+            share_within_modality_proj_layer = args.share_within_modality_proj_layer,
+            masked_tokenizer = args.masked_tokenizer,
+            share_proj_layer = args.share_proj_layer,
             fuse_scheme = args.fuse_scheme,
             tokenizer_backbone = args.tokenizer_backbone,
         )
@@ -267,13 +270,12 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
         model_without_ddp = model.module
 
-    ignore_param = {
-        # *["flow_encoder_to_decoder."+name for name, param in model.module.flow_encoder_to_decoder.named_parameters()],
-        *["flow_encoder."+name for name, param in model.module.flow_encoder.named_parameters() ]
-    }
-
-    print(ignore_param)
     if args.ts_pretrain and args.flow_encoder_lr is not None:
+        ignore_param = {
+            # *["flow_encoder_to_decoder."+name for name, param in model.module.flow_encoder_to_decoder.named_parameters()],
+            *["flow_encoder."+name for name, param in model.module.flow_encoder.named_parameters() ]
+        }
+        print(ignore_param)
 
         optimizer = create_optimizer(
             args, model_without_ddp, 
@@ -286,12 +288,17 @@ def main(args):
             torch.nn.Sequential( model.module.flow_encoder),
             lr = args.flow_encoder_lr,
         )
+        flow_encoder_lr_schedule_values = utils.cosine_scheduler(
+            args.flow_encoder_lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
+            start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+        )
 
     else:
         optimizer = create_optimizer(
             args, model_without_ddp)
 
         flow_optimizer = None
+        flow_encoder_lr_schedule_values = None
 
     loss_scaler = NativeScaler()
 
@@ -302,13 +309,6 @@ def main(args):
         start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
         # strategy="fixed_in_epoch",
     )
-
-    if args.ts_pretrain and args.flow_encoder_lr is not None:
-        # lr scheduler for flow encoder
-        flow_encoder_lr_schedule_values = utils.cosine_scheduler(
-            args.flow_encoder_lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
-            start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
-        )
 
     if args.weight_decay_end is None:
         args.weight_decay_end = args.weight_decay
