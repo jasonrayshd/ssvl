@@ -1,7 +1,7 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 16
+batch_size: 8
 epochs: 300
 save_ckpt_freq: 10
 
@@ -51,7 +51,7 @@ resume: ""                                  # help='resume from checkpoint
 auto_resume: false                           # 
 
 start_epoch: 0                              # help='start epoch
-num_workers: 12
+num_workers: 8
 pin_mem: true
 # flow images
 ts_pretrain: true
@@ -61,14 +61,14 @@ fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
 
 version: "2.0"
-use_rgb_stat: "token_"
-mask_tokenizer: false
+use_rgb_stat: ""
+mask_tokenizer: true # if ture, then within-modality mask token will be shared
 share_proj_layer: false
 share_within_modality_proj_layer: true
 weighted_flow2rgb_recons: false
 
 tau: 0.01
-lamb: [1, 1, 1, 0, 0.1, 0.1]
+lamb: [1, 1, 1, 1, 0.1, 0.1]
 ctr: "hard"
 # configuration file
 # config: ""                                  # help='path to configuration file
