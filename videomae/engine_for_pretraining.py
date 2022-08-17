@@ -355,8 +355,13 @@ class TwoStreamVitLoss(nn.Module):
 
         return 2*self.tau*loss
 
-    def recons(self, predict, target):
-        return F.mse_loss(predict, target)
+    def recons(self, predict, target, weight=None):
+        if weight is None:
+            loss = F.mse_loss(predict, target)
+        else:
+            loss = weight*(predict - target)**2
+
+        return loss
 
     def forward(self, output_lst, target_lst, weight=None):
         """
@@ -396,9 +401,12 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
                     lr_schedule_values=None,  flow_encoder_lr_schedule_values = None,
                     wd_schedule_values=None,
                     flow_optimizer = None,
+
+
+                    weighted_flow2rgb_recons = False,
                     ctr="easy",
                     tau = 0.8,
-                    lamb = [0.25, 0.25, 0.25, 0.25],
+                    lamb = [0.25, 0.25, 0.25, 0.25],                    
                     ):
 
     model.train()
@@ -483,6 +491,10 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
 
         with torch.cuda.amp.autocast():
             outputs = model(videos, flows, bool_masked_pos)
+            if weighted_flow2rgb_recons:
+                pass
+            else:
+                weight = None
             loss_dct = loss_func(outputs, [rgb_target, flow_target])
             loss = loss_dct["sum"]
 

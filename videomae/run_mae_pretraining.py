@@ -359,6 +359,7 @@ def main(args):
                 normlize_target=args.normlize_target,
                 flow_optimizer = flow_optimizer,
 
+                weighted_flow2rgb_recons = args.weighted_flow2rgb_recons,
                 ctr = args.ctr,
                 tau = args.tau,
                 lamb = args.lamb,
