@@ -1,7 +1,7 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 8
+batch_size: 16
 epochs: 300
 save_ckpt_freq: 10
 
@@ -31,7 +31,7 @@ flow_encoder_lr: null
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
 min_lr: 1.0e-7              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
-warmup_epochs: 40         # metavar='N help='epochs to warmup LR, if scheduler supports
+warmup_epochs: 10         # metavar='N help='epochs to warmup LR, if scheduler supports
 warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
 
 # Augmentation parameters
@@ -43,15 +43,15 @@ data_path: '/path/to/list_kinetics-400'     # help='dataset path
 imagenet_default_mean_and_std: true         # action='store_true
 num_frames: 16
 sampling_rate: 4
-output_dir: "/mnt/code/ssvl/videomae/output"                              # help='path where to save, empty for no saving
-log_dir: "/mnt/code/ssvl/videomae/output"                              # help='path where to tensorboard log
+output_dir: "/data/jiachen/ssvl_output"                              # help='path where to save, empty for no saving
+log_dir: "/data/jiachen/ssvl_output"                              # help='path where to tensorboard log
 # device: 'cuda'                              # help='device to use for training / testing
 # seed: 0
 resume: ""                                  # help='resume from checkpoint
 auto_resume: false                           # 
 
 start_epoch: 0                              # help='start epoch
-num_workers: 8
+num_workers: 12
 pin_mem: true
 # flow images
 ts_pretrain: true
@@ -60,13 +60,15 @@ flow_mode: "local"                                # mode of sampling flow images
 fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
 
-masked_tokenizer: false
+version: "2.0"
+use_rgb_stat: "token_"
+mask_tokenizer: false
 share_proj_layer: false
 share_within_modality_proj_layer: true
-use_rgb_stat: true
+weighted_flow2rgb_recons: false
 
 tau: 0.01
-lamb: [1, 1, 1, 1, 0.1, 0.1]
+lamb: [1, 1, 1, 0, 0.1, 0.1]
 ctr: "hard"
 # configuration file
 # config: ""                                  # help='path to configuration file
@@ -85,10 +87,10 @@ cfg:
     # epic-kitchen100: path to directory that contains each participant's data
     # epic-kitchen50: path to directory that contains two directories: flow and rgb
     # VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
-    VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
+    VISUAL_DATA_DIR: "/data/shared/ssvl/epic-kitchens55/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
     # path to annotation file
     # ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
-    ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/annotations"
+    ANNOTATIONS_DIR: "/data/shared/ssvl/epic-kitchens55/3h91syskeag572hl6tvuovwv4d/annotations"
     # annotation file name of train/val/test data
     TRAIN_LIST: "EPIC_train_action_labels.pkl"
     VAL_LIST: ""
@@ -108,4 +110,3 @@ cfg:
     NUM_ENSEMBLE_VIEWS: ""
   VERSION: 55
   ONINE_EXTRACTING: true
-
