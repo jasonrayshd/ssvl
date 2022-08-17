@@ -161,9 +161,10 @@ def get_model(args):
             drop_block_rate=None,
             decoder_depth=args.decoder_depth,
 
+            version = args.version,
             use_rgb_stat = args.use_rgb_stat, 
             share_within_modality_proj_layer = args.share_within_modality_proj_layer,
-            masked_tokenizer = args.masked_tokenizer,
+            mask_tokenizer = args.mask_tokenizer,
             share_proj_layer = args.share_proj_layer,
             fuse_scheme = args.fuse_scheme,
             tokenizer_backbone = args.tokenizer_backbone,
