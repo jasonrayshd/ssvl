@@ -358,14 +358,18 @@ class TwoStreamVitLoss(nn.Module):
     def recons(self, predict, target):
         return F.mse_loss(predict, target)
 
-    def forward(self, output_lst, target_lst):
+    def forward(self, output_lst, target_lst, weight=None):
+        """
+            weight: torch.Tensor, weight for reconstruction loss, the shape should be equal to reconstruction target
+
+        """
         rgb_rgb_hat, rgb_flow_hat, flow_rgb_hat, flow_flow_hat = output_lst[:4]
         rgb_vis, flow_vis, rgb_token, flow_token = output_lst[4:]
 
         rgb_target, flow_target = target_lst
 
         l_rgb_recons = self.recons(rgb_rgb_hat, rgb_target)
-        l_flow_recons = self.recons(flow_flow_hat, flow_target)
+        l_flow_recons = self.recons(flow_flow_hat, flow_target, weight=weight)
         l_rgb_flow_recons  = self.recons(rgb_flow_hat, flow_target)
         l_flow_rgb_recons = self.recons(flow_rgb_hat, rgb_target)
         l_rgb_contrast = self.ctr(rgb_vis, flow_token)
