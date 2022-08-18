@@ -160,7 +160,7 @@ def train_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: to
             # print(labels.shape)
 
             labels = labels[bool_masked_pos_label]
-            labels = rearrange(labels, '(b t n) d -> b (t n) d', b=B, t=N//tublet_size)
+            labels = rearrange(labels, '(b n) d -> b n d', b=B)
 
             labels = labels.to(device, non_blocking=True)
             # print(f"final label: {labels.shape}")
