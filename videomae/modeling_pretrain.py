@@ -376,19 +376,24 @@ class PretrainTsVisionTransformerSharedDecoder(nn.Module):
         # self.num_classes = num_classes
         # self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward(self, x, return_token_num):
+    def forward(self, x, return_token_num, no_rgb_recons=False):
 
         for blk in self.blocks:
             x = blk(x)
 
         if return_token_num > 0:
-            x_rgb = self.rgb_head(self.norm(x[:, -return_token_num:])) # only return the mask tokens predict pixels
+            if not no_rgb_recons:
+                x_rgb = self.rgb_head(self.norm(x[:, -return_token_num:])) # only return the mask tokens predict pixels
             x_flow = self.flow_head(self.norm(x[:, -return_token_num:])) # only return the mask tokens predict pixels
         else:
-            x_rgb = self.rgb_head(self.norm(x))
+            if not no_rgb_recons:
+                x_rgb = self.rgb_head(self.norm(x))
             x_flow = self.flow_head(self.norm(x))
 
-        return x_rgb, x_flow
+        if not no_rgb_recons:
+            return x_rgb, x_flow
+        else:
+            return x_flow
 
 class PretrainTwoStreamVisionTransformer(nn.Module):
     """
@@ -636,8 +641,91 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
 
         if self.version == "1.0":
             return self.forward_v1(rgb, flows, mask, all_token)
-        else:
+        elif self.version == "2.0":
             return self.forward_v2(rgb, flows, mask, all_token)
+        elif self.version == "3.0":
+            return self.forward_v3(rgb, flows, mask, all_token)
+
+    def forward_v3(self, rgb, flows, mask, all_token=False):
+        """
+            forward v2.0, updates compared with v2.0 :
+            no flow-to-rgb reconstruction
+        """
+        B, _, rgbT, _, _ = rgb.shape
+        _, _, flowT, _, _ = flows.shape
+        assert rgbT//flowT == 2, "number of rgb frames should be two times of flow images"
+
+        rgb_token = self.rgb_tokenizer(rgb, mask)     # [B, T, C_tok]
+        flow_token = self.flow_tokenizer(flows, mask)  # [B, T, C_tok]
+
+        rgb_vis = self.rgb_encoder(rgb, mask) # [B, N_vis, C_e]
+        flow_vis = self.flow_encoder(flows, mask) # [B, N_vis, C_e]
+
+        assert self.share_within_modality_proj_layer is True, "Within-modality projection should be used for tokenizer that is not masked"
+
+        rgb_vis_proj = self.flow_to_decoder(rgb_vis)
+        # flow_vis_proj = self.flow_to_decoder(flow_vis)
+
+        _, N, _ = rgb_token.shape
+        _, visN, _ = rgb_vis.shape
+        rgb_mask_token = self.rgb_mask_token.repeat(B, N-visN, 1)
+        flow_mask_token = self.flow_mask_token.repeat(B, N-visN, 1)
+        rgb_full = torch.cat([rgb_vis_proj, flow_mask_token], dim=1) # [B, N, C_d]
+        # flow_full = torch.cat([flow_vis_proj, rgb_mask_token], dim=1) # [B, N, C_d]
+
+        if self.mask_tokenizer:
+            rgb_token = rgb_token[~mask].reshape(B, -1, self.encoder_embed_dim)
+            flow_token = flow_token[~mask].reshape(B, -1, self.encoder_embed_dim)
+
+        # project and rearrange tokens
+        rgb_token_proj = self.rgb_to_decoder(rgb_token)
+        flow_token_proj = self.flow_to_decoder(flow_token)
+
+        if self.mask_tokenizer:
+            # if mask tokens that extracted by tokenizer, share masked tokens within each modality
+            B, N, C = rgb_token_proj.shape
+            rgb_token_proj = torch.cat([rgb_token_proj, rgb_mask_token], dim=1)
+            B, N, C = flow_token_proj.shape
+            flow_token_proj = torch.cat([flow_token_proj, flow_mask_token], dim=1)
+        else:
+            B, N, C = rgb_token_proj.shape
+            rgb_token_proj = torch.cat([rgb_token_proj[~mask].reshape(B, -1, C), rgb_token_proj[mask].reshape(B, -1, C)], dim=1)
+            B, N, C = flow_token_proj.shape
+            flow_token_proj = torch.cat([flow_token_proj[~mask].reshape(B, -1, C), flow_token_proj[mask].reshape(B, -1, C)], dim=1)
+
+        # print(rgb_full.shape, rgb_token_proj.shape)
+
+        # fuse and project
+        rgb_feat = self.fuse(rgb_full, rgb_token_proj)
+        rgb_feat = self.encoder_to_decoder(rgb_feat)
+
+        # flow_feat = self.fuse(flow_full, flow_token_proj)
+        # flow_feat = self.encoder_to_decoder(flow_feat)
+
+        expand_rgb_pos_embed = self.rgb_pos_embed.expand(B, -1, -1).type_as(rgb_vis).to(rgb_vis.device).clone().detach()
+        rgb_pos_emd_vis = expand_rgb_pos_embed[~mask].reshape(B, -1, self.decoder_embed_dim)
+        rgb_pos_emd_mask = expand_rgb_pos_embed[mask].reshape(B, -1, self.decoder_embed_dim)
+        rgb_pos_emd = torch.cat([rgb_pos_emd_vis, rgb_pos_emd_mask], dim=1)
+        rgb_feat += rgb_pos_emd
+
+        expand_flow_pos_embed = self.flow_pos_embed.expand(B, -1, -1).type_as(flow_vis).to(flow_vis.device).clone().detach()
+        flow_pos_emd_vis = expand_flow_pos_embed[~mask].reshape(B, -1, self.decoder_embed_dim)
+        flow_pos_emd_mask = expand_flow_pos_embed[mask].reshape(B, -1, self.decoder_embed_dim)
+        flow_pos_emd = torch.cat([flow_pos_emd_vis, flow_pos_emd_mask], dim=1)
+        flow_token_proj += flow_pos_emd
+
+        if self.share_decoder:
+            rgb_rgb_hat, rgb_flow_hat = self.decoder(rgb_feat, rgb_pos_emd_mask.shape[1] if not all_token else 0) # [B, N_mask, 3 * 16 * 16]
+            flow_flow_hat = self.decoder(flow_token_proj, flow_pos_emd_mask.shape[1] if not all_token else 0, no_rgb_recons=True) # [B, N_mask, 3 * 16 * 16]
+        else:
+            rgb_rgb_hat, rgb_flow_hat = self.rgb_decoder(rgb_feat, rgb_pos_emd_mask.shape[1] if not all_token else 0) # [B, N_mask, 3 * 16 * 16]
+            flow_flow_hat = self.flow_decoder(flow_token_proj, flow_pos_emd_mask.shape[1] if not all_token else 0, no_rgb_recons=True) # [B, N_mask, 3 * 16 * 16]
+
+
+        return rgb_rgb_hat, rgb_flow_hat, None, flow_flow_hat, rgb_vis, flow_vis, \
+                rgb_token[~mask].reshape(B, -1, self.encoder_embed_dim).clone().detach() if not self.mask_tokenizer else rgb_token.clone().detach(), \
+                flow_token[~mask].reshape(B, -1, self.encoder_embed_dim).clone().detach() if not self.mask_tokenizer else flow_token.clone().detach()
+
 
 
     def forward_v2(self, rgb, flows, mask, all_token=False):
@@ -666,22 +754,23 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
             flow_vis = self.flow_encoder(flows, mask) # [B, N_vis, C_e]
 
         assert self.share_within_modality_proj_layer is True, "Within-modality projection should be used for tokenizer that is not masked"
+        # share cross modality projection layer
         if self.use_rgb_stat == "token_encoder":
             _token = rgb_token[~mask].reshape(B, -1, self.encoder_embed_dim).clone().detach()
             flow_vis_adan = adaptive_instance_normalization(sfeat=_token,
                                                     cfeat=flow_vis)
-            rgb_vis_proj = self.rgb_to_decoder(rgb_vis)
-            flow_vis_proj = self.flow_to_decoder(flow_vis_adan)
+            rgb_vis_proj = self.flow_to_decoder(rgb_vis)       # project pseudo-flow feature to decoder dimension
+            flow_vis_proj = self.rgb_to_decoder(flow_vis_adan) # project pseudo-rgb feature to decoder dimension
         else:
-            rgb_vis_proj = self.rgb_to_decoder(rgb_vis)
-            flow_vis_proj = self.flow_to_decoder(flow_vis)
+            rgb_vis_proj = self.flow_to_decoder(rgb_vis)
+            flow_vis_proj = self.rgb_to_decoder(flow_vis) 
 
         _, N, _ = rgb_token.shape
         _, visN, _ = rgb_vis.shape
         rgb_mask_token = self.rgb_mask_token.repeat(B, N-visN, 1)
         flow_mask_token = self.flow_mask_token.repeat(B, N-visN, 1)
-        rgb_full = torch.cat([rgb_vis_proj, rgb_mask_token], dim=1) # [B, N, C_d]
-        flow_full = torch.cat([flow_vis_proj, flow_mask_token], dim=1) # [B, N, C_d]
+        rgb_full = torch.cat([rgb_vis_proj, flow_mask_token], dim=1) # [B, N, C_d]
+        flow_full = torch.cat([flow_vis_proj, rgb_mask_token], dim=1) # [B, N, C_d]
 
         if self.mask_tokenizer:
             rgb_token = rgb_token[~mask].reshape(B, -1, self.encoder_embed_dim)
@@ -703,11 +792,11 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
             B, N, C = flow_token_proj.shape
             flow_token_proj = torch.cat([flow_token_proj[~mask].reshape(B, -1, C), flow_token_proj[mask].reshape(B, -1, C)], dim=1)
 
-        # print(rgb_full.shape, rgb_token_proj.shape)
-
         # fuse and project
-        rgb_feat = self.fuse(rgb_full, rgb_token_proj)
+        # keep modality alignment, feature arrange: concatenate(RGB, Flow)
+        rgb_feat = self.fuse(rgb_token_proj, rgb_full)
         flow_feat = self.fuse(flow_full, flow_token_proj)
+
         rgb_feat = self.encoder_to_decoder(rgb_feat)
         flow_feat = self.encoder_to_decoder(flow_feat)
 
