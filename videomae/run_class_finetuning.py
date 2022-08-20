@@ -51,7 +51,9 @@ class Ego4d_Compatible_Mixup(Mixup):
             target = mixup_target(target, self.num_classes, lam, self.label_smoothing, device=x.device)
         else:
             label, state = target
+            # print(label.shape, state.shape,)
             B, C, T, H, W = x.shape
+            # print(x.shape)
             label = mixup_target(label, T+1, lam, self.label_smoothing, device=x.device)
             state = mixup_target(state, 2, lam, self.label_smoothing, device=x.device)
             target = [label ,state]

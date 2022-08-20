@@ -23,10 +23,11 @@ import video_transforms as video_transforms
 import volume_transforms as volume_transforms
 from random_erasing import RandomErasing
 from ego4d_trim import _get_frames
-
+from torchvision.utils import save_image
 import torch.nn.functional as F
 
 import io
+import random
 import decord
 import zipfile
 from zipfile import ZipFile
@@ -413,17 +414,6 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             buffer: np.ndarray
         
         """
-        # aug_transform = video_transforms.create_random_augment(
-        #     input_size=(self.crop_size, self.crop_size),
-        #     auto_augment= self.args.aa,
-        #     interpolation= self.args.train_interpolation,
-        # )
-        # print(f"frame raw shape: {buffer[0].shape}") # H, W, C
-        # buffer = [
-        #     transforms.ToPILImage()(frame) for frame in buffer
-        # ]
-
-        # buffer = aug_transform(buffer)
 
         buffer = [transforms.ToTensor()(img) for img in buffer]
         buffer = torch.stack(buffer) # T C H W
@@ -462,33 +452,48 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             T, H, W, C = flows.shape
             flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
             flows = torch.from_numpy(flows)
-            
 
-        buffer = buffer.permute(0, 2, 3, 1) # T H W C 
+        # buffer shape: T C H W
+        aug_transform = video_transforms.create_random_augment(
+            input_size=(self.crop_size, self.crop_size),
+            auto_augment= self.args.aa,
+            interpolation= self.args.train_interpolation,
+        )
+        # print(f"frame raw shape: {buffer[0].shape}") # H, W, C
+        buffer = [
+            transforms.ToPILImage()(frame) for frame in buffer
+        ]
+        
+        buffer = aug_transform(buffer) # T, H, W, C
         # print(buffer.shape)
+        buffer = [transforms.ToTensor()(img) for img in buffer]
+
+        # T C H W -> T H W C
+        buffer = torch.stack(buffer).permute(0, 2, 3, 1)
+
         # T H W C 
+        # buffer = buffer.permute(3, 0, 1, 2)
         buffer = tensor_normalize(
             buffer, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        ).permute(0, 3, 1, 2) # T C H W
+        ).permute(3, 0, 1, 2) # C T H W 
 
-        # print(buffer.shape)
-        buffer = transforms.ColorJitter(brightness=0, saturation=0, hue=0)(buffer).permute(1, 0, 2, 3)
+        if self.rand_erase:
+            erase_transform = RandomErasing(
+                self.args.reprob,
+                mode= self.args.remode,
+                max_count= self.args.recount,
+                num_splits= self.args.recount,
+                device="cpu",
+            )
+            buffer = buffer.permute(1, 0, 2, 3)
+            buffer = erase_transform(buffer)
+            buffer = buffer.permute(1, 0, 2, 3)
 
-        # if self.rand_erase:
-        #     erase_transform = RandomErasing(
-        #         self.args.reprob,
-        #         mode= self.args.remode,
-        #         max_count= self.args.recount,
-        #         num_splits= self.args.recount,
-        #         device="cpu",
-        #     )
-        #     buffer = buffer.permute(1, 0, 2, 3)
-        #     buffer = erase_transform(buffer)
-        #     buffer = buffer.permute(1, 0, 2, 3)
+        # save_image(buffer.permute(1,0,2,3),f"transformed_ego4d_data{random.random()}.png")
 
         return buffer, flows
 
-
+    
     def _extract_clip_frames(self, info, save_as_zip=False):
         """
         This method is used to extract and save frames for all the 8 seconds

@@ -562,11 +562,13 @@ def multiple_samples_collate(batch, fold=False):
 
 
 def samples_collate_ego4d_test(batch):
-    inputs, flows, info = zip(*batch)
+    inputs, flows, info, frame_index = zip(*batch)
     # print(f"worker: inputs[0] shape:{inputs[0].shape}")
     inputs = torch.stack(inputs, dim=0)
-    if flows[0] is None:
+    frame_index = torch.tensor(frame_index)
+
+    if flows[0] is not None:
         flows = torch.stack(flows, dim=0)
     else:
         flows = None
-    return inputs, flows, info
+    return inputs, flows, info, frame_index

@@ -363,7 +363,7 @@ class TwoStreamVitLoss(nn.Module):
 
         return loss
 
-    def forward(self, output_lst, target_lst, weight=None):
+    def forward(self, output_lst, target_lst, weighted_flow2rgb_recons=False):
         """
             weight: torch.Tensor, weight for reconstruction loss, the shape should be equal to reconstruction target
 
@@ -372,11 +372,21 @@ class TwoStreamVitLoss(nn.Module):
         rgb_vis, flow_vis, rgb_token, flow_token = output_lst[4:]
 
         rgb_target, flow_target = target_lst
+        
+        if weighted_flow2rgb_recons:
+            weight = (flow_target - 0.5)
+            weight = weight / weight.sum(0)
+        else:
+            weight = None
 
         l_rgb_recons = self.recons(rgb_rgb_hat, rgb_target)
-        l_flow_recons = self.recons(flow_flow_hat, flow_target, weight=weight)
+        l_flow_recons = self.recons(flow_flow_hat, flow_target)
         l_rgb_flow_recons  = self.recons(rgb_flow_hat, flow_target)
-        l_flow_rgb_recons = self.recons(flow_rgb_hat, rgb_target)
+        if flow_rgb_hat is not None:
+            l_flow_rgb_recons = self.recons(flow_rgb_hat, rgb_target, weight=weight)
+        else:
+            l_flow_rgb_recons = 0
+
         l_rgb_contrast = self.ctr(rgb_vis, flow_token)
         l_flow_contrast = self.ctr(flow_vis, rgb_token)
 
@@ -491,11 +501,8 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
 
         with torch.cuda.amp.autocast():
             outputs = model(videos, flows, bool_masked_pos)
-            if weighted_flow2rgb_recons:
-                pass
-            else:
-                weight = None
-            loss_dct = loss_func(outputs, [rgb_target, flow_target])
+ 
+            loss_dct = loss_func(outputs, [rgb_target, flow_target], weighted_flow2rgb_recons=weighted_flow2rgb_recons)
             loss = loss_dct["sum"]
 
         loss_value = new_func(loss)
