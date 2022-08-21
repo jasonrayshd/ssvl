@@ -722,7 +722,7 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
             flow_flow_hat = self.flow_decoder(flow_token_proj, flow_pos_emd_mask.shape[1] if not all_token else 0, no_rgb_recons=True) # [B, N_mask, 3 * 16 * 16]
 
 
-        return rgb_rgb_hat, rgb_flow_hat, None, flow_flow_hat, rgb_vis, flow_vis, \
+        return rgb_rgb_hat, rgb_flow_hat, flow_flow_hat, rgb_vis, flow_vis, \
                 rgb_token[~mask].reshape(B, -1, self.encoder_embed_dim).clone().detach() if not self.mask_tokenizer else rgb_token.clone().detach(), \
                 flow_token[~mask].reshape(B, -1, self.encoder_embed_dim).clone().detach() if not self.mask_tokenizer else flow_token.clone().detach()
 

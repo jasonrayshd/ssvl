@@ -269,7 +269,7 @@ def main(args):
     print("Number of training examples per epoch = %d" % (total_batch_size * num_training_steps_per_epoch))
 
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
     if args.ts_pretrain and args.flow_encoder_lr is not None:

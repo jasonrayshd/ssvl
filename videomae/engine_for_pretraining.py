@@ -359,25 +359,27 @@ class TwoStreamVitLoss(nn.Module):
         if weight is None:
             loss = F.mse_loss(predict, target)
         else:
-            loss = weight*(predict - target)**2
+            loss = weight *(predict - target)**2
+            loss = loss.sum()
 
         return loss
 
-    def forward(self, output_lst, target_lst, weighted_flow2rgb_recons=False):
+    def forward(self, output_lst, target_lst, weight=None):
         """
             weight: torch.Tensor, weight for reconstruction loss, the shape should be equal to reconstruction target
 
         """
-        rgb_rgb_hat, rgb_flow_hat, flow_rgb_hat, flow_flow_hat = output_lst[:4]
-        rgb_vis, flow_vis, rgb_token, flow_token = output_lst[4:]
+
+        if len(output_lst) == 8:
+            rgb_rgb_hat, rgb_flow_hat, flow_rgb_hat, flow_flow_hat = output_lst[:4]
+            rgb_vis, flow_vis, rgb_token, flow_token = output_lst[4:]
+        else:
+            rgb_rgb_hat, rgb_flow_hat, flow_flow_hat = output_lst[:3]
+            flow_rgb_hat = None
+            rgb_vis, flow_vis, rgb_token, flow_token = output_lst[3:]
 
         rgb_target, flow_target = target_lst
-        
-        if weighted_flow2rgb_recons:
-            weight = (flow_target - 0.5)
-            weight = weight / weight.sum(0)
-        else:
-            weight = None
+
 
         l_rgb_recons = self.recons(rgb_rgb_hat, rgb_target)
         l_flow_recons = self.recons(flow_flow_hat, flow_target)
@@ -390,20 +392,33 @@ class TwoStreamVitLoss(nn.Module):
         l_rgb_contrast = self.ctr(rgb_vis, flow_token)
         l_flow_contrast = self.ctr(flow_vis, rgb_token)
 
-        loss =  self.lamb[0]*l_rgb_recons + self.lamb[1]*l_flow_recons + \
-                self.lamb[2]*l_rgb_flow_recons + self.lamb[3]*l_flow_rgb_recons + \
-                self.lamb[4]*l_rgb_contrast + self.lamb[5]*l_flow_contrast
+        if flow_rgb_hat is not None:
+            loss =  self.lamb[0]*l_rgb_recons + self.lamb[1]*l_flow_recons + \
+                    self.lamb[2]*l_rgb_flow_recons + self.lamb[3]*l_flow_rgb_recons + \
+                    self.lamb[4]*l_rgb_contrast + self.lamb[5]*l_flow_contrast
 
-        # print(l_recons, l_cross_recons, l_rgb_contrast, l_flow_contrast)
-        return {
-            "sum": loss,
-            "rgb_recons": l_rgb_recons.cpu().item(),
-            "flow_recons": l_flow_recons.cpu().item(),
-            "rgb_flow_recons": l_rgb_flow_recons.cpu().item(),
-            "flow_rgb_recons": l_flow_rgb_recons.cpu().item(),
-            "rgb_contrast": l_rgb_contrast.cpu().item(),
-            "flow_contrast": l_flow_contrast.cpu().item(),
-        }
+            return {
+                "sum": loss,
+                "rgb_recons": l_rgb_recons.cpu().item(),
+                "flow_recons": l_flow_recons.cpu().item(),
+                "rgb_flow_recons": l_rgb_flow_recons.cpu().item(),
+                "flow_rgb_recons": l_flow_rgb_recons.cpu().item(),
+                "rgb_contrast": l_rgb_contrast.cpu().item(),
+                "flow_contrast": l_flow_contrast.cpu().item(),
+            }
+        else:
+            loss =  self.lamb[0]*l_rgb_recons + self.lamb[1]*l_flow_recons + \
+                    self.lamb[2]*l_rgb_flow_recons + \
+                    self.lamb[4]*l_rgb_contrast + self.lamb[5]*l_flow_contrast
+            return {
+                "sum": loss,
+                "rgb_recons": l_rgb_recons.cpu().item(),
+                "flow_recons": l_flow_recons.cpu().item(),
+                "rgb_flow_recons": l_rgb_flow_recons.cpu().item(),
+                # "flow_rgb_recons": l_flow_rgb_recons.cpu().item(),
+                "rgb_contrast": l_rgb_contrast.cpu().item(),
+                "flow_contrast": l_flow_contrast.cpu().item(),
+            }
 
 def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
@@ -497,12 +512,25 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
         flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
 
         flow_target = flow_target.to(device, non_blocking=True)
+
+        if weighted_flow2rgb_recons:
+            weight = flows - 0.5
+            weight = torch.sqrt(weight[:, 0, ...]**2 + weight[:, 1, ...]**2) # B, T=8, H, W
+            B, T, H, W = weight.shape
+            weight = F.normalize(weight.flatten(2), p=2, dim=2).reshape(B, T, H, W)
+
+            weight = rearrange(weight, 'b t (h p1) (w p2) -> b (t h w) (p1 p2)', p1=patch_size, p2=patch_size)
+            B, _ ,C = weight.shape
+            weight = weight[bool_masked_pos_label].reshape(B, -1, C).repeat(1, 1, 6)
+            weight = weight.to(device, non_blocking=True)
+            # print(weight.shape)
+
         # print(f"final label: {flows.shape}")
 
         with torch.cuda.amp.autocast():
             outputs = model(videos, flows, bool_masked_pos)
  
-            loss_dct = loss_func(outputs, [rgb_target, flow_target], weighted_flow2rgb_recons=weighted_flow2rgb_recons)
+            loss_dct = loss_func(outputs, [rgb_target, flow_target], weight=weight)
             loss = loss_dct["sum"]
 
         loss_value = new_func(loss)
@@ -530,8 +558,11 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
         metric_logger.update(recons_loss=loss_dct["rgb_recons"]+loss_dct["flow_recons"])
 
         metric_logger.update(rgb_flow_recons=loss_dct["rgb_flow_recons"])
-        metric_logger.update(flow_rgb_recons=loss_dct["flow_rgb_recons"])
-        metric_logger.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"])
+
+        if "flow_rgb_recons" in loss_dct:
+            metric_logger.update(flow_rgb_recons=loss_dct["flow_rgb_recons"])
+            metric_logger.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"])
+
 
         metric_logger.update(rgb_contrast=loss_dct["rgb_contrast"])
         metric_logger.update(flow_contrast=loss_dct["flow_contrast"])
@@ -573,8 +604,10 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
             log_writer.update(recons_loss=loss_dct["rgb_recons"] + loss_dct["flow_recons"], head="recons_loss")
 
             log_writer.update(rgb_flow_recons=loss_dct["rgb_flow_recons"], head="rgb_flow_recons")
-            log_writer.update(flow_rgb_recons=loss_dct["flow_rgb_recons"], head="flow_rgb_recons")
-            log_writer.update(cross_recons=loss_dct["rgb_flow_recons"] + loss_dct["flow_rgb_recons"], head="cross_recons")
+
+            if "flow_rgb_recons" in loss_dct:
+                log_writer.update(flow_rgb_recons=loss_dct["flow_rgb_recons"], head="flow_rgb_recons")
+                log_writer.update(cross_recons=loss_dct["rgb_flow_recons"] + loss_dct["flow_rgb_recons"], head="cross_recons")
 
             log_writer.update(rgb_contrast=loss_dct["rgb_contrast"], head="rgb_contrast")
             log_writer.update(flow_contrast=loss_dct["flow_contrast"], head="flow_contrast")
