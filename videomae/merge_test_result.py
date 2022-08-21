@@ -8,7 +8,7 @@ import argparse
 
 # parse required arguments
 parser = argparse.ArgumentParser()
-parser.add_argument("--path", default=None, type=str, help="path of prediction file")
+parser.add_argument("--path", nargs="+", type=str, help="path of prediction files")
 parser.add_argument("--num_crop", default=3, type=int, help="number of spatial crops for each test video")
 parser.add_argument("--annotation_file", type=str,
                     default="/data/shared/ego4d/v1/annotations/fho_oscc-pnr_test_unannotated.json" ,
@@ -19,33 +19,37 @@ args = parser.parse_args()
 
 
 path = args.path
-output_path = "/".join(args.path.split("/")[:-1])
+
+output_path = "/".join(args.path[0].split("/")[:-1])
 num_crop = args.num_crop
 annotation_file = args.annotation_file
 
-# find all results
-raw = open(path, "r").read()
 pattern_twohead = "(.*?) \[(.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?)\] \[(.*?), (.*?)\] (\d)"
 pred_dict = {}
-results = re.findall(pattern_twohead, raw)
 
-# wash results
-for result in results:
-    id = result[0]
+for p in path:
+    # find all results
+    raw = open(p, "r").read()
 
-    loc_preds = result[1:18]
-    cls_pred = result[18:20]
-    crop_num = result[20]
-    if id not in pred_dict.keys():
-        pred_dict[id] = {
-            0:{},
-            1:{},
-            2:{},
+    results = re.findall(pattern_twohead, raw)
+
+    # wash results
+    for result in results:
+        id = result[0]
+
+        loc_preds = result[1:18]
+        cls_pred = result[18:20]
+        crop_num = result[20]
+        if id not in pred_dict.keys():
+            pred_dict[id] = {
+                0:{},
+                1:{},
+                2:{},
+            }
+        pred_dict[id][int(crop_num)] = {
+            "loc": [float(pred) for pred in loc_preds],
+            "cls": [float(pred) for pred in cls_pred],
         }
-    pred_dict[id][int(crop_num)] = {
-        "loc": [float(pred) for pred in loc_preds],
-        "cls": [float(pred) for pred in cls_pred],
-    }
 
 # combine results
 final_preds = {}
@@ -102,5 +106,5 @@ for k, v in final_preds.items():
 cls_bar = open(os.path.join(output_path, "cls_final.json"), "w")
 cls_bar.write(json.dumps(cls_final))
 
-loc_bar = open(os.path.join(output_path, "cls_pred.json"), "w")
+loc_bar = open(os.path.join(output_path, "loc_final.json"), "w")
 loc_bar.write(json.dumps(loc_final))

@@ -60,12 +60,12 @@ flow_mode: "local"                                # mode of sampling flow images
 fuse_scheme: "concate"
 tokenizer_backbone: "simplecnn"
 
-version: "2.0"
+version: "3.0"
 use_rgb_stat: ""
 mask_tokenizer: false               # if ture, then mask token will be shared between transformer encoder and CNN encoder within each modality
 share_proj_layer: false
 share_within_modality_proj_layer: true
-weighted_flow2rgb_recons: true
+weighted_flow2rgb_recons: false
 
 tau: 0.01
 lamb: [1, 1, 1, 1, 0.1, 0.1]

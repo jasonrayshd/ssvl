@@ -193,7 +193,7 @@ def main(args):
     model.load_state_dict(checkpoint_model, strict=True)
     model.to(device)
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
 
     print(f"Start Testing on Ego4d")
     start_time = time.time()
@@ -222,7 +222,7 @@ def test_on_ego4d(data_loader, model, device, file):
 
     for batch in tqdm(data_loader):
         # print(len(batch))
-        
+
         videos = batch[0]
         flows = batch[1]
         info = batch[2]

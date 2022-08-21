@@ -513,8 +513,13 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
 
         flow_target = flow_target.to(device, non_blocking=True)
 
+        weight = None
         if weighted_flow2rgb_recons:
-            weight = flows - 0.5
+            # weight = flows.permute(1,2)
+            # weight[:,:,0,...] = (weight[:,:, 0,...] - weight[:,:, 0, ...].mean())
+            # weight[:,:,1,...] = (weight[:,:, 1,...] - weight[:,:, 1, ...].mean())
+
+            weight -= 0.5
             weight = torch.sqrt(weight[:, 0, ...]**2 + weight[:, 1, ...]**2) # B, T=8, H, W
             B, T, H, W = weight.shape
             weight = F.normalize(weight.flatten(2), p=2, dim=2).reshape(B, T, H, W)

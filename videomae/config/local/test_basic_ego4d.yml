@@ -1,4 +1,4 @@
-batch_size: 16
+batch_size: 4
 # epochs: 100 
 # update_freq: 1
 # save_ckpt_freq: 10
@@ -84,8 +84,8 @@ nb_classes: -1
 
 data_set: 'Ego4d-statechange-classification-localization'
 
-output_dir: /mnt/code/ssvl/videomae/output      # help='path where to save, empty for no saving')
-log_dir: /mnt/code/ssvl/videomae/output       # help='path where to tensorboard log')
+output_dir: /data/jiachen/ssvl_output      # help='path where to save, empty for no saving')
+log_dir: /data/jiachen/ssvl_output        # help='path where to tensorboard log')
 # device: 'cuda'      # help='device to use for training / testing')
 # seed: 0
 # resume: ''          # help='resume from checkpoint')
