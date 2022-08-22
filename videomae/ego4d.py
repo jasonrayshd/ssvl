@@ -9,6 +9,7 @@ https://github.com/EGO4D/hands-and-objects/tree/main/state-change-localization-c
 import os
 import json
 import time
+import sys
 
 import av
 import cv2
@@ -24,6 +25,7 @@ import volume_transforms as volume_transforms
 from random_erasing import RandomErasing
 from ego4d_trim import _get_frames
 from torchvision.utils import save_image
+from flow_vis import flow_to_color
 import torch.nn.functional as F
 
 import io
@@ -342,16 +344,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             frames = self.data_transform(frames)
             flows = None
             if self.args.flow_mode == "online":
-                shifted_frames = torch.roll(frames, -1, 0)
-                concat_frames = torch.cat((frames, shifted_frames), dim=1)
-                concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
-                
-                flow_lst_dct = self.flowExt.ext(concat_frames)
-
-                flows = np.stack([flow_dict["flow"] for flow_dict in flow_lst_dct], axis=0)
-                T, H, W, C = flows.shape
-                flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
-                # flows = torch.from_numpy(flows)[:, 1:2:15, ...]
+                flows = self.extract_flow(frames)
 
             frames = self.normalize(frames)
 
@@ -374,15 +367,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
     
             flows = None
             if self.args.flow_mode == "online":
-                shifted_frames = torch.roll(frames, -1, 0)
-                concat_frames = torch.cat((frames, shifted_frames), dim=1)
-                concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
-                flow_lst_dct = self.flowExt.ext(concat_frames)
-
-                flows = np.stack([flow_dict["flow"] for flow_dict in flow_lst_dct], axis=0)
-                T, H, W, C = flows.shape
-                flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
-                flows = torch.from_numpy(flows)
+                flows = self.extract_flow(frames)
 
             frames = self.normalize(frames)
 
@@ -403,6 +388,32 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 GT = labels
 
             return frames, GT, flows, fps, info
+
+    def extract_flow(self, buffer):
+        shifted_frames = torch.roll(buffer, -1, 0)
+        concat_frames = torch.cat((buffer, shifted_frames), dim=1)
+
+        # only pick 8 frames
+        concat_frames = torch.stack([concat_frames[i] for i in range(0, 16, 2)], dim=0)
+
+        # padding to 256x256
+        concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
+        flow_lst_dct = self.flowExt.ext(concat_frames)
+        flows = np.stack([flow_dict["flow"] for flow_dict in flow_lst_dct], axis=0)
+        T, H, W, C = flows.shape
+
+        # _tmp = torch.from_numpy(np.stack([ flow_to_color(flows[i]) / 255 for i in range(flows.shape[0]) ], axis=0).transpose(0, 3, 1, 2))
+        # rand_name = random.random()
+        # save_image( _tmp,f"online_flow{rand_name}.png")
+
+        # noisy flows
+        flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
+        flows = torch.from_numpy(flows)
+
+        # standardization
+        flows = (flows-flows.min()) / (flows.max() - flows.min())
+
+        return flows
 
     # _aug_frame edited by Jiachen Lei
     def _aug_frame(
@@ -443,15 +454,8 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         flows = None
         if self.args.flow_mode == "online":
             assert self.flowExt is not None, "flow extractor is None"
-            shifted_frames = torch.roll(buffer, -1, 0)
-            concat_frames = torch.cat((buffer, shifted_frames), dim=1)
-            concat_frames = F.pad(concat_frames, (16, 16, 16, 16), "constant", 0)
-            flow_lst_dct = self.flowExt.ext(concat_frames)
-
-            flows = np.stack([flow_dict["flow"] for flow_dict in flow_lst_dct], axis=0)
-            T, H, W, C = flows.shape
-            flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
-            flows = torch.from_numpy(flows)
+            flows =  self.extract_flow(buffer)
+            # save_image(buffer, f"frame{rand_name}.png")
 
         # buffer shape: T C H W
         aug_transform = video_transforms.create_random_augment(

@@ -62,6 +62,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     param_group["weight_decay"] = wd_schedule_values[it]
 
         samples = samples.to(device, non_blocking=False)
+        if flows is not None:
+            flows = flows.to(device, non_blocking=False)
+
         if isinstance(targets, torch.Tensor):
             targets = targets.to(device, non_blocking=False)
         elif isinstance(targets, list): # ego4d
@@ -77,6 +80,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if loss_scaler is None:
             # print("loss scaler is None")
             samples = samples.half()
+            if flows is not None:
+                flows = flows.half()
+
             loss, output = train_class_batch(
                 model, [samples, flows], targets, criterion)
 
