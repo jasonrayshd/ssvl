@@ -27,6 +27,9 @@ class flowExtractor(object):
 
     @torch.no_grad()
     def ext(self, x):
+        """
+            x: torch.Tensor, T, C, H, W
+        """
         # extract flow images given frames
 
         flows = self.model(x.to(self.device))
@@ -42,9 +45,10 @@ if __name__ == "__main__":
         transforms.ToTensor()
     ])
     frames = [
-        trans(Image.open(f"/data/shared/ssvl/epic-kitchens50/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow/rgb/train/P01/P01_01/frame_000000{i}.jpg"))
+        trans(Image.open(f"/data/epic-kitchens55/frames_rgb_flow/rgb/train/P01/P01_01/frame_000000{i}.jpg"))
            for i in range(1000, 1010)
     ]
+
     frames = torch.stack(frames, dim=0)
     flowExt = flowExtractor()
 
@@ -55,7 +59,7 @@ if __name__ == "__main__":
 
     print(frames.shape)
     
-    flow_lst_dict = flowExt(frames)
+    flow_lst_dict = flowExt.ext(frames)
 
     print(f"duration: {time.time()-st_time}")
 

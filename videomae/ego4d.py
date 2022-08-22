@@ -343,8 +343,10 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         elif self.mode == "val":
             frames = self.data_transform(frames)
             flows = None
+            # print(frames.shape)
+            # C, T, H, W
             if self.args.flow_mode == "online":
-                flows = self.extract_flow(frames)
+                flows = self.extract_flow(frames.transpose(0, 1))
 
             frames = self.normalize(frames)
 
@@ -364,10 +366,10 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
                 frames = [frame[:, spatial_start:spatial_start + self.args.short_side_size, :] for frame in frames]
 
             frames = self.data_transform(frames)
-    
+            # print
             flows = None
             if self.args.flow_mode == "online":
-                flows = self.extract_flow(frames)
+                flows = self.extract_flow(frames.transpose(0, 1))
 
             frames = self.normalize(frames)
 
@@ -401,13 +403,14 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         flow_lst_dct = self.flowExt.ext(concat_frames)
         flows = np.stack([flow_dict["flow"] for flow_dict in flow_lst_dct], axis=0)
         T, H, W, C = flows.shape
+        flows = flows[:, 16:240, 16:240, :]
 
         # _tmp = torch.from_numpy(np.stack([ flow_to_color(flows[i]) / 255 for i in range(flows.shape[0]) ], axis=0).transpose(0, 3, 1, 2))
         # rand_name = random.random()
-        # save_image( _tmp,f"online_flow{rand_name}.png")
+        # save_image( _tmp, f"/data/output/vis2/online_flow{rand_name}.png")
 
         # noisy flows
-        flows = flows[:, 32:257, 32:257, :].transpose(3, 0, 1, 2)
+        flows = flows.transpose(3, 0, 1, 2)
         flows = torch.from_numpy(flows)
 
         # standardization
@@ -449,9 +452,10 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
             aspect_ratio=asp,
             scale=scl,
             motion_shift=False
-        )
+        ) # range in [0, 1]
 
         flows = None
+
         if self.args.flow_mode == "online":
             assert self.flowExt is not None, "flow extractor is None"
             flows =  self.extract_flow(buffer)

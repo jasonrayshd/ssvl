@@ -35,17 +35,86 @@ from flow_extractor import flowExtractor
 
 class Ego4d_Compatible_Mixup(Mixup):
 
-    def __init__(self, **kwargs):
+    def __init__(self, use_flow, **kwargs):
         super().__init__(**kwargs)
+        self.use_flow = use_flow
+
+    # overwrite
+    def flow_mix_elem(self, x, flows):
+        batch_size = len(x)
+        lam_batch, use_cutmix = self._params_per_elem(batch_size)
+        x_orig = x.clone()  # need to keep an unmodified original for mixing source
+        flows_orig = flows.clone()
+        for i in range(batch_size):
+            j = batch_size - i - 1
+            lam = lam_batch[i]
+            if lam != 1.:
+                if use_cutmix[i]:
+                    (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
+                        x[i].shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
+                    x[i][:, yl:yh, xl:xh] = x_orig[j][:, yl:yh, xl:xh]
+                    flows[i][:, yl:yh, xl:xh] = flows_orig[j][:, yl:yh, xl:xh]
+                    lam_batch[i] = lam
+                else:
+                    x[i] = x[i] * lam + x_orig[j] * (1 - lam)
+        return torch.tensor(lam_batch, device=x.device, dtype=x.dtype).unsqueeze(1)
+
+
+    def flow_mix_pair(self, x, flows):
+        batch_size = len(x)
+        lam_batch, use_cutmix = self._params_per_elem(batch_size // 2)
+        x_orig = x.clone()  # need to keep an unmodified original for mixing source
+        for i in range(batch_size // 2):
+            j = batch_size - i - 1
+            lam = lam_batch[i]
+            if lam != 1.:
+                if use_cutmix[i]:
+                    (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
+                        x[i].shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
+                    x[i][:, yl:yh, xl:xh] = x_orig[j][:, yl:yh, xl:xh]
+                    x[j][:, yl:yh, xl:xh] = x_orig[i][:, yl:yh, xl:xh]
+                    lam_batch[i] = lam
+                else:
+                    x[i] = x[i] * lam + x_orig[j] * (1 - lam)
+                    x[j] = x[j] * lam + x_orig[i] * (1 - lam)
+        lam_batch = np.concatenate((lam_batch, lam_batch[::-1]))
+        return torch.tensor(lam_batch, device=x.device, dtype=x.dtype).unsqueeze(1)
+
+
+    def flow_mix_batch(self, x, flows):
+        lam, use_cutmix = self._params_per_batch()
+        if lam == 1.:
+            return 1.
+        if use_cutmix:
+            (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
+                x.shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
+            x[:, :, yl:yh, xl:xh] = x.flip(0)[:, :, yl:yh, xl:xh]
+        else:
+            x_flipped = x.flip(0).mul_(1. - lam)
+            x.mul_(lam).add_(x_flipped)
+        return lam
+    
 
     def __call__(self, x, target):
+        if self.use_flow:
+            x, flows = x
+
         assert len(x) % 2 == 0, 'Batch size should be even when using this'
-        if self.mode == 'elem':
-            lam = self._mix_elem(x)
-        elif self.mode == 'pair':
-            lam = self._mix_pair(x)
+
+        if self.use_flow:
+            if self.mode == 'elem':
+                lam = self.flow_mix_elem(x)
+            elif self.mode == 'pair':
+                lam = self.flow_mix_pair(x)
+            else:
+                lam = self.flow_mix_batch(x)
         else:
-            lam = self._mix_batch(x)
+            if self.mode == 'elem':
+                lam = self._mix_elem(x)
+            elif self.mode == 'pair':
+                lam = self._mix_pair(x)
+            else:
+                lam = self._mix_batch(x)
 
         if isinstance(target, torch.Tensor):
             target = mixup_target(target, self.num_classes, lam, self.label_smoothing, device=x.device)
@@ -57,7 +126,7 @@ class Ego4d_Compatible_Mixup(Mixup):
             label = mixup_target(label, T+1, lam, self.label_smoothing, device=x.device)
             state = mixup_target(state, 2, lam, self.label_smoothing, device=x.device)
             target = [label ,state]
-        
+
         return x, target
 
 
@@ -465,6 +534,8 @@ def main(args, ds_init):
     if mixup_active:
         print("Mixup is activated!")
         mixup_fn = Ego4d_Compatible_Mixup(
+            # args.flow_mode == "online", # if flow mode is online, then use flow in finetuning
+            False, # debug
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)

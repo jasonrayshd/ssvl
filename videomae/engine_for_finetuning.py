@@ -186,6 +186,9 @@ def validation_one_epoch(data_loader, model, device, criterion):
         target = batch[1]
         flows = batch[2]
         videos = videos.to(device, non_blocking=True)
+        if flows is not None:
+            flows = flows.to(device, non_blocking=True)
+
         # print(target)
         if not isinstance(target, list):
             target = target.to(device, non_blocking=True)
