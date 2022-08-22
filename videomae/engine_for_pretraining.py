@@ -525,12 +525,12 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
             weight = torch.sqrt(weight[:, 0, ...]**2 + weight[:, 1, ...]**2) # B, T=8, H, W
             B, T, H, W = weight.shape
             weight = weight / weight.sum((2,3)).view(B, T, 1, 1).repeat(1, 1, H, W)
-
+            weight = weight.unsqueeze(1).repeat(1, 3, 1, 1, 1)
             # save_image(videos[0].transpose(0, 1), "frame.png")
             # save_image(weight[0].unsqueeze(1)*255, "weight.png")
-            weight = rearrange(weight, 'b t (h p1) (w p2) -> b (t h w) (p1 p2)', p1=patch_size, p2=patch_size)
+            weight = rearrange(weight, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
             B, _ ,C = weight.shape
-            weight = weight[bool_masked_pos_label].reshape(B, -1, C).repeat(1, 1, 6)
+            weight = weight[bool_masked_pos_label].reshape(B, -1, C)
             weight = weight.to(device, non_blocking=True)
             # print(weight.shape)
 
