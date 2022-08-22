@@ -255,6 +255,8 @@ class TwoStreamVitLoss(nn.Module):
             return self.easy_ctr(q, k)
         elif self.ctr_type == "hard":
             return self.hard_ctr(q, k)
+        elif self.ctr_type == "hard2":
+             return self.hard_ctr_v2(q, k)
 
     # referred to VAAT
     # https://github.com/google-research/google-research/blob/master/vatt/utils/train/objectives.py
@@ -321,6 +323,62 @@ class TwoStreamVitLoss(nn.Module):
         q_vs_q_all = [ torch.cat((q_vs_q_all[i, :rank*B + i], q_vs_q_all[i, rank*B + i + 1:]), dim=0)  for i in range(B)]
         q_vs_q_all = torch.stack(q_vs_q_all, dim=0) # (B, B_all-1, N1, N2)
         q_vs_q_all = q_vs_q_all.flatten(1)
+
+        # negative pairs across modality
+        q_vs_kall = torch.einsum("bmd,cnd->bcmn", q, k_all) # (B, B_all, N1, N2)
+        q_vs_kall = q_vs_kall.flatten(1)
+
+        all_sim = torch.cat((q_vs_q_all, q_vs_kall), dim=1)
+
+        # NOTE: [07.24 by jiachen]
+        # when training in half-precision (16-bit), intermediate result of logsumexp
+        # will always exceed the range of 16-bit floating point number
+        # Simple solution: convert input tensor to 32-bit floating point before compute logsumexp
+        # and back to 16-bit after
+        logsumexp_pos = torch.logsumexp(pos_sim.float()/self.tau, dim=1).half()
+        logsumexp_all = torch.logsumexp(all_sim.float()/self.tau, dim=1).half()
+
+        # logsumexp_intra_neg = torch.logsumexp(intra_neg_sim.float()/self.tau, dim=1).half()
+
+        nce = logsumexp_all  - logsumexp_pos
+
+        # according to implementation of VAAT
+        # if none of the samples are valid, the logsumexp could be NaN, hence
+        # we manually set them to zero
+        nce = torch.where(torch.isnan(nce), torch.zeros(nce.shape).half().to(nce.device), nce).mean()
+
+        return nce
+
+    def hard_ctr_v2(self, q, k):
+        # normalize embeddings
+        q = F.normalize(q, p=2, dim=2) # B, N1, C
+        k = F.normalize(k, p=2, dim=2) # B, N2, C
+
+        # gather cross rank negative
+        k_all = self.concat_all_gather(k)
+        q_all = self.concat_all_gather(q)
+        B_all, N_all, C_all = q_all.shape
+
+        # positive pairs accross modality
+        B,N,C = q.shape
+        q_vs_k = torch.einsum("bmd,cnd->bcmn", q, k) # (B, B, N1, N2)
+        q_vs_k = q_vs_k.flatten(2)
+
+        q_vs_k = torch.einsum("bbn -> bn", q_vs_k)
+        q_vs_k = q_vs_k.reshape(B, N, N)
+        pos_sim = torch.einsum("bnn -> bn", q_vs_k)
+
+        # negative pairs within same modality
+        q_vs_q_all =  torch.einsum("bmd,cnd -> bcmn", q, q_all)
+        q_vs_q_all = q_vs_q_all.flatten(2)
+        q_vs_q_all = q_vs_q_all[:, :, :-1].reshape(B, B_all, N-1, N+1)[..., 1:].flatten(1) # (B, N3)
+
+        # negative pairs within the same modality but across batch
+        # rank = int( os.environ["RANK"] )
+        # q_vs_q_all =  torch.einsum("bmd,cnd -> bcmn", q, q_all)
+        # q_vs_q_all = [ torch.cat((q_vs_q_all[i, :rank*B + i], q_vs_q_all[i, rank*B + i + 1:]), dim=0)  for i in range(B)]
+        # q_vs_q_all = torch.stack(q_vs_q_all, dim=0) # (B, B_all-1, N1, N2)
+        # q_vs_q_all = q_vs_q_all.flatten(1)
 
         # negative pairs across modality
         q_vs_kall = torch.einsum("bmd,cnd->bcmn", q, k_all) # (B, B_all, N1, N2)
