@@ -25,6 +25,7 @@ class flowExtractor(object):
         print(f"Current device: {self.device} manager process:{os.getpid()} parent process:{os.getppid()}")
         self.model = init_model(config_file, checkpoint_file, device=self.device)
 
+    @torch.no_grad()
     def ext(self, x):
         # extract flow images given frames
 

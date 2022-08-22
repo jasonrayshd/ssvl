@@ -360,9 +360,8 @@ def main(args, ds_init):
 
     cudnn.benchmark = True
 
-
     if args.flow_mode == "online":
-        mp.set_start_method('spawn')
+        mp.set_start_method('spawn', force=True)
         SyncManager.register("flowExtractor", flowExtractor)
         m = SyncManager()
         m.start()
@@ -487,7 +486,12 @@ def main(args, ds_init):
         # keep_dim = True if (args.nb_classes == args.num_frames+1) and ("ego4d" in args.data_set.lower()) else False
     )
 
-    patch_size = model.patch_embed.patch_size
+    try:
+        patch_size = model.patch_embed.patch_size
+    except AttributeError as e:
+        print("patch_embed.patch_size does not exist, read patch_size of model instead")
+        patch_size = model.patch_size
+
     print("Patch size = %s" % str(patch_size))
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
@@ -543,12 +547,12 @@ def main(args, ds_init):
                 new_dict[key[9:]] = checkpoint_model[key]
             elif key.startswith('encoder.'):
                 new_dict[key[8:]] = checkpoint_model[key]
-            elif key.startswith("rgb_encoder."):
-                # two stream rgb encoder
-                new_dict[key[12:]] = checkpoint_model[key]
-            elif key.startswith("rgb_tokenizer."):
-                # two stream rgb tokenizer
-                new_dict[key[14:]] = checkpoint_model[key]
+            # elif key.startswith("rgb_encoder."):
+            #     # two stream rgb encoder
+            #     new_dict[key[12:]] = checkpoint_model[key]
+            # elif key.startswith("flow_encoder."):
+            #     # two stream rgb tokenizer
+            #     new_dict[key[13:]] = checkpoint_model[key]
             else:
                 new_dict[key] = checkpoint_model[key]
 
