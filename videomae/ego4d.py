@@ -516,7 +516,7 @@ class StateChangeDetectionAndKeyframeLocalisation(torch.utils.data.Dataset):
         if os.path.exists(clip_save_path):
             # The frames for this clip are already saved.
             num_frames = len(os.listdir(clip_save_path))
-            if num_frames < (clip_end_frame - clip_start_frame) or \
+            if num_frames < (clip_end_frame - clip_start_frame) and \
                                         ( save_as_zip and not os.path.exists(os.path.join(clip_save_path, "frames.zip"))):
                 if save_as_zip and not os.path.exists(os.path.join(clip_save_path, "frames.zip")) :
                     print(f"Deleting {clip_save_path} as it does not have a zip file")

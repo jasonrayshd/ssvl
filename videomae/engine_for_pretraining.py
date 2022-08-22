@@ -9,6 +9,7 @@ import utils
 from einops import rearrange
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
+from torchvision.utils import save_image
 import numpy as np
 import cv2
 
@@ -573,6 +574,7 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
 
         weight = None
         if weighted_flow2rgb_recons:
+            # print(flows.shape)
             # weight = flows.permute(1,2)
             # weight[:,:,0,...] = (weight[:,:, 0,...] - weight[:,:, 0, ...].mean())
             # weight[:,:,1,...] = (weight[:,:, 1,...] - weight[:,:, 1, ...].mean())
@@ -580,8 +582,10 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
             weight = flows - 0.5
             weight = torch.sqrt(weight[:, 0, ...]**2 + weight[:, 1, ...]**2) # B, T=8, H, W
             B, T, H, W = weight.shape
-            weight = F.normalize(weight.flatten(2), p=2, dim=2).reshape(B, T, H, W)
+            weight = weight / weight.sum((2,3)).view(B, T, 1, 1).repeat(1, 1, H, W)
 
+            # save_image(videos[0].transpose(0, 1), "frame.png")
+            # save_image(weight[0].unsqueeze(1)*255, "weight.png")
             weight = rearrange(weight, 'b t (h p1) (w p2) -> b (t h w) (p1 p2)', p1=patch_size, p2=patch_size)
             B, _ ,C = weight.shape
             weight = weight[bool_masked_pos_label].reshape(B, -1, C).repeat(1, 1, 6)
