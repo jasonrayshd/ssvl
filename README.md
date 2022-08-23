@@ -1,4 +1,4 @@
-Notice:  
+### Notice:  
 (1) Pretraining file entrypoint:  run_mae_pretraining.py  engine_for_pretraining.py
 (2) Fintuning file entrypoint:  run_class_finetuning.py  engine_for_finetuning.py
 (3) Bash scripts are written for runninng different tasks:  
@@ -9,15 +9,8 @@ Notice:
 
 (5) Dataset file: ego4d.py, epickitchens.py  
 
-(6) Logics of online extracting flow images from ego4d/epic-kitchens  
+#### (6) Logics of online extracting flow images from ego4d/epic-kitchens  
     a. For each subprocess (identified by global rank), initialize a multiprocessing.Manager object and register flow extracting function  
     b. start the Manager object as a seperate process on each gpu and pass it to Dataset object as a parameter  
     c. extract optical flow in function Dataset.__getitem__  
 
-
-
-
-Update:  
-2022.07.08   
-(1) new feature added: support load arguments from yml configuration file  
-(2) support pretraining and finetuning on ego4d, epic-kitchen, kinetics, ssv2  
