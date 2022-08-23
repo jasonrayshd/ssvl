@@ -470,6 +470,7 @@ class FintuneVisionTransformerEncoder(nn.Module):
                 keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
                 ):
         super().__init__()
+
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.tubelet_size = tubelet_size
@@ -493,9 +494,9 @@ class FintuneVisionTransformerEncoder(nn.Module):
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
                 init_values=init_values)
             for i in range(depth)])
-        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
-        self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
-        self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
+        # self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        # self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        # self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
 
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
@@ -580,17 +581,17 @@ class Ego4dTwoHeadTwoStreamVisionTransformer(nn.Module):
         self.patch_size = (patch_size, patch_size)
         self.num_patches = (img_size//patch_size)* (img_size//patch_size) * (all_frames // tubelet_size)
 
-        if use_learnable_pos_emb:
-            self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
-        else:
-            # sine-cosine positional embeddings is on the way
-            self.pos_embed = get_sinusoid_encoding_table(self.num_patches, embed_dim)
+        # if use_learnable_pos_emb:
+        #     self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
+        # else:
+        #     # sine-cosine positional embeddings is on the way
+        #     self.pos_embed = get_sinusoid_encoding_table(self.num_patches, embed_dim)
 
-        self.pos_drop = nn.Dropout(p=drop_rate)
+        # self.pos_drop = nn.Dropout(p=drop_rate)
 
         self.blocks = [i for i in range(depth)]
 
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        # dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.rgb_encoder = FintuneVisionTransformerEncoder(
                                                 img_size=img_size, 
                                                 patch_size=patch_size, 
@@ -733,15 +734,15 @@ def vit_twohead_base_patch16_224(pretrained=False, **kwargs):
     model.default_cfg = _cfg()
     return model
 
-@register_model
-def vit_twohead_wtokenizer_base_patch16_224(pretrained=False, **kwargs):
+# @register_model
+# def vit_twohead_wtokenizer_base_patch16_224(pretrained=False, **kwargs):
 
-    model = Ego4dTwoHeadwTokenizerVisionTransformer(
-            patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
-            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+#     model = Ego4dTwoHeadwTokenizerVisionTransformer(
+#             patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+#             norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
 
-    model.default_cfg = _cfg()
-    return model
+#     model.default_cfg = _cfg()
+#     return model
 
 @register_model
 def vit_ts_twohead_base_patch16_224(pretrained=False, **kwargs):

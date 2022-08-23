@@ -453,7 +453,6 @@ def main(args, ds_init):
             # if is test and dataset is not ego4d then we do not need to pass flow_extractor
             dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
 
-
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
     )
@@ -553,8 +552,6 @@ def main(args, ds_init):
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
 
-        # if is ego4d and state change localization task, then the output dimension of feature 
-        # keep_dim = True if (args.nb_classes == args.num_frames+1) and ("ego4d" in args.data_set.lower()) else False
     )
 
     try:
