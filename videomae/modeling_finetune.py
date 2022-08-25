@@ -434,7 +434,7 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
         num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
         tubelet_size = self.patch_embed.tubelet_size
         x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
-        x = x.mean(dim=2).squeeze()
+        x = x.mean(dim=2).squeeze(dim=2)
         x = self.temporal_norm(x)
         x = x.flatten(1)
         loc = self.loc_head(x) # shape: bs, frame num
@@ -715,7 +715,8 @@ class Ego4dTwoHeadTwoStreamVisionTransformer(nn.Module):
         num_patches = (H//self.patch_size[0]) * (W//self.patch_size[1])
         tubelet_size = self.tubelet_size
         x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
-        x = x.mean(dim=2).squeeze()
+        # Simply using squeeze() without specifying dimension will raise a dimension mismatch error
+        x = x.mean(dim=2).squeeze(dim=2)
         x = self.temporal_norm(x)
         x = x.flatten(1)
         loc = self.loc_head(x) # shape: bs, frame num
