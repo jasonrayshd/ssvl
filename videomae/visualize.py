@@ -155,14 +155,20 @@ def main(args):
 
 
             elif args.ts_pretrain:
-                rgb_rgb_hat, rgb_flow_hat, flow_rgb_hat, flow_flow_hat, rgb_vis, flow_vis, rgb_token, flow_token = output
+                if len(output) == 8:
+                    rgb_rgb_hat, rgb_flow_hat, flow_rgb_hat, flow_flow_hat, rgb_vis, flow_vis, rgb_token, flow_token = output
+                else:
+                    rgb_rgb_hat, rgb_flow_hat, flow_flow_hat, rgb_vis, flow_vis, rgb_token, flow_token = output
+                    flow_rgb_hat = None
+
                 masked_tokens = int(14*14*args.mask_ratio*8)
 
                 unnormed_frame = frame.squeeze() * std + mean
                 unnormed_frame = unnormed_frame.transpose(0, 1)
 
                 rgb_rgb_hat_reshape = unpatchify_rgb(rgb_rgb_hat, mask, masked_tokens)
-                flow_rgb_hat_reshape = unpatchify_rgb(flow_rgb_hat, mask, masked_tokens)
+                if flow_rgb_hat is not None:
+                    flow_rgb_hat_reshape = unpatchify_rgb(flow_rgb_hat, mask, masked_tokens)
 
                 rgb_flow_hat_reshape = unpatchify_flow(rgb_flow_hat, mask, masked_tokens)
                 flow_flow_hat_reshape = unpatchify_flow(flow_flow_hat, mask, masked_tokens)
@@ -180,7 +186,10 @@ def main(args):
                 rgb_flow_hat_rgb = torch.from_numpy(np.stack(rgb_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
                 flow_flow_hat_rgb = torch.from_numpy(np.stack(flow_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
 
-                all_cat = torch.cat((flows_rgb/255, rgb_flow_hat_rgb/255, flow_flow_hat_rgb/255, unnormed_frame.cpu(), flow_rgb_hat_reshape.cpu().transpose(0, 1), rgb_rgb_hat_reshape.cpu().transpose(0, 1)), dim=0)
+                if flow_rgb_hat is not None:
+                    all_cat = torch.cat((flows_rgb/255, rgb_flow_hat_rgb/255, flow_flow_hat_rgb/255, unnormed_frame.cpu(), flow_rgb_hat_reshape.cpu().transpose(0, 1), rgb_rgb_hat_reshape.cpu().transpose(0, 1)), dim=0)
+                else:
+                    all_cat = torch.cat((flows_rgb/255, rgb_flow_hat_rgb/255, flow_flow_hat_rgb/255, unnormed_frame.cpu(), rgb_rgb_hat_reshape.cpu().transpose(0, 1)), dim=0)
                 save_image(all_cat, f"./log/flow_vis_{i}.png")
 
             elif args.flow_mode == "":

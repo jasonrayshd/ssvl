@@ -582,7 +582,7 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
             weight = flows - 0.5
             weight = torch.sqrt(weight[:, 0, ...]**2 + weight[:, 1, ...]**2) # B, T=8, H, W
             B, T, H, W = weight.shape
-            weight = weight / weight.sum((2,3)).view(B, T, 1, 1).repeat(1, 1, H, W)
+            # weight = weight / weight.sum((2,3)).view(B, T, 1, 1).repeat(1, 1, H, W)
             weight = weight.unsqueeze(1).repeat(1, 3, 2, 1, 1)
             # save_image(videos[0].transpose(0, 1), "frame.png")
             # save_image(weight[0].unsqueeze(1)*255, "weight.png")
