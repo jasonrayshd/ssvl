@@ -2,7 +2,7 @@
 # configurations needed in pretraining
 
 batch_size: 8
-epochs: 300
+epochs: 600
 save_ckpt_freq: 10
 
 # Model parameters
@@ -20,7 +20,7 @@ opt_eps: 1.0e-8             # help='Optimizer Epsilon (default: 1e-8)
 opt_betas: null           # type=float, nargs='+  metavar='BETA help='Optimizer Betas (default: None, use opt default)
 clip_grad: null           # type=float, None, metavar='NORM help='Clip gradient norm (default: None, no clipping)
 momentum: 0.9             # metavar='M help='SGD momentum (default: 0.9)
-weight_decay: 0.05        # help='weight decay (default: 0.05)
+weight_decay: 0.01        # help='weight decay (default: 0.05)
 weight_decay_end: null    # help="""Final value of the
                           # weight decay. We use a cosine schedule for WD. 
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
@@ -31,7 +31,7 @@ flow_encoder_lr: null
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
 min_lr: 1.0e-7              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
 
-warmup_epochs: 10         # metavar='N help='epochs to warmup LR, if scheduler supports
+warmup_epochs: 20         # metavar='N help='epochs to warmup LR, if scheduler supports
 warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
 
 # Augmentation parameters
@@ -69,7 +69,7 @@ weighted_flow2rgb_recons: false
 
 tau: 0.01
 lamb: [1, 1, 1, 1, 0.1, 0.1]
-ctr: "hard"
+ctr: "hard2"
 # configuration file
 # config: ""                                  # help='path to configuration file
 

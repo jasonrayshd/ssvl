@@ -138,7 +138,8 @@ def get_args():
                         help='run id of wandb')
     
     parser.add_argument('--train_wo_amp', action='store_true')
-
+    parser.add_argument('--tau', type=float, default=0.01,
+                        help='temperature hyper-parameter tau')
     return parser.parse_args()
 
 
@@ -361,7 +362,7 @@ def main(args):
 
                 weighted_flow2rgb_recons = args.weighted_flow2rgb_recons,
                 ctr = args.ctr,
-                tau = args.tau,
+                tau = float(args.tau),
                 lamb = args.lamb,
             ) 
 
