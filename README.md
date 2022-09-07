@@ -14,3 +14,13 @@
     b. start the Manager object as a seperate process on each gpu and pass it to Dataset object as a parameter  
     c. extract optical flow in function Dataset.__getitem__  
 
+
+### [2022.09.07]
+To run pretraining experiments under our latest setting (two stream setting):  
+(1) modify necessary path parameters (e.g., path of epic55 dataset and output directory) in configuration file ./config/pretrain_ts_epic55.yml  
+(2) modify absolute path of the configuration file ./config/pretrain_ts_epic55.yml in script ./scripts/local_pretrain_ts_epic.sh  
+(3) run following command in ./scripts:  
+```
+# single node with 4 gpus by default
+CUDA_VISIBLE_DEVICES="0,1,2,3" bash local_pretrain_ts_epic.sh 0 0.0.0.0  
+```
