@@ -686,7 +686,7 @@ def main(args, ds_init):
 
     num_layers = model_without_ddp.get_num_layers()
     if args.layer_decay < 1.0:
-        if "vit_twohead_wtokenizer" in args.model or "vit_ts_twohead" in args.model:
+        if "ts" in args.model:
             print("Using ts layer decay assigner")
             assigner = TsLayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
         else:
