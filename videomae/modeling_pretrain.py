@@ -655,8 +655,8 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
         _, _, flowT, _, _ = flows.shape
         assert rgbT//flowT == 2, "number of rgb frames should be two times of flow images"
 
-        rgb_token = self.rgb_tokenizer(rgb, mask)     # [B, T, C_tok]
-        flow_token = self.flow_tokenizer(flows, mask)  # [B, T, C_tok]
+        rgb_token = self.rgb_tokenizer(rgb)     # [B, T, C_tok]
+        flow_token = self.flow_tokenizer(flows)  # [B, T, C_tok]
 
         rgb_vis = self.rgb_encoder(rgb, mask) # [B, N_vis, C_e]
         flow_vis = self.flow_encoder(flows, mask) # [B, N_vis, C_e]
@@ -739,8 +739,8 @@ class PretrainTwoStreamVisionTransformer(nn.Module):
         _, _, flowT, _, _ = flows.shape
         assert rgbT//flowT == 2, "number of rgb frames should be two times of flow images"
 
-        rgb_token = self.rgb_tokenizer(rgb, mask)     # [B, T, C_tok]
-        flow_token = self.flow_tokenizer(flows, mask)  # [B, T, C_tok]
+        rgb_token = self.rgb_tokenizer(rgb)     # [B, T, C_tok]
+        flow_token = self.flow_tokenizer(flows)  # [B, T, C_tok]
 
         if self.use_rgb_stat == "feature":
             rgb_vis, rgb_stat = self.rgb_encoder(rgb, mask, stat=True) # [B, N_vis, C_e]

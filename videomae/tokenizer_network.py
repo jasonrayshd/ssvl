@@ -69,7 +69,7 @@ class Tokenizer(nn.Module):
         else:
             raise NotImplementedError(f"Unkown tokenizer backbone: {backbone}, expected to be one of [single, simplecnn]")
 
-    def forward(self, x, mask):
+    def forward(self, x):
         """
         
             all_tokens: whether return all tokens or only return unmasked tokens

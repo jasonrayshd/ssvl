@@ -47,6 +47,37 @@ class LayerDecayValueAssigner(object):
         return get_num_layer_for_vit(var_name, len(self.values))
 
 
+class TsLayerDecayValueAssigner(object):
+    # layer decay for two-stream finetune
+
+    def __init__(self, values):
+        self.values = values
+
+    def get_scale(self, layer_id):
+        return self.values[layer_id]
+
+    def get_layer_id(self, var_name):
+        num_max_layer = len(self.values)
+
+        if var_name in ("cls_token", "mask_token", "pos_embed"):
+            return 0
+        elif "patch_embed" in var_name:
+            return 0
+        elif var_name.startswith("rel_pos_bias"):
+            return num_max_layer - 1
+        elif var_name.startswith("flow_encoder") or var_name.startswith("rgb_encoder"):
+            # e.g. flow_encoder.block.1.
+            layer_id = int(var_name.split('.')[2])
+            return layer_id + 1
+        elif var_name.startswith("rgb_tokenizer") or var_name.startswith("flow_tokenizer"):
+            # e.g. flow_tokenizer.tokenizer.conv1.
+            layer_id = int(var_name.split('.')[2][-1])
+            return layer_id + 1
+        else:
+            return num_max_layer - 1
+
+
+
 def get_parameter_groups(model, weight_decay=1e-5, skip_list=(), get_num_layer=None, get_layer_scale=None, ignore_param={}):
     parameter_group_names = {}
     parameter_group_vars = {}

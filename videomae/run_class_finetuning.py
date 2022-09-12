@@ -16,7 +16,7 @@ from timm.data.mixup import Mixup, mixup_target
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, TsLayerDecayValueAssigner
 
 from datasets import build_dataset
 from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
@@ -686,7 +686,11 @@ def main(args, ds_init):
 
     num_layers = model_without_ddp.get_num_layers()
     if args.layer_decay < 1.0:
-        assigner = LayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
+        if "vit_twohead_wtokenizer" in args.model or "vit_ts_twohead" in args.model:
+            print("Using ts layer decay assigner")
+            assigner = TsLayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
+        else:
+            assigner = LayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
     else:
         assigner = None
 
