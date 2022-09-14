@@ -1084,6 +1084,17 @@ def vit_twohead_base_patch16_224(pretrained=False, **kwargs):
     return model
 
 @register_model
+def vit_twohead_large_patch16_224(pretrained=False, **kwargs):
+
+    model = Ego4dTwoHead_VisionTransformer(
+            patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+    model.default_cfg = _cfg()
+    return model
+
+
+@register_model
 def vit_twohead_ts_rgb_base_patch16_224(pretrained=False, **kwargs):
 
     model = Ego4dTwoHeadTwoStreamwTokenzierVisionTransformer(
