@@ -234,6 +234,7 @@ def test_on_ego4d(data_loader, model, device, file):
         # compute output
         with torch.cuda.amp.autocast():
             if flows is not None:
+                flows = flows.to(device, non_blocking=True)
                 output = model(videos, flows)
             else:
                 output = model(videos)
@@ -241,17 +242,17 @@ def test_on_ego4d(data_loader, model, device, file):
         for i in range(batch_size):
 
             if isinstance(output, tuple):
-                string = "{} {} {} {}\n".format(info[i]["unique_id"],
+                string = "{} {} {} {} {}\n".format(info[i]["unique_id"],
                                                     str(output[0].data[i].cpu().numpy().tolist()),
                                                     str(output[1].data[i].cpu().numpy().tolist()),
                                                     str(info[i]["crop"]),
-                                                    str(frame_idx),
+                                                    str(frame_idx[i].tolist()),
                                                     )
             else:
-                string = "{} {} {}\n".format(info[i]["unique_id"],
+                string = "{} {} {} {}\n".format(info[i]["unique_id"],
                                                     str(output.data[i].cpu().numpy().tolist()),
                                                     str(info[i]["crop"]),
-                                                    str(frame_idx),
+                                                    str(frame_idx[i].tolist()),
                                                     )
 
             f.write(string)

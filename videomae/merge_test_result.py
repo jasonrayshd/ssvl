@@ -24,7 +24,7 @@ output_path = "/".join(args.path[0].split("/")[:-1])
 num_crop = args.num_crop
 annotation_file = args.annotation_file
 
-pattern_twohead = "(.*?) \[(.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?)\] \[(.*?), (.*?)\] (\d)"
+pattern_twohead = "(.*?) \[(.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?)\] \[(.*?), (.*?)\] (\d) \[(.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?)\]"
 pred_dict = {}
 
 for p in path:
@@ -40,6 +40,8 @@ for p in path:
         loc_preds = result[1:18]
         cls_pred = result[18:20]
         crop_num = result[20]
+        frame_index = result[21:]
+
         if id not in pred_dict.keys():
             pred_dict[id] = {
                 0:{},
@@ -49,23 +51,27 @@ for p in path:
         pred_dict[id][int(crop_num)] = {
             "loc": [float(pred) for pred in loc_preds],
             "cls": [float(pred) for pred in cls_pred],
+            "idx": [int(idx) for idx in frame_index]
         }
 
 # combine results
 final_preds = {}
 for k,v in pred_dict.items():
     loc = []
+    idx = []
     cls = 0
     for i in range(num_crop):
         try:
-            loc.append(np.argmax(v[i]["loc"]))
+            pos = np.argmax(v[i]["loc"])
+            loc.append(pos)
+            idx.append(v[i]["idx"][pos] if pos != 16 else -1)
             cls += np.argmax(v[i]["cls"])
         except:
             # in case some predictions are missing
             print(f"{i}th crop of {k} do not exist ")
             continue
 
-    final_preds[k] = [loc, cls/num_crop]
+    final_preds[k] = [loc, idx, cls/num_crop]
 
 
 # save results to json file
@@ -74,7 +80,7 @@ cls_final = []
 for k, v in final_preds.items():
     cls_final.append({
         "unique_id": k,
-        "state_change": True if v[1] > 0.5 else False,
+        "state_change": True if v[2] > 0.5 else False,
     })
 
 clip_rawinfo = json.load(open(annotation_file))["clips"]
@@ -82,24 +88,31 @@ clip_dict = {}
 
 for clip in clip_rawinfo:
     id = clip["unique_id"]
-    sf = clip["parent_start_frame"]
-    clip_dict[id] = sf
+    clip_dict[id] = {
+        "sf": int(clip["parent_start_frame"]),
+        "ef": int(clip["parent_end_frame"])
+    }
 
 loc_final = []
 for k, v in final_preds.items():
-    pnr_frame = np.mean(v[0])
     loc_np = np.array(v[0])
-    if v[1] > 0.5:
-        # model predict that state change occurs in given clip
-        pnr_frame = np.where(loc_np==16, np.zeros_like(loc_np), loc_np)
-        pnr_frame = np.mean(pnr_frame)
-        # print(pnr_frame)
-        if pnr_frame == 0:
-            pnr_frame = 16
+    idx = np.array(v[1])
+
+    pnr_idx = []
+    for i in range(num_crop):
+        if idx[i] == -1:
+            continue
+        pnr_idx.append(idx[i])
+
+    # print(pnr_idx)
+    if len(pnr_idx) == 0:
+        pnr = 0.41 * (clip_dict[k]["ef"] - clip_dict[k]["sf"])
+    else:
+        pnr = sum(pnr_idx)/len(pnr_idx) - clip_dict[k]["sf"]
 
     loc_final.append({
         "unique_id": k,
-        "pnr_frame":  pnr_frame + clip_dict[k]
+        "pnr_frame":  pnr
     })
 
 
