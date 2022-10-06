@@ -312,6 +312,12 @@ def main(args):
 
     # filter data_dict according to filter_list
     data_dict = filter_data(data_dict, filter_list)
+    
+    # for debugging
+    # data_dict = {
+    #        "e14466f5-e646-4af2-a53f-1527cdf82cf9": data_dict["e14466f5-e646-4af2-a53f-1527cdf82cf9"],
+    #        "e70f4b34-432f-47dc-834f-5bc6bd67dc62": data_dict["e70f4b34-432f-47dc-834f-5bc6bd67dc62"],
+    #        }
 
     # collect total number of frames
     total_frame_num = 0
