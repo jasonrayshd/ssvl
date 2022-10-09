@@ -91,7 +91,7 @@ export -f run_docker
 
 # determine clips to be processed
 echo "Preparing information of clips to be processed..."
-py_ret=($(/opt/anaconda3/bin/python filter_processed_flow.py --logfile $LOGFILE --anno_path $NEW_ANNOTATION_FILE))
+py_ret=($(python filter_processed_flow.py --logfile $LOGFILE --anno_path $NEW_ANNOTATION_FILE))
 
 processed_num="${py_ret[0]}"
 clips_raw=("${py_ret[@]:1}")
