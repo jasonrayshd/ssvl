@@ -144,6 +144,9 @@ def get_args():
 
 
 def get_model(args):
+    """
+        Create model for Two-Stream Pretraining or VideoMAE
+    """
     print(f"Creating model: {args.model}")
 
     if not args.ts_pretrain:
@@ -173,9 +176,17 @@ def get_model(args):
     return model
 
 
-def cache_worker(address, local_world_size, log_path=""):
-    cache_manager = CacheManager(address=address,local_world_size=local_world_size, log_path=log_path)
-    cache_manager.start()
+def load_weight_for_rgb_encoder(raw_checkpoints):
+    """
+        when pretraining, load weight for rgb cross-modality encoder
+    """
+    rgb_encoder_checkpoints = {}
+
+    for k, v in raw_checkpoints["model"].items():
+        if k.startswith("encoder"):
+            rgb_encoder_checkpoints["rgb_encoder"+k[7:]] = v
+
+    return rgb_encoder_checkpoints
 
 
 def main(args):
@@ -196,6 +207,21 @@ def main(args):
     cudnn.benchmark = True
 
     model = get_model(args)
+
+    # Load weight for RGB cross-modality Encoder
+    ckpt = getattr(args, "ckpt", "")
+    if ckpt != "":
+        raw_checkpoints = torch.load(ckpt, map_location="cpu")
+        rgb_encoder_checkpoints = load_weight_for_rgb_encoder(raw_checkpoints)
+        missing_keys_lst, unexpected_keys_lst = model.load_state_dict(rgb_encoder_checkpoints, strict=False)
+        # Check if rgb cross-modality encoder weights are loaded successfully
+        flag = True
+        for k in missing_keys_lst:
+            if "rgb_encoder." in k:
+                flag = False
+                print(f"Found an unloaded paramter of RGB cross-modality encoder:{k}")
+        if flag:
+            print("Successfully load pretrained weight for RGB cross-modality Encoder")
 
     if args.ts_pretrain:
         assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
@@ -260,9 +286,9 @@ def main(args):
 
     total_batch_size = args.batch_size * utils.get_world_size()
 
-    # args.lr = args.lr * total_batch_size / 256
-    # args.min_lr = args.min_lr * total_batch_size / 256
-    # args.warmup_lr = args.warmup_lr * total_batch_size / 256
+    args.lr = args.lr * total_batch_size / 256
+    args.min_lr = args.min_lr * total_batch_size / 256
+    args.warmup_lr = args.warmup_lr * total_batch_size / 256
 
     print("LR = %.8f" % args.lr)
     print("Batch size = %d" % total_batch_size)
