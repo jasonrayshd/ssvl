@@ -1,0 +1,98 @@
+description: pretrain by on epic-kitchens55
+
+env_defaults:
+  NODES: 1
+  GPUS: 4
+  MEM: 24
+
+
+target:
+  service: aml
+  # name: shuama-8xv100-cluster4
+  # name: shuama-2xv100
+  name: weijian-cluster
+  # name: shuama-4xv100-2
+
+environment:
+  image: jiachenlei/ssvl-vmae_amlt8.1.1:latest
+
+# docker pull jiachenlei/ssvl-vmae_amlt8.1.1:latest
+code:
+  local_dir: ssvl-wofficial/videomae # with official video reading pipeline
+  storage_id: default
+
+storage:
+  data:
+    storage_account_name: compassresearch
+    container_name: shuang
+    mount_dir: /mnt/shuang
+
+  output:
+    storage_account_name: compassresearch
+    container_name: shuang
+    mount_dir: /mnt/shuang
+
+jobs:
+  #- name: pretrain_flow_epic55
+  #  sku: ${NODES}x${MEM}G${GPUS}-V100
+  #  command:
+  #    # - bash cluster_command.sh ${NODES} ${GPUS} $${OMPI_COMM_WORLD_RANK} $${MASTER_ADDR} $${MASTER_PORT}
+  #    # &&
+  #    - >-
+  #        python run_mae_pretraining.py
+  #        --overwrite command-line 
+  #        --config ./config/pretrain_flow_epic55.yml 
+  #        --project pretrain_flow_epic55
+  #        --name preepic55_A3
+  #        --seed 413
+  #    # note
+
+  #    # [07.19] used seed [413, 112]
+  #  aml_mpirun:
+  #    process_count_per_node: ${GPUS}
+  #    communicator: "OpenMpi"
+  #  submit_args:
+  #    container_args:
+  #      shm_size: 50g
+
+  - name: pretrain_twostream_epic55
+    sku: ${NODES}x${MEM}G${GPUS}
+    command:
+      # - bash cluster_command.sh ${NODES} ${GPUS} $${OMPI_COMM_WORLD_RANK} $${MASTER_ADDR} $${MASTER_PORT}
+      # &&
+      - >-
+          python run_mae_pretraining.py
+          --overwrite command-line 
+          --config ./config/temp/pretrain_ts_epic55.yml
+          --project pretrain_ts_epic55
+          --name ts_preepic55_A11
+          --seed 0
+      # note
+      # [08.10] used seed [0, ] for hard contrastive loss, A11
+      # [07.22] used seed [0, 122] for simple contrastive loss, A1, A2
+    aml_mpirun:
+      process_count_per_node: ${GPUS}
+      communicator: "OpenMpi"
+    submit_args:
+      container_args:
+        shm_size: 50g
+#search:
+  #max_trials: 16
+  #params:
+  # - name: lrate
+  #   values: [1e-4,1e-5]
+  # - name: aug_type
+  #   values: [MAW]    
+  # - name: n_layers
+  #   values: [6]
+  # - name: n_head
+  #   values: [8]
+  # - name: n_embd
+  #   values: [128]
+  # - name: clip_len
+  #   values: [32] 
+  # - name: clip_traj
+  #   values: [True]
+  # - name: state_tokenizer
+  #   values: [resnet18]      
+    

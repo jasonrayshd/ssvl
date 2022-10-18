@@ -44,10 +44,7 @@ def save_frame(dest, frame, frame_idx, desired_shorter_side):
             desired_shorter_side: int, shorter side size of saved frame
     
     """
-    file_path =  os.path.join(
-            dest,
-            f'{frame_idx}.jpg'
-    )
+    file_path =  os.path.join(dest, f'{frame_idx}.jpg')
 
     original_height, original_width, _ = frame.shape
 
