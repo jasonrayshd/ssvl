@@ -149,7 +149,7 @@ def get_model(args):
     """
     print(f"Creating model: {args.model}")
 
-    if not args.ts_pretrain:
+    if not args.ts_pretrain: 
         model = create_model(
             args.model,
             pretrained=False,
@@ -158,6 +158,7 @@ def get_model(args):
             decoder_depth=args.decoder_depth
         )
     else:
+        # default mae
         model = create_model(
             args.model,
             pretrained=False,
@@ -207,9 +208,9 @@ def main(args):
     cudnn.benchmark = True
 
     model = get_model(args)
-
     # Load weight for RGB cross-modality Encoder
     ckpt = getattr(args, "ckpt", "")
+    print(ckpt)
     if ckpt != "":
         raw_checkpoints = torch.load(ckpt, map_location="cpu")
         rgb_encoder_checkpoints = load_weight_for_rgb_encoder(raw_checkpoints)

@@ -4,11 +4,12 @@ ANNOTATION_FILE="/mnt/shuang/Data/ego4d/data/v1/annotations/egoclip.csv"
 
 # path to log file. videos that have been successfully processed or errors will be record in the log file
 # recommended value: processed_video.data
-LOGFILE="/mnt/shuang/Data/ego4d/preprocessed_data/processed_video.data"
+rank=$1
+LOGFILE="/mnt/shuang/Data/ego4d/preprocessed_data/processed_video_$rank.data"
 
 # path to source videos
 # e.g. on vm: /home/compass-user/workspace/blobfuse/shuang/data/ego4d/data/v1/full_scale
-SOURCE="/mnt/shuang/data/ego4d/data/v1/full_scale"
+SOURCE="/mnt/shuang/Data/ego4d/data/v1/full_scale"
 
 # path to save processed videos (frames)
 # e.g. on vm: /home/COMPASS-user/workspace/blobfuse/shuang/Data/ego4d/preprocessed_data/egoclip
@@ -26,7 +27,7 @@ MAX_NUM_THREADS=32
 DESIRED_SHORTER_SIDE=256
 
 
-python3 process_egoclip.py \
+python process_egoclip.py \
     --logfile $LOGFILE \
     --anno_path $ANNOTATION_FILE \
     --source $SOURCE \

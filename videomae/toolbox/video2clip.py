@@ -12,6 +12,10 @@ from tqdm import tqdm
 import threading
 import multiprocessing as mlp
 
+import zipfile
+
+import wandb
+wandb.init(project="preprocess_egoclip")
 
 def parse_terminal_args():
 
@@ -165,6 +169,7 @@ def worker(path, queue, video2clip_dict, processed_video_info):
 
     missed_frame = []
     clip_books = []
+    opened_frame_dict = {}  # record pil object of opened image
     for i, clip_frame_dict in enumerate(video2clip_dict[uid]):
         clip_frame_lst = sorted(clip_frame_dict["frames"]) # ensure the order of each frame
         clip_name = uid+"_{:05d}".format(i)
@@ -192,9 +197,10 @@ def worker(path, queue, video2clip_dict, processed_video_info):
         #                   ...
 
         clip_path = os.path.join( path, clip_name, "rgb" )
-
         os.makedirs( clip_path, exist_ok=True)
 
+        zip_path = os.path.join( path, clip_name)
+        zf = zipfile.open(os.path.join(zip_path, "frames.zip"))
         for j, frame in enumerate( clip_frame_lst ):
 
             if frame in processed_video_info[uid]["missed_frames"]:
@@ -202,7 +208,16 @@ def worker(path, queue, video2clip_dict, processed_video_info):
                 break
 
             frame_path = os.path.join(path, str(frame)+".jpg")
+
             if os.path.exists(frame_path):
+                if frame_path not in opened_frame_dict.keys()
+                    opened_frame_dict[frame_path] = Image.open(frame_path)
+
+                pil = opened_frame_dict[frame_path]
+                io_buf = io.BytesIO()
+                pil.save(io_buf, format="jpg")
+                zf.writestr( str(frame)+".jpg", io_buf.getvalue())
+             
                 if frameidx2times[frame] != 1:
                     # copy frame and rename frame
                     shutil.copy(frame_path, os.path.join(clip_path, str(frame)+".jpg"))
@@ -239,8 +254,10 @@ def process_pack(pack, logger):
 
     # print(clip_books)
     if len(missed_frames) == 0:
+        print(f"{uid},done\n")
         logger.write(f"{uid},done\n")
     else:
+        print(f"{uid},{','.join(missed_frames)}\n")
         logger.write(f"{uid},{','.join(missed_frames)}\n")
 
     return clip_books
@@ -267,6 +284,7 @@ def main(args):
     processed_video_info = process_information(args)
 
     # do not process videos that have already been transformed into clips
+    open(args.logfile, "a+").close()
     exclude_videos = []
     with open(args.logfile, "r") as log_fp:
         for line in log_fp.readlines():
@@ -280,7 +298,7 @@ def main(args):
     for file in args.exclude:
         with open(file, "r") as f:
             exclude_videos.extend([line.strip("\n") for line in f.readlines() ])
-    
+
     # deduplicate 
     exclude_videos = list(set(exclude_videos))
     num = 0
@@ -290,6 +308,7 @@ def main(args):
 
     print(f"{num} videos have been processed, ignore")
 
+    # return
     processed_videos = [os.path.join(source, uid) for uid in list( processed_video_info.keys() )] # video uid list
 
     max_thread_num = args.max_thread_num
@@ -308,7 +327,7 @@ def main(args):
     pbar = tqdm(processed_videos)
     i = 0
     active_thread_num = 0
-
+    done_video = 0
     try:
         while i < len(processed_videos):
 
@@ -339,8 +358,9 @@ def main(args):
                     active_thread_num -= 1
                     td_name = pack["thread_name"]
                     thread_pool[td_name].join()
-
+                    done_video += 1
                     pbar.update(1)
+                    wandb.log({"video": done_video})
 
     except KeyboardInterrupt:
         print("Waiting for all threads to finish...")
@@ -353,7 +373,9 @@ def main(args):
             clip_books = process_pack(pack, logger)
             write2csv(args.new_anno_path, clip_books)
 
+            done_video += 1
             pbar.update(1)
+            wandb.log({"video": done_video})
 
     else:
         print("waiting for threads to finish")
@@ -366,6 +388,9 @@ def main(args):
             clip_books = process_pack(pack, logger)
             write2csv(args.new_anno_path, clip_books)
 
+            done_video += 1
+            pbar.update(1)
+            wandb.log({"video": done_video})
 
 if __name__ == "__main__":
 

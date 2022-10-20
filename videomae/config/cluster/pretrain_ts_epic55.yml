@@ -1,8 +1,8 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 16
-epochs: 500
+batch_size: 2
+epochs: 400   # change with repeated_sampling
 save_ckpt_freq: 10
 
 # Model parameters
@@ -25,7 +25,7 @@ weight_decay_end: null    # help="""Final value of the
                           # weight decay. We use a cosine schedule for WD. 
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
 
-lr: 5.0e-5                # metavar='LR help='learning rate (default: 1.5e-4)
+lr: 1.5e-4                # metavar='LR help='learning rate (default: 1.5e-4)
 flow_encoder_lr: null
 
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
@@ -69,15 +69,8 @@ weighted_flow2rgb_recons: false
 
 tau: 0.01
 lamb: [1, 1, 1, 1, 0.1, 0.1]
-ctr: "hard2"
-# configuration file
-# config: ""                                  # help='path to configuration file
-
-# distributed training parameters
-# world_size: 1                               # help='number of distributed processes
-# local_rank: -1
-# dist_on_itp: false                          # action='store_true
-# dist_url: 'env://'                          # help='url used to set up distributed training
+ctr: "hard" # [easy, hard, hard2]
+ckpt: "/mnt/shuang/Output/output_ego4d/ckpt/pretrain_vitb_1600_kinetics400.pth"
 
 data_set: "epic-kitchen"
 
@@ -104,7 +97,7 @@ cfg:
     TRAIN_JITTER_SCALES: [256, 320]
     TRAIN_CROP_SIZE: 224
     TEST_CROP_SIZE: 224
-    REPEATED_SAMPLING: false
+    REPEATED_SAMPLING: 2
   TEST:
     NUM_SPATIAL_CROPS: ""
     NUM_ENSEMBLE_VIEWS: ""
