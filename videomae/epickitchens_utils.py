@@ -5,7 +5,7 @@ import torch
 from PIL import Image
 import cv2
 import os
-
+import io
 logger = logging.getLogger(__name__)
 
 import time
@@ -451,7 +451,47 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False, cache_dest
     logger.info(f"Finish processing zipfile {path_to_save}, time taken: {end_time-start_time}")
 
 
-def retry_load_images(image_paths, retry=10, backend="pytorch", as_pil=False, path_to_compressed="", online_extracting=False, flow=False, video_record=None, cache_manager=None):
+def read_from_tarfile(source, name, frame_idx, as_pil=False, flow=False):
+
+    frame_list = [] if not flow else [[], []]
+    with tarfile.open(os.path.join(source,f"{name}.tar")) as tf:
+        for i in range(0, len(frame_idx), 1 if not flow else 2):
+            idx = frame_idx[i]
+            if flow:
+                idx = idx // 2 + 1
+
+            img_name = "frame_{:010d}.jpg".format(idx)
+
+            if flow:
+                uflow_bytes = tf.extractfile(f"u/{img_name}").read()
+                vflow_bytes =  tf.extractfile(f"v/{img_name}").read()
+                uflow = Image.open(io.BytesIO(uflow_bytes))
+                vflow = Image.open(io.BytesIO(vflow_bytes))
+                if not as_pil:
+                    uflow = np.array(uflow)
+                    vflow = np.array(vflow)
+
+                frame_list[0].append(uflow)
+                frame_list[1].append(vflow)
+ 
+            else:
+                try:
+                    rgb_bytes = tf.extractfile(img_name).read()
+                    rgb = Image.open(io.BytesIO(rgb_bytes))
+                    if not as_pil:
+                        rgb = np.array(rgb)
+                    frame_list.append(rgb)
+                except Exception as e:
+                    print(source, name, frame_idx, img_name)
+                    print(e)
+
+        return frame_list
+
+def retry_load_images(image_paths, retry=10, backend="pytorch", 
+            as_pil=False, path_to_compressed="", online_extracting=False,
+            flow=False, video_record=None, cache_manager=None,
+            read_from_zip=True,
+        ):
     """
     This function is to load images with support of retrying for failed load.
     Args:
