@@ -1,12 +1,12 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 8
+batch_size: 4
 epochs: 600
 save_ckpt_freq: 10
 
 # Model parameters
-model: "pretrain_tsvit_base_patch16_224"
+model: "pretrain_videomae_multimodal_base_patch16_224"
 decoder_depth: 4
 mask_type: "agnostic"         # choices=['tube']
 mask_ratio: 0.9
@@ -54,22 +54,12 @@ start_epoch: 0                              # help='start epoch
 num_workers: 8
 pin_mem: true
 # flow images
-pretrain: "ts"
+pretrain: "multimodal"
 # predict_preprocessed_flow: true               # whether use preprocessed flow images as target at pretraining
 flow_mode: "local"                                # mode of sampling flow images  [A]
-fuse_scheme: "concate"
-tokenizer_backbone: "simplecnn"
 
-version: "3.0"
-use_rgb_stat: ""
-mask_tokenizer: false               # if ture, then mask token will be shared between transformer encoder and CNN encoder within each modality
-share_proj_layer: false
-share_within_modality_proj_layer: true
-weighted_flow2rgb_recons: false
+lamb: [1, 1, 1, 1]
 
-tau: 0.01
-lamb: [1, 1, 1, 1, 0.1, 0.1]
-ctr: "hard2"
 # configuration file
 # config: ""                                  # help='path to configuration file
 
@@ -80,6 +70,7 @@ ctr: "hard2"
 # dist_url: 'env://'                          # help='url used to set up distributed training
 
 data_set: "epic-kitchen"
+# ckpt: "/mnt/code/ssvl/videomae/ckpt/pretrain_vitb_1600_kinetics400.pth"
 
 # configurations for epic-kitchens dataset
 cfg:

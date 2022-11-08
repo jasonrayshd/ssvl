@@ -699,6 +699,204 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
+
+
+class MultiModalLoss(nn.Module):
+
+    def __init__(self, lamb):
+        super().__init__()
+        self.lamb = lamb
+        self.recons_loss = nn.MSELoss(reduction="none")
+
+    def forward(self, output, rgb_target, flow_target):
+        """
+            output: tuple(rgb_recons, flow_recons), where rgb_recons shape is (2*B, N, C1)
+            rgb_target: torch.Tensor, (B, N, C1)
+            flow_target: torch.Tensor, (B, N, C2)
+        """
+        B, N, C = rgb_target.shape
+
+        # print(output[0].shape)
+        rgb_recons, flow_recons = output
+
+        unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, torch.cat([rgb_target, rgb_target], dim=0))
+        unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
+
+        rgb_recons_loss, flow_rgb_recons_loss = unreduced_rgb_recons_loss[:B].mean(), unreduced_rgb_recons_loss[B:].mean()
+        flow_recons_loss, rgb_flow_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
+        
+        loss = {
+            "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss +  self.lamb[3]*rgb_flow_recons_loss,
+            "rgb_recons": rgb_recons_loss,
+            "flow_recons":flow_recons_loss,
+
+            "rgb_flow_recons": rgb_flow_recons_loss,
+            "flow_rgb_recons": flow_rgb_recons_loss,
+        }
+
+
+        return loss
+
+
+def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: torch.optim.Optimizer,
+                    device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
+                    normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
+                    lr_schedule_values=None, wd_schedule_values=None,
+                    lamb = [1,1,1,1],
+                    ):
+    model.train()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    metric_logger.add_meter('min_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Epoch: [{}]'.format(epoch)
+    print_freq = 10
+
+    loss_func = MultiModalLoss(lamb=lamb)
+
+    for step, batch in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+        # assign learning rate & weight decay for each step
+        it = start_steps + step  # global training iteration
+
+        if lr_schedule_values is not None or wd_schedule_values is not None:
+            for i, param_group in enumerate(optimizer.param_groups):
+                if lr_schedule_values is not None:
+                    param_group["lr"] = lr_schedule_values[it] * param_group["lr_scale"]
+                if wd_schedule_values is not None and param_group["weight_decay"] > 0:
+                    param_group["weight_decay"] = wd_schedule_values[it]
+
+        videos, bool_masked_pos, flows = batch[0], batch[1], batch[2]
+
+        if len(videos.shape) == 6: # repeated sampling is used
+            videos = videos.reshape(-1, *videos.shape[2:])
+            bool_masked_pos = bool_masked_pos.reshape(-1, *bool_masked_pos.shape[2:])
+            flows = flows.reshape(-1, *flows.shape[2:])
+
+        videos = videos.to(device, non_blocking=True)
+        bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
+
+        # use given target or simply reconstruct input video
+
+        with torch.no_grad():
+            # calculate the predict label
+            mean = torch.as_tensor(IMAGENET_DEFAULT_MEAN).to(device)[None, :, None, None, None]
+            std = torch.as_tensor(IMAGENET_DEFAULT_STD).to(device)[None, :, None, None, None]
+
+            unnorm_videos = videos * std + mean  # in [0, 1]
+
+            if normlize_target:
+                videos_squeeze = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2) c', p0=2, p1=patch_size, p2=patch_size)
+                videos_norm = (videos_squeeze - videos_squeeze.mean(dim=-2, keepdim=True)
+                    ) / (videos_squeeze.var(dim=-2, unbiased=True, keepdim=True).sqrt() + 1e-6)
+
+                videos_patch = rearrange(videos_norm, 'b n p c -> b n (p c)')
+                B, _, C = videos_patch.shape
+                rgb_target = videos_patch[bool_masked_pos].reshape(B, -1, C)
+            else:
+                videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=patch_size, p2=patch_size)
+                B, _, C = videos_patch.shape
+                rgb_target = videos_patch[bool_masked_pos].reshape(B, -1, C)
+
+        # target will be processed in dataset code
+        # reconstruct entire given flow images
+        # flows = batch[2] # bs, 2, flow nubmers, h, w
+
+        B, _, N, H, W = flows.shape
+        _, _, T, H, W = videos.shape
+        assert T%N == 0, f"Number of flows:{T} to be predicted should be divisible by number of frames:{N}"
+        # print(flows.shape)
+
+        flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
+
+        tublet_size = 2
+        bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
+        bool_masked_pos_label = bool_masked_pos_label.repeat(1, N//(T//tublet_size), 1, 1)
+        bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
+
+        flow_target = flow_target[bool_masked_pos_label]
+        flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
+
+        flow_target = flow_target.to(device, non_blocking=True)
+
+        with torch.cuda.amp.autocast():
+            outputs = model(videos, flows, bool_masked_pos)
+ 
+            loss_dct = loss_func(outputs, rgb_target, flow_target)
+            loss = loss_dct["sum"]
+
+        loss_value = new_func(loss)
+
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+            sys.exit(1)
+
+        optimizer.zero_grad()
+
+        # this attribute is added by timm on one optimizer (adahessian)
+        is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
+        grad_norm = loss_scaler(loss, optimizer, clip_grad=max_norm, parameters=model.parameters(),
+                                create_graph=is_second_order)
+
+        loss_scale_value = loss_scaler.state_dict()["scale"]
+
+        torch.cuda.synchronize()
+
+        metric_logger.update(loss=loss_value)
+        metric_logger.update(rgb_recons_loss=loss_dct["rgb_recons"])
+        metric_logger.update(flow_recons_loss=loss_dct["flow_recons"])
+        metric_logger.update(recons_loss=loss_dct["rgb_recons"]+loss_dct["flow_recons"])
+
+        metric_logger.update(rgb_flow_recons=loss_dct["rgb_flow_recons"])
+        metric_logger.update(flow_rgb_recons=loss_dct["flow_rgb_recons"])
+        metric_logger.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"])
+
+        metric_logger.update(loss_scale=loss_scale_value)
+
+        min_lr = 10.
+        max_lr = 0.
+        for group in optimizer.param_groups:
+            min_lr = min(min_lr, group["lr"])
+            max_lr = max(max_lr, group["lr"])
+
+        metric_logger.update(lr=max_lr)
+        metric_logger.update(min_lr=min_lr)
+
+        weight_decay_value = None
+        for group in optimizer.param_groups:
+            if group["weight_decay"] > 0:
+                weight_decay_value = group["weight_decay"]
+        metric_logger.update(weight_decay=weight_decay_value)
+        metric_logger.update(grad_norm=grad_norm)
+
+        if log_writer is not None:
+            log_writer.update(loss=loss_value, head="loss")
+            log_writer.update(rgb_recons=loss_dct["rgb_recons"], head="rgb_recons")
+            log_writer.update(flow_recons=loss_dct["flow_recons"], head="flow_recons")
+            log_writer.update(recons_loss=loss_dct["rgb_recons"] + loss_dct["flow_recons"], head="recons_loss")
+
+            log_writer.update(rgb_flow_recons=loss_dct["rgb_flow_recons"], head="rgb_flow_recons")
+            log_writer.update(flow_rgb_recons=loss_dct["flow_rgb_recons"], head="flow_rgb_recons")
+            log_writer.update(cross_recons=loss_dct["rgb_flow_recons"] + loss_dct["flow_rgb_recons"], head="cross_recons")
+
+            log_writer.update(loss_scale=loss_scale_value, head="opt")
+            log_writer.update(lr=max_lr, head="opt")
+            log_writer.update(min_lr=min_lr, head="opt")
+
+            log_writer.update(weight_decay=weight_decay_value, head="opt")
+            log_writer.update(grad_norm=grad_norm, head="opt")
+            log_writer.set_step()
+
+        if lr_scheduler is not None:
+            lr_scheduler.step_update(start_steps + step)
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+    
+    
+
+
+
 def new_func(loss):
     loss_value = loss.item()
     return loss_value

@@ -1,3 +1,4 @@
+from builtins import ValueError
 import argparse
 from cgi import parse_multipart
 import datetime
@@ -15,7 +16,7 @@ from flow_extractor import flowExtractor
 from timm.models import create_model
 from optim_factory import create_optimizer
 from datasets import build_pretraining_dataset
-from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch
+from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch, train_multimodal_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
@@ -149,7 +150,7 @@ def get_model(args):
     """
     print(f"Creating model: {args.model}")
 
-    if not args.ts_pretrain:
+    if args.pretrain == "mae":
         model = create_model(
             args.model,
             pretrained=False,
@@ -157,7 +158,7 @@ def get_model(args):
             drop_block_rate=None,
             decoder_depth=args.decoder_depth
         )
-    else:
+    elif args.pretrain == "ts":
         model = create_model(
             args.model,
             pretrained=False,
@@ -173,6 +174,17 @@ def get_model(args):
             fuse_scheme = args.fuse_scheme,
             tokenizer_backbone = args.tokenizer_backbone,
         )
+    elif args.pretrain == "multimodal":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth
+        )
+    else:
+        raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
+
     return model
 
 
@@ -223,11 +235,16 @@ def main(args):
         if flag:
             print("Successfully load pretrained weight for RGB cross-modality Encoder")
 
-    if args.ts_pretrain:
+    if args.pretrain == "ts":
         assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
         patch_size = model.rgb_encoder.patch_embed.patch_size
-    else:
+    elif args.pretrain == "mae":
         patch_size = model.encoder.patch_embed.patch_size
+    elif args.pretrain == "multimodal":
+        patch_size = model.encoder.rgb_patch_embed.patch_size
+    else:
+        raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
+
     print("Patch size = %s" % str(patch_size))
 
     # window size for masking
@@ -299,7 +316,7 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
-    if args.ts_pretrain and args.flow_encoder_lr is not None:
+    if args.pretrain == "ts" and args.flow_encoder_lr is not None:
         ignore_param = {
             # *["flow_encoder_to_decoder."+name for name, param in model.module.flow_encoder_to_decoder.named_parameters()],
             *["flow_encoder."+name for name, param in model.module.flow_encoder.named_parameters() ]
@@ -358,7 +375,7 @@ def main(args):
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch)
 
-        if not args.ts_pretrain:
+        if args.pretrain == "mae":
             train_stats = train_one_epoch(
                 model, data_loader_train,
                 optimizer, device, epoch, loss_scaler,
@@ -373,7 +390,7 @@ def main(args):
                 # whether predict given flow images or recons input based on flow images
                 predict_preprocessed_flow = (args.flow_mode != ""),
             )
-        else:
+        elif args.pretrain == "ts":
             train_stats = train_tsvit_one_epoch(
                 model, data_loader_train,
                 optimizer, device, epoch, loss_scaler,
@@ -391,6 +408,23 @@ def main(args):
                 tau = float(args.tau),
                 lamb = args.lamb,
             ) 
+
+        elif args.pretrain == "multimodal":
+            train_stats = train_multimodal_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+                patch_size=patch_size[0],
+                normlize_target=args.normlize_target,
+
+                lamb = args.lamb,
+
+            )
+        else:
+            raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
         if args.output_dir:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:

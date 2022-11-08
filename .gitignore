@@ -14,6 +14,7 @@ videomae/ckpt/**
 videomae/log/**
 videomae/output/**
 videomae/preprocess/**
+videomae/toolbox/**
 
 wandb
 
@@ -22,6 +23,5 @@ wandb
 */*.jpg
 
 events.out.tfevents*
-
 
 lightning
