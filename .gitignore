@@ -14,7 +14,8 @@ videomae/ckpt/**
 videomae/log/**
 videomae/output/**
 videomae/preprocess/**
-# videomae/toolbox/**
+
+videomae/toolbox/**
 
 wandb
 
