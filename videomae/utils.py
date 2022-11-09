@@ -351,13 +351,30 @@ class NativeScalerWithGradNormCount:
         if update_grad:
             if clip_grad is not None:
                 assert parameters is not None
-                self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+
+                if not isinstance(optimizer, list):
+                    self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                else:
+                    for optim in optimizer:
+                        self._scaler.unscale_(optim)  # unscale the gradients of optimizer's assigned params in-place
+
                 norm = torch.nn.utils.clip_grad_norm_(parameters, clip_grad)
             else:
-                self._scaler.unscale_(optimizer)
+                if not isinstance(optimizer, list):
+                    self._scaler.unscale_(optimizer)
+                else:
+                    for optim in optimizer:
+                        self._scaler.unscale_(optim)
+
                 norm = get_grad_norm_(parameters)
-            self._scaler.step(optimizer)
+
+            if not isinstance(optimizer, list):
+                self._scaler.step(optimizer)
+            else:
+                for optim in optimizer:
+                    self._scaler.step(optim)
             self._scaler.update()
+
         else:
             norm = None
         return norm
@@ -385,14 +402,21 @@ def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:
 
 
 def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epochs=0,
-                     start_warmup_value=0, warmup_steps=-1):
+                     start_warmup_value=0, warmup_steps=-1, strategy=""):
     warmup_schedule = np.array([])
     warmup_iters = warmup_epochs * niter_per_ep
     if warmup_steps > 0:
         warmup_iters = warmup_steps
     print("Set warmup steps = %d" % warmup_iters)
     if warmup_epochs > 0:
-        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
+        if strategy == "fixed_in_epoch":
+            warmup_schedule = np.array( [start_warmup_value * (10**i)  for i in range(warmup_epochs//2)] )
+            print(warmup_schedule)
+            warmup_schedule = np.repeat(warmup_schedule, 2)
+            warmup_schedule = np.repeat(warmup_schedule, niter_per_ep)
+            print("[ATTENTION] Using fixed learning rate within each epoch")
+        else:
+            warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
 
     iters = np.arange(epochs * niter_per_ep - warmup_iters)
     schedule = np.array(
@@ -432,8 +456,8 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler, mo
 def auto_load_model(args, model, model_without_ddp, optimizer, loss_scaler, model_ema=None):
     output_dir = Path(args.output_dir)
     if loss_scaler is not None:
-        # torch.amp
         if args.auto_resume and len(args.resume) == 0:
+            # code blocks running by default if enable_deepspeed is False:
             import glob
             all_checkpoints = glob.glob(os.path.join(output_dir, 'checkpoint-*.pth'))
             latest_ckpt = -1
@@ -537,96 +561,14 @@ def multiple_samples_collate(batch, fold=False):
         return inputs, labels, video_idx, extra_data
 
 
+def samples_collate_ego4d_test(batch):
+    inputs, flows, info, frame_index = zip(*batch)
+    # print(f"worker: inputs[0] shape:{inputs[0].shape}")
+    inputs = torch.stack(inputs, dim=0)
+    frame_index = torch.tensor(frame_index)
 
-# Codes below were edited by Jiachen Lei
-def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
-    """
-    Collate function for repeated augmentation. Each instance in the batch has
-    more than one sample.
-    Args:
-        batch (tuple or list): data batch to collate.
-    Returns:
-        (tuple): collated data batch.
-    """
-    inputs, target, fps, info = zip(*batch)
-    # print(target)
-    inputs = [item for sublist in inputs for item in sublist]
-
-    if nb_classes == -1:
-        labels = [label for sublist in target for label in sublist[0]]
-        states = [state for sublist in target for state in sublist[1]]
-
-        inputs, labels, states = (
-            default_collate(inputs),
-            default_collate(labels),
-            default_collate(states),
-        )
-        if fold:
-            return [inputs], [labels, states], fps, info
-        else:
-            return inputs, [labels, states], fps, info
-
-    elif nb_classes == 2:
-        states = [item for sublist in target for item in sublist]
-        inputs, states = (
-            default_collate(inputs),
-            default_collate(states),
-        )
-        if fold:
-            return [inputs], states, fps, info
-        else:
-            return inputs , states, fps, info
-
+    if flows[0] is not None:
+        flows = torch.stack(flows, dim=0)
     else:
-        labels = [item for sublist in target for item in sublist]
-        inputs, labels = (
-            default_collate(inputs),
-            default_collate(labels),
-        )
-        if fold:
-            return [inputs], labels, fps, info
-        else:
-            return inputs, labels, fps, info
-
-
-def samples_collate_ego4d(batch):
-
-    inputs, target, fps, info = zip(*batch)
-
-    labels = [item[0] for item in target]
-    states = [item[1] for item in target]
-
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
-
-    return inputs, [labels, states], fps, info
-
-
-def collate_func_debug_val(batch):
-    inputs, target, fps, info = zip(*batch)
-
-    labels = []
-    states = []
-    for i, item in enumerate(target):
-        try:
-            labels.append(item[0])
-            states.append(item[1])
-            if item[0] is None or item[1] is None:
-                raise Exception(f"Error occurs: {info[i]}")
-                import sys
-                sys.exit(0)
-        except:
-            raise Exception(f"Error occurs: {info[i]}")
-            import sys
-            sys.exit(0)
-
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
-
-    return inputs, [labels, states], fps, info
+        flows = None
+    return inputs, flows, info, frame_index

@@ -1,7 +1,7 @@
 import os
 from torchvision import transforms
 from transforms import *
-from masking_generator import TubeMaskingGenerator
+from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 from kinetics import VideoClsDataset, VideoMAE
 from ssv2 import SSVideoClsDataset
 
@@ -10,34 +10,38 @@ from epickitchens import Epickitchens
 from argparse import Namespace
 
 class DataAugmentationForVideoMAE(object):
-    def __init__(self, args, use_preprocessed_flow=False):
+    def __init__(self, args, flow_mode=False):
         self.input_mean = [0.485, 0.456, 0.406]  # IMAGENET_DEFAULT_MEAN
         self.input_std = [0.229, 0.224, 0.225]  # IMAGENET_DEFAULT_STD
 
         # flow image should be the same given normalized images
         # thus it do not need to be normalized
-        normalize = GroupNormalize(self.input_mean, self.input_std, use_preprocessed_flow=use_preprocessed_flow)
+        normalize = GroupNormalize(self.input_mean, self.input_std, flow_mode=flow_mode)
         # This contains random process and is rewritten for flow image processing
-        self.train_augmentation = GroupMultiScaleCrop(args.input_size, [1, .875, .75, .66], use_preprocessed_flow=use_preprocessed_flow)
+        self.train_augmentation = GroupMultiScaleCrop(args.input_size, [1, .875, .75, .66], flow_mode=flow_mode)
 
         # accpet pil image
         self.transform = transforms.Compose([                            
             self.train_augmentation,
-            Stack(roll=False, use_preprocessed_flow=use_preprocessed_flow),
-            ToTorchFormatTensor(div=True, use_preprocessed_flow=use_preprocessed_flow),
+            Stack(roll=False, flow_mode=flow_mode),
+            ToTorchFormatTensor(div=True, flow_mode=flow_mode),
             normalize,
         ])
         if args.mask_type == 'tube':
             self.masked_position_generator = TubeMaskingGenerator(
                 args.window_size, args.mask_ratio
             )
+        elif args.mask_type == "agnostic":
+            self.masked_position_generator = AgnosticMaskingGenerator(
+                args.window_size, args.mask_ratio
+            )
         else:
             raise ValueError(f"Unknown mask type {args.mask_type}")
 
-    def __call__(self, images, use_preprocessed_flow=False):
+    def __call__(self, images, flow_mode=""):
         process_data, flows_or_none = self.transform(images)
 
-        if use_preprocessed_flow:
+        if flow_mode == "local":
             return process_data, flows_or_none, self.masked_position_generator()
         else:
             return process_data, self.masked_position_generator()
@@ -50,10 +54,10 @@ class DataAugmentationForVideoMAE(object):
         return repr
 
 
-def build_pretraining_dataset(args):
+def build_pretraining_dataset(args, **kwargs):
     
     if "ego4d" in args.data_set:
-        transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.use_preprocessed_flow)
+        transform = DataAugmentationForVideoMAE(args, flow_mode=args.flow_mode)
         mode = "train"
         # cfg = Namespace(**{
         #     "DATA": Namespace(**{
@@ -77,7 +81,7 @@ def build_pretraining_dataset(args):
 
     elif "epic-kitchen" in args.data_set:
         # NOTE flow images in epic-kitchens are normalized to [0, 255]
-        transform = DataAugmentationForVideoMAE(args, use_preprocessed_flow=args.use_preprocessed_flow)
+        transform = DataAugmentationForVideoMAE(args, flow_mode=args.flow_mode)
         mode = "train"
 
         """
@@ -128,9 +132,9 @@ def build_pretraining_dataset(args):
         #     }),
         # })
         dataset = Epickitchens(args.cfg, mode,
-                                pretrain=True, pretrain_transform=transform, 
-                                use_preprocessed_flow=args.use_preprocessed_flow, flow_mode=args.flow_mode,
-                                flow_pretrain=args.flow_pretrain,
+                                pretrain = True, pretrain_transform=transform, 
+                                flow_mode=args.flow_mode,
+                                flow_extractor = kwargs["flow_extractor"] if "flow_extractor" in kwargs.keys() else None,
                                 )
 
     else:
@@ -154,7 +158,8 @@ def build_pretraining_dataset(args):
     return dataset
 
 
-def build_dataset(is_train, test_mode, args):
+# build finetuning dataset
+def build_dataset(is_train, test_mode, args, flow_extractor=None):
 
     if "Ego4d-statechange" in args.data_set:
         mode = None
@@ -203,7 +208,7 @@ def build_dataset(is_train, test_mode, args):
         #     })
         # })
 
-        dataset = StateChangeDetectionAndKeyframeLocalisation(args.cfg, mode, args=args, pretrain=False)
+        dataset = StateChangeDetectionAndKeyframeLocalisation(args.cfg, mode, args=args, pretrain=False, flow_extractor=flow_extractor)
         """
             Jiachen 2022.05.25
             dataset.__getitem__() will return 

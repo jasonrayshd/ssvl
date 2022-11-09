@@ -4,12 +4,24 @@ github_raw_code
 ego4d_anno
 kinetics_anno
 debug
+
+*.json
+*.swp
 *.csv
+*.data
 
 videomae/ckpt/**
 videomae/log/**
 videomae/output/**
+videomae/preprocess/**
+videomae/toolbox/**
+
 wandb
 
+*/*.pth
+*/*.png
+*/*.jpg
 
 events.out.tfevents*
+
+lightning

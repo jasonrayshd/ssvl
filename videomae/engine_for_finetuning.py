@@ -13,7 +13,12 @@ from loss import Ego4dTwoHead_Criterion
 
 def train_class_batch(model, samples, target, criterion):
     # print("train_class_batch")
-    outputs = model(samples)
+    frames, flows = samples
+    if flows is None:
+        outputs = model(frames)
+    else:
+        outputs = model(frames, flows)
+
     loss = criterion(outputs, target)
 
     return loss, outputs
@@ -43,7 +48,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     else:
         optimizer.zero_grad()
 
-    for data_iter_step, (samples, targets, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (samples, targets, flows, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
             continue
@@ -57,6 +62,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     param_group["weight_decay"] = wd_schedule_values[it]
 
         samples = samples.to(device, non_blocking=False)
+        if flows is not None:
+            flows = flows.to(device, non_blocking=False)
+
         if isinstance(targets, torch.Tensor):
             targets = targets.to(device, non_blocking=False)
         elif isinstance(targets, list): # ego4d
@@ -72,13 +80,16 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if loss_scaler is None:
             # print("loss scaler is None")
             samples = samples.half()
+            if flows is not None:
+                flows = flows.half()
+
             loss, output = train_class_batch(
-                model, samples, targets, criterion)
+                model, [samples, flows], targets, criterion)
 
         else:
             with torch.cuda.amp.autocast():
                 loss, output = train_class_batch(
-                    model, samples, targets, criterion)
+                    model, [samples, flows], targets, criterion)
         
         loss_value = loss.item()
 
@@ -173,7 +184,11 @@ def validation_one_epoch(data_loader, model, device, criterion):
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
         target = batch[1]
+        flows = batch[2]
         videos = videos.to(device, non_blocking=True)
+        if flows is not None:
+            flows = flows.to(device, non_blocking=True)
+
         # print(target)
         if not isinstance(target, list):
             target = target.to(device, non_blocking=True)
@@ -182,8 +197,12 @@ def validation_one_epoch(data_loader, model, device, criterion):
             target = [labels, states]
         # compute output
         with torch.cuda.amp.autocast():
-            output = model(videos)
-            loss = criterion(output, target)
+            if flows is not None:
+                output = model(videos, flows)
+                loss = criterion(output, target)
+            else:
+                output = model(videos)
+                loss = criterion(output, target)
 
         batch_size = videos.shape[0]
         metric_logger.update(loss=loss.item())
@@ -213,7 +232,6 @@ def validation_one_epoch(data_loader, model, device, criterion):
     info += "\n"
     print(info)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-
 
 
 @torch.no_grad()

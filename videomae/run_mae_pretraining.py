@@ -1,3 +1,4 @@
+from builtins import ValueError
 import argparse
 from cgi import parse_multipart
 import datetime
@@ -7,15 +8,25 @@ import torch
 import torch.backends.cudnn as cudnn
 import json
 import os
+
+import copy
+
 from pathlib import Path
+from flow_extractor import flowExtractor
 from timm.models import create_model
 from optim_factory import create_optimizer
 from datasets import build_pretraining_dataset
-from engine_for_pretraining import train_one_epoch
+from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch, train_multimodal_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
 import wandb
+
+import logging
+import socket
+from epickitchens_utils import CacheManager
+from multiprocessing.managers import SyncManager
+import multiprocessing as mp
 
 from config_utils import parse_yml, combine
 
@@ -123,51 +134,134 @@ def get_args():
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+
+    parser.add_argument('--wandb_id', default=None, type=str,
+                        help='run id of wandb')
     
+    parser.add_argument('--train_wo_amp', action='store_true')
+    parser.add_argument('--tau', type=float, default=0.01,
+                        help='temperature hyper-parameter tau')
     return parser.parse_args()
 
 
 def get_model(args):
+    """
+        Create model for Two-Stream Pretraining or VideoMAE
+    """
     print(f"Creating model: {args.model}")
-    model = create_model(
-        args.model,
-        pretrained=False,
-        drop_path_rate=args.drop_path,
-        drop_block_rate=None,
-        decoder_depth=args.decoder_depth
-    )
+
+    if args.pretrain == "mae":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth
+        )
+    elif args.pretrain == "ts":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
+
+            version = args.version,
+            use_rgb_stat = args.use_rgb_stat, 
+            share_within_modality_proj_layer = args.share_within_modality_proj_layer,
+            mask_tokenizer = args.mask_tokenizer,
+            share_proj_layer = args.share_proj_layer,
+            fuse_scheme = args.fuse_scheme,
+            tokenizer_backbone = args.tokenizer_backbone,
+        )
+    elif args.pretrain == "multimodal":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth
+        )
+    else:
+        raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
+
     return model
+
+
+def load_weight_for_rgb_encoder(raw_checkpoints):
+    """
+        when pretraining, load weight for rgb cross-modality encoder
+    """
+    rgb_encoder_checkpoints = {}
+
+    for k, v in raw_checkpoints["model"].items():
+        if k.startswith("encoder"):
+            rgb_encoder_checkpoints["rgb_encoder"+k[7:]] = v
+
+    return rgb_encoder_checkpoints
 
 
 def main(args):
     utils.init_distributed_mode(args)
 
-    
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
 
     if utils.get_rank() == 0 and not args.debug:
-        wandb.init(project=args.project, config=vars(opts))
+        wandb.init(project=args.project, id=args.wandb_id, resume="must" if args.wandb_id else None, config=vars(opts))
 
     print(args)
-
 
     torch.manual_seed(seed)
     np.random.seed(seed)
     cudnn.benchmark = True
 
     model = get_model(args)
-    patch_size = model.encoder.patch_embed.patch_size
+
+    # Load weight for RGB cross-modality Encoder
+    ckpt = getattr(args, "ckpt", "")
+    if ckpt != "":
+        raw_checkpoints = torch.load(ckpt, map_location="cpu")
+        rgb_encoder_checkpoints = load_weight_for_rgb_encoder(raw_checkpoints)
+        missing_keys_lst, unexpected_keys_lst = model.load_state_dict(rgb_encoder_checkpoints, strict=False)
+        # Check if rgb cross-modality encoder weights are loaded successfully
+        flag = True
+        for k in missing_keys_lst:
+            if "rgb_encoder." in k:
+                flag = False
+                print(f"Found an unloaded paramter of RGB cross-modality encoder:{k}")
+        if flag:
+            print("Successfully load pretrained weight for RGB cross-modality Encoder")
+
+    if args.pretrain == "ts":
+        assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
+        patch_size = model.rgb_encoder.patch_embed.patch_size
+    elif args.pretrain == "mae":
+        patch_size = model.encoder.patch_embed.patch_size
+    elif args.pretrain == "multimodal":
+        patch_size = model.encoder.rgb_patch_embed.patch_size
+    else:
+        raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
+
     print("Patch size = %s" % str(patch_size))
 
     # window size for masking
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
-    # get dataset
-    dataset_train = build_pretraining_dataset(args)
+    if args.flow_mode == "online":
+        mp.set_start_method('spawn')
+        SyncManager.register("flowExtractor", flowExtractor)
+        m = SyncManager()
+        m.start()
+        flow_extractor = m.flowExtractor(device=f"cuda:{args.gpu}")
+        print(f"Flow extractor manager started by {os.getpid()}.")
+    else:
+        flow_extractor = None
+
+    dataset_train = build_pretraining_dataset(args, flow_extractor=flow_extractor)
 
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -177,8 +271,8 @@ def main(args):
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=sampler_rank, shuffle=True
     )
-    print("Sampler_train = %s" % str(sampler_train))
 
+    print("Sampler_train = %s" % str(sampler_train))
 
     assert args.log_dir is not None and args.output_dir is not None, "log_dir and output_dir should not be empty"
     args.log_dir = os.path.join(args.log_dir, args.name)
@@ -196,6 +290,7 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
+        multiprocessing_context="spawn" if args.flow_mode == "online" else None,
         worker_init_fn=utils.seed_worker
     )
 
@@ -211,6 +306,7 @@ def main(args):
     args.lr = args.lr * total_batch_size / 256
     args.min_lr = args.min_lr * total_batch_size / 256
     args.warmup_lr = args.warmup_lr * total_batch_size / 256
+
     print("LR = %.8f" % args.lr)
     print("Batch size = %d" % total_batch_size)
     print("Number of training steps = %d" % num_training_steps_per_epoch)
@@ -220,15 +316,46 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
-    optimizer = create_optimizer(
-        args, model_without_ddp)
+    if args.pretrain == "ts" and args.flow_encoder_lr is not None:
+        ignore_param = {
+            # *["flow_encoder_to_decoder."+name for name, param in model.module.flow_encoder_to_decoder.named_parameters()],
+            *["flow_encoder."+name for name, param in model.module.flow_encoder.named_parameters() ]
+        }
+        print(ignore_param)
+
+        optimizer = create_optimizer(
+            args, model_without_ddp, 
+            ignore_param = ignore_param
+        )
+
+        flow_optimizer = create_optimizer(
+            args, 
+            # torch.nn.Sequential(model.module.flow_encoder_to_decoder, model.module.flow_encoder),
+            torch.nn.Sequential( model.module.flow_encoder),
+            lr = args.flow_encoder_lr,
+        )
+        flow_encoder_lr_schedule_values = utils.cosine_scheduler(
+            args.flow_encoder_lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
+            start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+        )
+
+    else:
+        optimizer = create_optimizer(
+            args, model_without_ddp)
+
+        flow_optimizer = None
+        flow_encoder_lr_schedule_values = None
+
     loss_scaler = NativeScaler()
 
     print("Use step level LR & WD scheduler!")
+
     lr_schedule_values = utils.cosine_scheduler(
         args.lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
-        warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+        start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+        # strategy="fixed_in_epoch",
     )
+
     if args.weight_decay_end is None:
         args.weight_decay_end = args.weight_decay
     wd_schedule_values = utils.cosine_scheduler(
@@ -237,6 +364,7 @@ def main(args):
 
     utils.auto_load_model(
         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
+
     torch.cuda.empty_cache()
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
@@ -247,20 +375,56 @@ def main(args):
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch)
 
-        train_stats = train_one_epoch(
-            model, data_loader_train,
-            optimizer, device, epoch, loss_scaler,
-            args.clip_grad, log_writer=log_writer,
-            start_steps=epoch * num_training_steps_per_epoch,
-            lr_schedule_values=lr_schedule_values,
-            wd_schedule_values=wd_schedule_values,
-            patch_size=patch_size[0],
-            normlize_target=args.normlize_target,
+        if args.pretrain == "mae":
+            train_stats = train_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+                patch_size=patch_size[0],
+                normlize_target=args.normlize_target,
+                # use mixed precision or not
+                train_wo_amp = args.train_wo_amp, 
+                # whether predict given flow images or recons input based on flow images
+                predict_preprocessed_flow = (args.flow_mode != ""),
+            )
+        elif args.pretrain == "ts":
+            train_stats = train_tsvit_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                flow_encoder_lr_schedule_values = flow_encoder_lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+                patch_size=patch_size[0],
+                normlize_target=args.normlize_target,
+                flow_optimizer = flow_optimizer,
 
-            # whether predict given flow images or recons input based on flow images
-            use_preprocessed_flow = args.use_preprocessed_flow,
-            flow_pretrain = args.flow_pretrain,
-        )
+                weighted_flow2rgb_recons = args.weighted_flow2rgb_recons,
+                ctr = args.ctr,
+                tau = float(args.tau),
+                lamb = args.lamb,
+            ) 
+
+        elif args.pretrain == "multimodal":
+            train_stats = train_multimodal_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+                patch_size=patch_size[0],
+                normlize_target=args.normlize_target,
+
+                lamb = args.lamb,
+
+            )
+        else:
+            raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
         if args.output_dir:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
@@ -294,5 +458,12 @@ if __name__ == '__main__':
 
     if opts.output_dir:
         Path(opts.output_dir).mkdir(parents=True, exist_ok=True)
-    
+
+    os.makedirs(os.path.join(opts.output_dir, opts.name), exist_ok=True)
+    logging.basicConfig(
+        filename=os.path.join(opts.output_dir, opts.name, f"console_{utils.get_rank()}_{os.environ['LOCAL_RANK']}.log"),
+        filemode="w",
+        level=logging.DEBUG,
+    )
+
     main(opts)
