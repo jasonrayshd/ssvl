@@ -374,8 +374,8 @@ class Egoclip(Ego4dBase):
         flow_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_" + "{:05d}".format(clip_idx), "flows.zip")
         frame_zf_fp = zipfile.ZipFile(frame_zip_path, "r")
         flow_zf_fp = zipfile.ZipFile(flow_zip_path, "r")
-        exist_frame_list = frame_zf_fp.namelist()
-        exist_flow_list = flow_zf_fp.namelist()
+        exist_frame_list = frame_zf_fp.namelist() # [frame_%010d_%010d.jpg, frame_%010d_%010d.jpg, ...]
+        exist_flow_list = flow_zf_fp.namelist() # [u/frame_%010d_%010d.jpg, v/frame_%010d_%010d.jpg, ...]
 
         # sample rgb and flows
         ret = self.sample_frames(info, exist_frame_list, exist_flow_list)
@@ -396,24 +396,30 @@ class Egoclip(Ego4dBase):
 
         return frame_lst, flow_lst
 
-    def sample_frames(self, info, exist_frame_list, exist_flow_list):
+    def sample_frames(self, info, exist_frame_lst, exist_flow_lst):
         """
             Sample frame and flow, return list of sampled frame and flow file names
 
             Args:
-            exist_frame_list: list, exist frames in zip file (might be less than frame number in annotation)
+            exist_frame_lst: list, exist frames in zip file (might be less than frame number in annotation)
 
             Return:
-            frame_idx_lst: list, list of sampled frame file names
+            frame_name_lst: list, list of sampled rgb file names
+            flow_name_lst: list of list, list of sampled flow file names. e.g. [[u/..., v/....], [u/..., v/...]]
+
         """
         start_frame = info["start_frame"]
         end_frame = info["end_frame"]
 
-        exist_frame_list = sorted( exist_frame_list, key=lambda x: x.split(".")[0].split("_")[-1] )
+        exist_frame_lst = sorted( exist_frame_lst, key=lambda x: x.split(".")[0].split("_")[-1] )
+
+        exist_uflow_lst = sorted( [flow for flow in exist_flow_lst if flow.startswith("u")], key=lambda x: x.split(".")[0].split("_")[-1]  )
+        exist_vflow_lst = sorted( [flow for flow in exist_flow_lst if flow.startswith("v")], key=lambda x: x.split(".")[0].split("_")[-1]  )
+
         length = end_frame - start_frame + 1
-        if length > len(exist_frame_list):
+        if length > len(exist_frame_lst):
             # mismatch frame number between annotation and zip file
-            frame_name = exist_frame_list[-1]
+            frame_name = exist_frame_lst[-1]
             end_frame  = int( frame_name.split(".")[0].split("_")[-1] )
 
         length = end_frame - start_frame + 1
@@ -429,10 +435,10 @@ class Egoclip(Ego4dBase):
 
         for i in range(0, len(frame_idx_lst), 2):
             idx = frame_idx_lst[i]
-            frame_name_lst.append(exist_frame_list[idx])
-            frame_name_lst.append(exist_frame_list[idx+1])
+            frame_name_lst.append(exist_frame_lst[idx])
+            frame_name_lst.append(exist_frame_lst[idx+1])
 
-            flow_name_lst.append(exist_flow_list[idx])
+            flow_name_lst.append([exist_uflow_lst[idx], exist_vflow_lst[idx]])
 
         return frame_name_lst, flow_name_lst
 
