@@ -264,6 +264,26 @@ class Ego4dBase(torch.utils.data.Dataset):
             except AssertionError:
                 continue
         assert condition, message
+    
+    def exec_wtolerance(self, func, retry, msg, **kwargs):
+        """
+            asssert with tolerance
+            Args:
+                func: function to be executed
+                retry: int, maximum number of retrying
+                msg: str, message to be printed when execution fails
+                kwargs: arguments to be passed to func
+        """
+
+        for i in range(retry):
+            try:
+                return func(kwargs)
+            except Exception as e:
+                if i == retry - 1:
+                    print(msg)
+                    raise e
+                else:
+                    continue
 
 
 class Egoclip(Ego4dBase):
@@ -342,59 +362,73 @@ class Egoclip(Ego4dBase):
             raise NotImplementedError("Egoclip dataset only supports pretraining")
 
 
-    def prepare_clip_frames_labels(self, info):
+    def prepare_clip_frames_flows(self, info):
         """
-            Prepare training data and labels, return loaded frames
+            Prepare training data and labels, return loaded frames and flows
             
         """
         # preprocess
         uid = info["video_uid"]
         clip_idx = info["clip_idx"]
-        frame_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_"+"{:05d}".format(clip_idx), "frames.zip")
-        zf_fp = zipfile.ZipFile(frame_zip_path, "r")
-        exist_frame_list = zf_fp.namelist()
+        frame_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_" + "{:05d}".format(clip_idx), "frames.zip")
+        flow_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_" + "{:05d}".format(clip_idx), "flows.zip")
+        frame_zf_fp = zipfile.ZipFile(frame_zip_path, "r")
+        flow_zf_fp = zipfile.ZipFile(flow_zip_path, "r")
+        exist_frame_list = frame_zf_fp.namelist()
+        exist_flow_list = flow_zf_fp.namelist()
 
-        # sample frames
-        frame_name_lst = self.sample_frames(info, exist_frame_list)
+        # sample frames and flows
+        frame_name_lst, flow_name_lst = self.sample_frames(info, exist_frame_list, exist_flow_list)
+
+        if frame_name_lst is None:
+            return None
 
         # load frame content
-        frame_lst = self.load_from_zip(frame_name_lst, zf_fp)
+        frame_lst = self.load_from_zip(frame_name_lst, frame_zf_fp)
+        flow_lst = self.load_from_zip(flow_name_lst, flow_zf_fp)
 
         # post process
-        zf_fp.close()
+        frame_zf_fp.close()
+        flow_zf_fp.close()
 
-        return frame_lst
+        return frame_lst, flow_lst
 
-    def sample_frames(self, info, exist_frame_list):
+    def sample_frames(self, info, exist_frame_list, exist_flow_list):
         """
-            Sample frame and return list of sampled frame file names
+            Sample frame and flow, return list of sampled frame and flow file names
 
-            Args
+            Args:
             exist_frame_list: list, exist frames in zip file (might be less than frame number in annotation)
 
-            Return
+            Return:
             frame_idx_lst: list, list of sampled frame file names
         """
         start_frame = info["start_frame"]
         end_frame = info["end_frame"]
 
         exist_frame_list = sorted( exist_frame_list, key=lambda x: x.split(".")[0].split("_")[-1] )
-
+        length = end_frame - start_frame + 1
         if length > len(exist_frame_list):
             # mismatch frame number between annotation and zip file
             frame_name = exist_frame_list[-1]
             end_frame  = int( frame_name.split(".")[0].split("_")[-1] )
 
         length = end_frame - start_frame + 1
-        if self.cfg.NUM_FRAMES < length:
+        if length < self.cfg.NUM_FRAMES:
             # clip length is smaller than required number of frames
             # resample
-            return None 
+            print(length, info)
+            return None
+        
+        frame_name_lst = []
+        flow_name_lst = []
+        frame_idx_lst = self.sample_frames_idx(0, length//2, self.cfg.NUM_FRAMES)
+        for idx in frame_idx_lst:
+            frame_name_lst.append(exist_frame_list[idx])
+            frame_name_lst.append(exist_frame_list[idx+1])
+            flow_name_lst.append(exist_flow_list[idx])
 
-        frame_idx_lst = self.sample_frames_idx(0, length, self.cfg.NUM_FRAMES)
-        frame_name_lst = [exist_frame_list[idx] for idx in frame_idx_lst]
-
-        return frame_name_lst
+        return frame_name_lst, flow_name_lst
 
     def sample_frames_idx(start, end, num_frames):
         """
@@ -436,17 +470,19 @@ class Egoclip(Ego4dBase):
 
         return frame_lst
 
-
     def __getitem__(self, index):
 
         info = self.package[index]
 
+        msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']},frame is None"
         # load frames and label
-        frames, labels, frame_idx = self.prepare_clip_frames_labels(info)
-        frames = self.data_transform(frames)
-        flows = self.prepare_flow(None, info, frame_idx) # only support load flows locally 
+        frames, flows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
+        if frames is None:
+            raise ValueError(msg)
+        frames, flows, mask = self.data_transform([frames, flows])
+        # flows = self.prepare_flow(None, info, frame_idx) # only support load flows locally 
 
-        return frames, flows
+        return frames, flows, mask
 
     def __len__(self):
         pass
@@ -1373,8 +1409,8 @@ def get_basic_config_for(task):
     elif task == "egoclip":
 
         cfg = {
-            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
-            "FRAME_DIR_PATH": "/data/shared/ssvl/ego4d/v1/egoclip",
+            "ANN_DIR": "/mnt/shuang/Data/ego4d/data/v1/annotations",
+            "FRAME_DIR_PATH": "/mnt/shuang/Data/ego4d/preprocessed_data/egoclip",
             "NUM_FRAMES": 16,
 
             "MEAN":[0.485, 0.456, 0.406],
