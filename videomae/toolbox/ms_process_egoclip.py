@@ -28,6 +28,8 @@ def parse_terminal_args():
 
     parser.add_argument("--logfile", type=str, default="processed_video.data", help="Path to log file")
     parser.add_argument("--anno_path", type=str, default="/data/shared/ssvl/ego4d/v1/annotations/egoclip.csv", help="Path to egoclip annotation file")
+    parser.add_argument("--new_anno_path", type=str, default="/data/shared/ssvl/ego4d/v1/annotations/new_egoclip.csv", help="Path to egoclip annotation file")
+
     parser.add_argument("--source", type=str, default="/data/shared/ssvl/ego4d/v1/full_scale/", help="Path to source videos")
     parser.add_argument("--dest", type=str, default="/data/shared/ssvl/ego4d/v1/egoclip/", help="Path to destination")
 
@@ -47,7 +49,9 @@ def save_frame(dest, frame, idx, frame_idx, related_clips, tmp_dir, desired_shor
             frame: numpy.ndarray, frame to be saved, in BGR format
             idx: index of the frame in the frame list
             frame_idx: int, index of the frame in the video
-            clip_list: list of list, each sub-list contains frames for each clip 
+            
+
+
             tmp_dir: temporal directory to save files locally
             desired_shorter_side: int, shorter side size of saved frame
     
@@ -84,24 +88,35 @@ def save_frame(dest, frame, idx, frame_idx, related_clips, tmp_dir, desired_shor
     )
 
     # write to video directory    
-    frame_name_in_video_dir = "frame_{:010d}.jpg".format(idx)
-    file_path =  os.path.join(dest, frame_name_in_video_dir)
-    cv2.imwrite(
-        file_path,
-        cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) 
-    )
+    # frame_name_in_video_dir = "frame_{:010d}.jpg".format(idx)
+    # file_path =  os.path.join(dest, frame_name_in_video_dir)
+    # cv2.imwrite(
+    #     file_path,
+    #     cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) 
+    # )
 
     frame_name_in_clip_dir =  "frame_{:010d}".format(idx) + "_" + "{:010d}".format(frame_idx)  + '.jpg'
     # write to zip file for the clip, the zip file will be transferred when video has been processed
-    for clip in related_clips: # list[int]
-        with zipfile.open(f"{tmp_dir}/{clip}.zip", "a+") as zf:
+    for clip_idx in related_clips: # list[int]
+
+        with zipfile.ZipFile(f"{tmp_dir}/{clip_idx}.zip", "a") as zf_handle:
             io_buf = io.BytesIO()
             pil = Image.fromarray(frame)
-            pil.save(io_buf, format="jpg")
-            zf.writestr(frame_name_in_clip_dir, io_buf.getvalue())
+            pil.save(io_buf, format="jpeg", quality=100, subsampling=0)
+            zf_handle.writestr(frame_name_in_clip_dir, io_buf.getvalue())
 
     return 1
 
+
+def write2csv(anno_file, clip_books):
+    with open(anno_file, "a+", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile, delimiter="\t")
+
+        for clip in clip_books:
+            clip.pop("frames")
+            row_info = list(clip.values())
+            writer.writerow(row_info)
+    
 
 def read_egoclip_csv(anno_path):
     """
@@ -114,11 +129,12 @@ def read_egoclip_csv(anno_path):
             data_dict: dict, whose key is video uid and value is a list of list which contains frames for each clip
 
     """
-    reader = csv.reader(open(anno_path, "r", encoding='utf_8'))
+    reader = csv.reader(open(anno_path, "r", encoding='utf-8'))
     next(reader)
     rows = list(reader)
     progress_bar = tqdm(total = len(rows))
     data_dict = {}
+
     frame_num = 0
     for row in rows:
 
@@ -131,7 +147,25 @@ def read_egoclip_csv(anno_path):
         end_f = max(0, int( float(meta[6]) * 30) )
 
         frame_num += end_f - start_f
-        data_dict[meta[0]].append(list(range(start_f, end_f+1))) # [[], [], [], ...]
+
+        data_dict[meta[0]].append({
+            "video_uid":meta[0],
+            "video_dur": meta[1],
+            "narration_source": meta[2],
+            "narration_ind":meta[3],
+            "narration_time": meta[4],
+            "clip_start": meta[5],
+            "clip_end": meta[6],
+            "arration_info": "\t".join(meta[7:]),
+
+            "frames": list(range(start_f, end_f+1)),
+
+            "clip_name": -1,
+            "start_frame": start_f,
+            "end_frame": end_f,
+        })
+
+        # data_dict[meta[0]].append(list(range(start_f, end_f+1))) # [[], [], [], ...]
 
         progress_bar.update(1)
 
@@ -198,27 +232,29 @@ def td_worker(source, dest, data_dict, tmp_dir, td_queue, desired_shorter_side):
 
     thread = threading.current_thread()
     thread_name = thread.name
+
+    uid, clip_list = data_dict[0], data_dict[1:]
+    print("uid", uid)
+    # uid = str(uid)
     # create temporal directory locally
     os.makedirs(tmp_dir, exist_ok=True)
-
     # make video directory on destination
     frame_save_path = os.path.join(dest, uid)
     os.makedirs(frame_save_path, exist_ok=True)
 
-    uid, clip_list = data_dict[0], data_dict[1:]
 
     frame_to_clip = {}  
     frames_list = []
-    for clip_idx, clip in enumerate(clip_list):
+    for clip_idx, clip_meta in enumerate(clip_list):
         # make directory for each clip
-        os.makedirs(os.path.join(dest, uid + "_{:05d}".format(clip_idx)), exist_ok=True)
-
+        os.makedirs(os.path.join(dest, uid, uid + "_{:05d}".format(clip_idx)), exist_ok=True)
+        clip = clip_meta["frames"]
         for frame_idx in clip:
             if frame_idx not in frame_to_clip.keys():
                 frame_to_clip[frame_idx] = []
             frame_to_clip[frame_idx].append(clip_idx) # mark the clip index of each frame
 
-        frames_list.extend(*clip)
+        frames_list.extend(clip)
 
     frames_list = sorted(list(set(frames_list)))
 
@@ -251,15 +287,34 @@ def td_worker(source, dest, data_dict, tmp_dir, td_queue, desired_shorter_side):
     # copy all zip files onto remote directory
     for clip_idx in range(len(clip_list)):
 
+        clip_list[clip_idx]["name"] = "{:05d}".format(clip_idx)
+
         clip_name = str(clip_idx) + ".zip"
-        shutil.move(tmp_dir +"/" + clip_name, os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" ))
+        shutil.move(tmp_dir +"/" + clip_name, os.path.join(dest, uid, uid + "_{:05d}".format(clip_idx), "frames.zip" ))
 
     # Last few frame indexes in frames_list might exceed video duration
     missed_frame = []
     if frame_num < len(frames_list):
         missed_frame = [str(idx) for idx in frames_list[frame_num:]]
 
-    td_queue.put({"processed_frame_num": frame_num, "uid":uid, "missed_frame":missed_frame, "thread_name":thread_name})
+    td_queue.put(
+        {
+            "processed_frame_num": frame_num,
+            "uid":uid, "missed_frame":missed_frame,
+            "thread_name":thread_name,
+            "clip_books": clip_list,
+        }
+    )
+    # NOTE for debugging:
+    # td_queue.put(
+    #     {
+    #         "processed_frame_num": 1,
+    #         "uid":uid,
+    #         "missed_frame":[],
+    #         "thread_name":thread_name,
+    #         "clip_books": clip_list,
+    #     }
+    # )
     return
 
 
@@ -268,28 +323,42 @@ def worker(lst_dict, source, dest, queue, max_num_threads, desired_shorter_side)
     # communication function that communicates with main process
     def comm_with_main_process(ret, queue):
         processed_frame_num = ret["processed_frame_num"]
+        clip_books = ret["clip_books"]
         uid = ret["uid"]
 
         if processed_frame_num == 0:
             # error occurred
             error = ret["error"]
-            queue.put({"video_uid":uid, "pid": os.getpid(), "state":"on", "error": str(error)})
+            queue.put({
+                "video_uid":uid,
+                "pid": os.getpid(),
+                "state":"on",
+                "error": str(error)
+            })
         else:
             missed_frame = ret["missed_frame"]
-            queue.put({"video_uid":uid, "pid": os.getpid(), "state":"on", "error":0, "frame_processed":processed_frame_num, "missed_frame": missed_frame})
+            queue.put({
+                "video_uid":uid,
+                "pid": os.getpid(),
+                "state":"on",
+                "error":0,
+                "frame_processed":processed_frame_num,
+                "missed_frame": missed_frame,
+                "clip_books": clip_books
+            })
 
     i = 0
     thread_pool = {}
     active_thread_num = 0
     td_queue = Queue(maxsize=2*max_num_threads)
     pid = os.getpid()
-    next_avail_thread_name = ""
+
     while i < len(lst_dict):
 
         data_dict = lst_dict[i]
         if active_thread_num < max_num_threads:
             
-            given_thread_name = f"{pid}-Thread:{i}" if next_avail_thread_name == "" else next_avail_thread_name
+            given_thread_name = f"{pid}-Thread:{i}"
             tmp_dir = f"./{pid}/{given_thread_name}" # temporal directory to store files locally
             os.makedirs(tmp_dir, exist_ok=True)
 
@@ -305,7 +374,6 @@ def worker(lst_dict, source, dest, queue, max_num_threads, desired_shorter_side)
             ret = td_queue.get()
             comm_with_main_process(ret, queue)
             thread_name = ret["thread_name"]
-            next_avail_thread_name = thread_name
 
             # call .join() to wait until some thread finished
             thread_pool[thread_name].join()
@@ -373,12 +441,20 @@ def main(args):
         _temp = []
         for clip in v:
             # clip: list
-            _temp.extend(*clip)
-        total_frame_num += len(list(set(_temp)))
+            _temp.append(len(clip))
+        total_frame_num += sum(_temp)
 
     print("Splitting Data for Multi-Processing..")
     chunked_data_dict = split_data(data_dict, chunk_num=nprocess)
+    # for debugging
+    # chunked_data_dict = [ 
+    #     [ 
+    #         [ "84d0c87c-c65a-4535-a81a-541c6dd0615f", *data_dict["84d0c87c-c65a-4535-a81a-541c6dd0615f"] ], 
+    #         [ "8c133ffb-1b30-4322-abb4-8c56674b5e9e", *data_dict["8c133ffb-1b30-4322-abb4-8c56674b5e9e"] ], 
+    #         # [ "b0a30641-ad93-4d6a-92a9-f277c78f1aa5", *data_dict["b0a30641-ad93-4d6a-92a9-f277c78f1aa5"] ], 
+    #     ],
 
+    # ]
     queue = Queue(maxsize=2*max_num_threads*nprocess)
     process_pool = []
     # print(chunked_data_dict[0][0])
@@ -394,38 +470,40 @@ def main(args):
     done_video = 0
     pbar = tqdm(total=len(data_dict))
 
-    with open(args.logfile, "a+") as logger:
-        logger.write("\n")
+    logger = open(args.logfile, "a+")
+    logger.write("\n")
 
-        while True:
-            pack = queue.get()
+    while True:
+        pack = queue.get()
 
-            if pack["state"] == "on":
+        if pack["state"] == "on":
 
-                if pack["error"]:
-                    # error occurred while reading/processing the video
-                    failed_video_num += 1
+            if pack["error"]:
+                # error occurred while reading/processing the video
+                failed_video_num += 1
 
-                    logger.write(f"{pack['video_uid']},error:{pack['error']}\n")
-                    # pbar.set_postfix_str(f"current processes:{nprocess-done_process}, processed frames:{done_video_frame}/[{total_frame_num}], failed video: {failed_video_num}")
-                    # pbar.update(1)
-                else:
-                    frame_processed = pack["frame_processed"]
-                    missed_frame = pack["missed_frame"]
-                    done_video_frame += frame_processed
-                    done_video += 1
-                    logger.write(f"{pack['video_uid']},success,frames:{frame_processed},missed:{','.join(missed_frame)}\n")
-
-                pbar.set_postfix_str(f"current processes:{nprocess-done_process}, processed frames:{done_video_frame}/[{total_frame_num}], failed video: {failed_video_num}")
-                pbar.update(1)
-                wandb.log({"video": done_video, "fail": failed_video_num})
-                
-
+                logger.write(f"{pack['video_uid']},error:{pack['error']}\n")
+                # pbar.set_postfix_str(f"current processes:{nprocess-done_process}, processed frames:{done_video_frame}/[{total_frame_num}], failed video: {failed_video_num}")
+                # pbar.update(1)
             else:
-                done_process += 1
+                frame_processed = pack["frame_processed"]
+                missed_frame = pack["missed_frame"]
 
-            if done_process == nprocess:
-                break
+                write2csv(args.new_anno_path, pack["clip_books"])
+
+                done_video_frame += frame_processed
+                done_video += 1
+                logger.write(f"{pack['video_uid']},success,frames:{frame_processed},missed:{','.join(missed_frame)}\n")
+
+            pbar.set_postfix_str(f"current processes:{nprocess-done_process}, processed frames:{done_video_frame}/[{total_frame_num}], failed video: {failed_video_num}")
+            pbar.update(1)
+            wandb.log({"video": done_video, "fail": failed_video_num})
+
+        else:
+            done_process += 1
+
+        if done_process == nprocess:
+            break
 
 
     tqdm.write(f"total videos: {len(data_dict)} failed num: {failed_video_num}")
@@ -437,15 +515,20 @@ def main(args):
     while not queue.empty():
 
         pack = queue.get()
-
+        pbar.update(1)
         if pack["error"]:
             # error occurred while reading/processing the video
             logger.write(f"{pack['video_uid']},error:{pack['error']}\n")
         else:
             frame_processed = pack["frame_processed"]
             missed_frame = pack["missed_frame"]
+            write2csv(args.new_anno_path, pack["clip_books"])
+
             logger.write(f"{pack['video_uid']},success,frames:{frame_processed},missed:{','.join(missed_frame)}\n")
 
+    logger.close()
+    # time.sleep()
+    print("Done")
 
 
 if __name__ == "__main__":

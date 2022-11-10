@@ -1,15 +1,8 @@
-python -m torch.distributed.launch \
-    --nproc_per_node=2 \
-    --master_port 51225 --nnodes=2  --node_rank=$1 --master_addr=$2 \
-    ../run_class_finetuning.py \
-    --enable_deepspeed \
-    --dist_eval \
-    --overwrite command-line \
-    --config /data/shared/ssvl/videomae/config/temp/finetune_basic_ego4d.yml \
-    --name temp \
-    --debug \
-    # --project pt-epic55-ft-ego4dsc \
-    # --name preepic55ftego4d_A5 \
-    # --wandb_id 3ccex8ya \
-    # --project temp \
-    # --name temp \
+OMP_NUM_THREADS=40 python -m torch.distributed.launch --nproc_per_node=1 \
+        --master_port 12320 --nnodes=1 --node_rank=$1 --master_addr=$2 \
+        ../run_mae_pretraining.py \
+        --overwrite command-line \
+        --config /workspace/ssvl/videomae/config/cluster/pretrain_ts_epic55.yml \
+        --project pretrain_ts_epic55 \
+        --name temp \
+        --debug \

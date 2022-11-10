@@ -1,8 +1,8 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 2
-epochs: 400   # change with repeated_sampling
+batch_size: 8
+epochs: 500   # change with repeated_sampling
 save_ckpt_freq: 10
 
 # Model parameters
@@ -98,6 +98,7 @@ cfg:
     TRAIN_CROP_SIZE: 224
     TEST_CROP_SIZE: 224
     REPEATED_SAMPLING: 2
+    READ_FROM_TAR: false
   TEST:
     NUM_SPATIAL_CROPS: ""
     NUM_ENSEMBLE_VIEWS: ""
