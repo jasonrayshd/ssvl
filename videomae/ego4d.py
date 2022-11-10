@@ -364,7 +364,7 @@ class Egoclip(Ego4dBase):
 
     def prepare_clip_frames_flows(self, info):
         """
-            Prepare training data and labels, return loaded frames and flows
+            Prepare training data and labels, return loaded frames and uvflows
             
         """
         # preprocess
@@ -383,29 +383,32 @@ class Egoclip(Ego4dBase):
         if ret is None:
             return None
 
-        frame_name_lst, flow_name_lst = ret
+        frame_name_lst, uflow_name_lst, vflow_name_lst = ret
         print(frame_name_lst)
-        print(flow_name_lst)
+        print(uflow_name_lst)
+        print(vflow_name_lst)
         # load frame content
         frame_lst = self.load_from_zip(frame_name_lst, frame_zf_fp)
-        flow_lst = self.load_from_zip(flow_name_lst, flow_zf_fp)
+        uflow_lst = self.load_from_zip(uflow_name_lst, flow_zf_fp)
+        vflow_lst = self.load_from_zip(vflow_name_lst, flow_zf_fp)
 
         # post process
         frame_zf_fp.close()
         flow_zf_fp.close()
 
-        return frame_lst, flow_lst
+        return frame_lst, uflow_lst, vflow_lst
 
     def sample_frames(self, info, exist_frame_lst, exist_flow_lst):
         """
-            Sample frame and flow, return list of sampled frame and flow file names
+            Sample frame and return list of sampled frame and corresponding flow file names
 
             Args:
             exist_frame_lst: list, exist frames in zip file (might be less than frame number in annotation)
 
             Return:
             frame_name_lst: list, list of sampled rgb file names
-            flow_name_lst: list of list, list of sampled flow file names. e.g. [[u/..., v/....], [u/..., v/...]]
+            uflow_name_lst: list, list of sampled uflow file names.
+            vflow_name_lst: list, list of sampled vflow file names. 
 
         """
         start_frame = info["start_frame"]
@@ -430,7 +433,8 @@ class Egoclip(Ego4dBase):
             return None
 
         frame_name_lst = []
-        flow_name_lst = []
+        uflow_name_lst = []
+        vflow_name_lst = []
         frame_idx_lst = self.sample_frames_idx(0, length, self.cfg.NUM_FRAMES)
 
         for i in range(0, len(frame_idx_lst), 2):
@@ -438,13 +442,14 @@ class Egoclip(Ego4dBase):
             frame_name_lst.append(exist_frame_lst[idx])
             frame_name_lst.append(exist_frame_lst[idx+1])
 
-            flow_name_lst.append([exist_uflow_lst[idx], exist_vflow_lst[idx]])
+            uflow_name_lst.append(exist_uflow_lst[idx])
+            vflow_name_lst.append(exist_vflow_lst[idx])
 
-        return frame_name_lst, flow_name_lst
+        return frame_name_lst, uflow_name_lst, vflow_name_lst
 
     def sample_frames_idx(self, start, end, num_frames):
         """
-            return list of indexes of sampled frames (rgb or flow), given start and end frame
+            return list of indexes of sampled frames, given start and end frame
 
             start: start frame idx
             end: end frame idx, should be start + clip_length
@@ -488,7 +493,7 @@ class Egoclip(Ego4dBase):
 
         msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']}"
         # load frames and label
-        frames, flows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
+        frames, uflows, vflows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
 
         if frames is None:
             raise ValueError(msg + "," + "frame is None")
