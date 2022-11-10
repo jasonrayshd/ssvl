@@ -377,11 +377,13 @@ class Egoclip(Ego4dBase):
         exist_frame_list = frame_zf_fp.namelist()
         exist_flow_list = flow_zf_fp.namelist()
 
-        # sample frames and flows
-        frame_name_lst, flow_name_lst = self.sample_frames(info, exist_frame_list, exist_flow_list)
+        # sample rgb and flows
+        ret = self.sample_frames(info, exist_frame_list, exist_flow_list)
 
-        if frame_name_lst is None:
+        if ret is None:
             return None
+        
+        frame_name_lst, flow_name_lst = ret
 
         # load frame content
         frame_lst = self.load_from_zip(frame_name_lst, frame_zf_fp)
@@ -419,20 +421,23 @@ class Egoclip(Ego4dBase):
             # resample
             print(length, info)
             return None
-        
+
         frame_name_lst = []
         flow_name_lst = []
-        frame_idx_lst = self.sample_frames_idx(0, length//2, self.cfg.NUM_FRAMES)
-        for idx in frame_idx_lst:
+        frame_idx_lst = self.sample_frames_idx(0, length, self.cfg.NUM_FRAMES)
+
+        for i in range(0, len(frame_idx_lst), 2):
+            idx = frame_idx_lst[i]
             frame_name_lst.append(exist_frame_list[idx])
             frame_name_lst.append(exist_frame_list[idx+1])
+
             flow_name_lst.append(exist_flow_list[idx])
 
         return frame_name_lst, flow_name_lst
 
     def sample_frames_idx(start, end, num_frames):
         """
-            return list of indexes of sampled frames, given start and end frame
+            return list of indexes of sampled frames (rgb or flow), given start and end frame
 
             start: start frame idx
             end: end frame idx, should be start + clip_length
@@ -458,7 +463,7 @@ class Egoclip(Ego4dBase):
 
     def load_from_zip(self, frame_name_lst, zf_fp):
         """
-            load frames from zip given frame list      
+            load frames (rgb or flow) from zip given frame list      
         """
 
         frame_lst = []
