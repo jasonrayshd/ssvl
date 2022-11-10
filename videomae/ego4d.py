@@ -384,7 +384,8 @@ class Egoclip(Ego4dBase):
             return None
 
         frame_name_lst, flow_name_lst = ret
-
+        print(frame_name_lst)
+        print(flow_name_lst)
         # load frame content
         frame_lst = self.load_from_zip(frame_name_lst, frame_zf_fp)
         flow_lst = self.load_from_zip(flow_name_lst, flow_zf_fp)
@@ -482,6 +483,7 @@ class Egoclip(Ego4dBase):
         msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']}"
         # load frames and label
         frames, flows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
+
         if frames is None:
             raise ValueError(msg + "," + "frame is None")
         frames, flows, mask = self.data_transform([frames, flows])
@@ -1034,125 +1036,125 @@ class Ego4dFhoOscc(Ego4dBase):
         return clip, flows
 
 
-# class Ego4dFhoScod(Ego4dBase):
+class Ego4dFhoScod(Ego4dBase):
 
-#     def init_dataset(self):
+    def init_dataset(self):
 
-#         self.rand_brightness = self.cfg.rand_brightness # by default (0.9, 1.1)
-#         self.rand_flip_prob = self.cfg.rand_flip_prob # 0.5 by default 
-#         self.input_size = self.cfg.input_size
-#         self.short_side_size = self.cfg.short_side_size
-#         self.anno_path = os.path.join(self.cfg.ANN_DIR, f"fho_scod_{self.mode}.json")
+        self.rand_brightness = self.cfg.rand_brightness # by default (0.9, 1.1)
+        self.rand_flip_prob = self.cfg.rand_flip_prob # 0.5 by default 
+        self.input_size = self.cfg.input_size
+        self.short_side_size = self.cfg.short_side_size
+        self.anno_path = os.path.join(self.cfg.ANN_DIR, f"fho_scod_{self.mode}.json")
 
-#         self.mean = torch.tensor(self.mean).view(3,1,1,1)
-#         self.std = torch.tensor(self.std).view(3,1,1,1)
+        self.mean = torch.tensor(self.mean).view(3,1,1,1)
+        self.std = torch.tensor(self.std).view(3,1,1,1)
 
-#     def build_dataset(self):
+    def build_dataset(self):
 
-#         clips = json.load(open(self.anno_path, "r"))["clips"]
-#         self.lst_dict = []
-#         image_id = 1
+        clips = json.load(open(self.anno_path, "r"))["clips"]
+        self.lst_dict = []
+        image_id = 1
 
-#         for clip in clips:
-#             data_dict = {}
-#             data_dict["file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pnr_frame"]["frame_number"])+".jpeg")
-#             data_dict["pre_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pre_frame"]["frame_number"])+".jpeg")
-#             data_dict["post_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["post_frame"]["frame_number"])+".jpeg")
-#             data_dict["height"] = clip["pnr_frame"]["height"]
-#             data_dict["width"] = clip["pnr_frame"]["width"]
-#             data_dict["image_id"] = image_id
-#             data_dict["annotations"] = []
+        for clip in clips:
+            data_dict = {}
+            data_dict["file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pnr_frame"]["frame_number"])+".jpeg")
+            data_dict["pre_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pre_frame"]["frame_number"])+".jpeg")
+            data_dict["post_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["post_frame"]["frame_number"])+".jpeg")
+            data_dict["height"] = clip["pnr_frame"]["height"]
+            data_dict["width"] = clip["pnr_frame"]["width"]
+            data_dict["image_id"] = image_id
+            data_dict["annotations"] = []
 
-#             if self.mode == "test":
-#                 image_id += 1
-#                 self.lst_dict.append(data_dict)
-#                 continue
+            if self.mode == "test":
+                image_id += 1
+                self.lst_dict.append(data_dict)
+                continue
 
-#             for bbox in clip["pnr_frame"]["bbox"]:
+            for bbox in clip["pnr_frame"]["bbox"]:
 
-#                 if bbox["object_type"] == "object_of_change":
-#                     data_dict["annotations"].append({
-#                         "segmentation": [],
-#                         "category_id": 1,
-#                         "bbox": [bbox["bbox"]["x"], bbox["bbox"]["y"], bbox["bbox"]["width"], bbox["bbox"]["height"]],
-#                         "bbox_mode": 1, # XYWH_ABS
-#                         "iscrowd": 0,
-#                     })
+                if bbox["object_type"] == "object_of_change":
+                    data_dict["annotations"].append({
+                        "segmentation": [],
+                        "category_id": 1,
+                        "bbox": [bbox["bbox"]["x"], bbox["bbox"]["y"], bbox["bbox"]["width"], bbox["bbox"]["height"]],
+                        "bbox_mode": 1, # XYWH_ABS
+                        "iscrowd": 0,
+                    })
 
-#             image_id += 1
-#             self.lst_dict.append(data_dict)
+            image_id += 1
+            self.lst_dict.append(data_dict)
 
-#     def init_transformation(self):
-#         if self.mode == "train":
-#             # See "Data Augmentation" tutorial for details usage
-#             self.data_transform = detection_transform.AugmentationList([
-#                         detection_transform.RandomBrightness(*self.rand_brightness),
-#                         detection_transform.RandomFlip(prob=self.rand_flip_prob),
-#                         detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
-#                         # T.RandomCrop("absolute", (224, 224))
-#                         detection_transform.Resize((self.input_size, self.input_size))
-#                     ])
-#         else:
-#             self.data_transform = detection_transform.AugmentationList([
-#                         detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
-#                         # T.CenterCrop("absolute", (224, 224))
-#                         detection_transform.Resize((self.input_size, self.input_size))
-#                     ])
+    def init_transformation(self):
+        if self.mode == "train":
+            # See "Data Augmentation" tutorial for details usage
+            self.data_transform = detection_transform.AugmentationList([
+                        detection_transform.RandomBrightness(*self.rand_brightness),
+                        detection_transform.RandomFlip(prob=self.rand_flip_prob),
+                        detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
+                        # T.RandomCrop("absolute", (224, 224))
+                        detection_transform.Resize((self.input_size, self.input_size))
+                    ])
+        else:
+            self.data_transform = detection_transform.AugmentationList([
+                        detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
+                        # T.CenterCrop("absolute", (224, 224))
+                        detection_transform.Resize((self.input_size, self.input_size))
+                    ])
  
-#     def __getitem__(self, index):
+    def __getitem__(self, index):
 
-#         dataset_dict = self.lst_dict[index]
-#         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
+        dataset_dict = self.lst_dict[index]
+        dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
 
-#         image = self._load_frame(dataset_dict["file_name"])
-#         pre_image = self._load_frame(dataset_dict["pre_file_name"])
-#         post_image = self._load_frame(dataset_dict["post_file_name"])
-
-
-#         auginput = detection_transform.AugInput(image)
-#         transform = self.data_transform(auginput)
-#         image = torch.from_numpy(auginput.image.transpose(2, 0, 1).copy())
-#         pre_image = torch.from_numpy(transform.apply_image(pre_image).transpose(2, 0, 1).copy())
-#         post_image = torch.from_numpy(transform.apply_image(post_image).transpose(2, 0, 1).copy())
-
-#         # random pick combination of pnr frame with pre/post frame
-#         _p = random.random()
-#         vit_input = torch.stack([pre_image, image.clone()], dim=0) if _p > 0.5 else torch.stack([image.clone(), post_image], dim=0)
-#         vit_input = vit_input.permute(1, 0, 2, 3) / 255.0 # C, T, H, W
-
-#         vit_input = (vit_input - self.mean) / self.std
-
-#         annos = [
-#             detection_utils.transform_instance_annotations(annotation, [transform], image.shape[1:])
-#             for annotation in dataset_dict.pop("annotations")
-#         ]
-#         annos = detection_utils.annotations_to_instances(annos, image.shape[1:])
-
-#         return image, vit_input, annos, dataset_dict
+        image = self._load_frame(dataset_dict["file_name"])
+        pre_image = self._load_frame(dataset_dict["pre_file_name"])
+        post_image = self._load_frame(dataset_dict["post_file_name"])
 
 
-#     def visualize(np_rgb_image, xyxy_abs_box, name="detection_vis.png"):
-#         # For debugging  
+        auginput = detection_transform.AugInput(image)
+        transform = self.data_transform(auginput)
+        image = torch.from_numpy(auginput.image.transpose(2, 0, 1).copy())
+        pre_image = torch.from_numpy(transform.apply_image(pre_image).transpose(2, 0, 1).copy())
+        post_image = torch.from_numpy(transform.apply_image(post_image).transpose(2, 0, 1).copy())
 
-#         """
-#             np_rgb_image: numpy.ndarray, in rgb format
-#             xyxy_abs_box: list, length is 4
+        # random pick combination of pnr frame with pre/post frame
+        _p = random.random()
+        vit_input = torch.stack([pre_image, image.clone()], dim=0) if _p > 0.5 else torch.stack([image.clone(), post_image], dim=0)
+        vit_input = vit_input.permute(1, 0, 2, 3) / 255.0 # C, T, H, W
+
+        vit_input = (vit_input - self.mean) / self.std
+
+        annos = [
+            detection_utils.transform_instance_annotations(annotation, [transform], image.shape[1:])
+            for annotation in dataset_dict.pop("annotations")
+        ]
+        annos = detection_utils.annotations_to_instances(annos, image.shape[1:])
+
+        return image, vit_input, annos, dataset_dict
+
+
+    def visualize(np_rgb_image, xyxy_abs_box, name="detection_vis.png"):
+        # For debugging  
+
+        """
+            np_rgb_image: numpy.ndarray, in rgb format
+            xyxy_abs_box: list, length is 4
         
-#         """
+        """
 
-#         from detectron2.utils.visualizer import Visualizer
-#         from detectron2.structures import Instances
+        from detectron2.utils.visualizer import Visualizer
+        from detectron2.structures import Instances
 
-#         H, W, C = np_rgb_image.shape
-#         instance = Instances((H, W))
-#         instance.pred_boxes = torch.tensor([xyxy_abs_box]) # the box should be XYXY_ABS
-#         instance.scores = torch.tensor([1])
-#         instance.pred_classes = torch.tensor([1])
+        H, W, C = np_rgb_image.shape
+        instance = Instances((H, W))
+        instance.pred_boxes = torch.tensor([xyxy_abs_box]) # the box should be XYXY_ABS
+        instance.scores = torch.tensor([1])
+        instance.pred_classes = torch.tensor([1])
 
-#         vis = Visualizer(np_rgb_image, instance_mode=1)
-#         vis_result = vis.draw_instance_predictions(instance)
+        vis = Visualizer(np_rgb_image, instance_mode=1)
+        vis_result = vis.draw_instance_predictions(instance)
 
-#         vis_result.save(name)
+        vis_result.save(name)
 
 
 class Ego4dFhoHands(Ego4dBase):
