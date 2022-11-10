@@ -289,7 +289,7 @@ class Ego4dBase(torch.utils.data.Dataset):
 class Egoclip(Ego4dBase):
 
     def init_dataset(self):
-        self.anno_path = os.path.join(self.cfg.ANN_DIR, "egoclip.csv")
+        self.anno_path = os.path.join(self.cfg.ANN_DIR, "new_egoclip_0.csv")
 
         self.repeat_sample = self.cfg.repeat_sample
 
@@ -308,7 +308,7 @@ class Egoclip(Ego4dBase):
                 anno_path: str, path to egoclip csv annotation file
         """
         reader = csv.reader(open(self.anno_path, "r", encoding='utf-8'))
-        next(reader) # skip head
+        # next(reader) # skip head for egoclip.csv
         rows = list(reader)
         self.package = []  # clips that are used for pretraining
         self.skip_lst = [] # clips that are ignored
@@ -382,7 +382,7 @@ class Egoclip(Ego4dBase):
 
         if ret is None:
             return None
-        
+
         frame_name_lst, flow_name_lst = ret
 
         # load frame content
@@ -479,11 +479,11 @@ class Egoclip(Ego4dBase):
 
         info = self.package[index]
 
-        msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']},frame is None"
+        msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']}"
         # load frames and label
         frames, flows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
         if frames is None:
-            raise ValueError(msg)
+            raise ValueError(msg + "," + "frame is None")
         frames, flows, mask = self.data_transform([frames, flows])
         # flows = self.prepare_flow(None, info, frame_idx) # only support load flows locally 
 
