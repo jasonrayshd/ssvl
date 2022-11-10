@@ -277,7 +277,7 @@ class Ego4dBase(torch.utils.data.Dataset):
 
         for i in range(retry):
             try:
-                return func(kwargs)
+                return func(**kwargs)
             except Exception as e:
                 if i == retry - 1:
                     print(msg)
