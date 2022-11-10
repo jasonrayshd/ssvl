@@ -5,7 +5,7 @@ from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 from kinetics import VideoClsDataset, VideoMAE
 from ssv2 import SSVideoClsDataset
 
-from ego4d import StateChangeDetectionAndKeyframeLocalisation
+from ego4d import Ego4dFhoOscc, Egoclip
 from epickitchens import Epickitchens
 from argparse import Namespace
 
@@ -55,104 +55,28 @@ class DataAugmentationForVideoMAE(object):
 
 
 def build_pretraining_dataset(args, **kwargs):
-    
-    if "ego4d" in args.data_set:
-        transform = DataAugmentationForVideoMAE(args, flow_mode=args.flow_mode)
-        mode = "train"
-        # cfg = Namespace(**{
-        #     "DATA": Namespace(**{
-        #         # Data Loading
-        #         "ANN_DIR": args.anno_path,
-        #         "VIDEO_DIR_PATH": args.data_path,
-        #         "CLIPS_SAVE_PATH": args.pos_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
-        #         "NO_SC_PATH": args.neg_clip_save_path, # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+    pretrain_transform = DataAugmentationForVideoMAE(args, flow_mode=args.flow_mode)
 
-        #         "SAVE_AS_ZIP": True,                # save frames in zip file for efficient data loading
-        #         "READ_BY_CLIPS": args.debug,        # read by clips or full_scale video
+    if "ego4d_fho_scc" in args.data_set:
 
-        #         # Data Sampling
-        #         "CLIP_LEN_SEC": args.clip_len,      # Duration time in second of clip
-        #         "CROP_SIZE": args.input_size,
-        #         "SAMPLING_FPS": args.sampling_rate, # Sampled frames per second for training
-        #     })
-        # })
-        # cfg is of type namespace
-        dataset = StateChangeDetectionAndKeyframeLocalisation(args.cfg, mode, args=args, pretrain=True, pretrain_transform=transform)
+        dataset = Ego4dFhoOscc(args.cfg, mode="train", args=args, pretrain=True, pretrain_transform=pretrain_transform)
+
+    elif "egoclip" in args.data_set:
+        dataset = Egoclip(args.cfg, mode="train", args=args, pretrain=True, pretrain_transform=pretrain_transform)
+
 
     elif "epic-kitchen" in args.data_set:
-        # NOTE flow images in epic-kitchens are normalized to [0, 255]
-        transform = DataAugmentationForVideoMAE(args, flow_mode=args.flow_mode)
-        mode = "train"
 
-        """
-            EPICKITCHENS.ANNOTATIONS_DIR
-            EPICKITCHENS.TRAIN_LIST
-            EPICKITCHENS.VAL_LIST
-            EPICKITCHENS.TEST_LIST
-            DATA.MEAN
-            DATA.STD
-            DATA.SAMPLING_RATE
-            DATA.NUM_FRAMES
-
-            # train, val, trian+val
-            DATA.TRAIN_JITTER_SCALES
-            DATA.TRAIN_CROP_SIZE
-
-            # test
-            TEST.NUM_SPATIAL_CROPS
-            TEST.NUM_ENSEMBLE_VIEWS
-
-            DATA.TEST_CROP_SIZE
-        """
-        # cfg  = Namespace(**{
-        #     "EPICKITCHENS": Namespace(**{
-        #         # Data Loading
-        #         "ANNOTATIONS_DIR": args.anno_path,
-        #         "VISUAL_DATA_DIR": "",
-        #         "TRAIN_LIST": "",
-        #         "VAL_LIST": "", 
-        #         "TEST_LIST": "",
-        #     }),
-        #     "DATA": Namespace(**{
-        #         # Data Loading
-        #         "MEAN": "",
-        #         "STD": "",
-
-        #         "TRAIN_JITTER_SCALES": "",
-        #         "TRAIN_CROP_SIZE": "",
-
-        #         "TEST_CROP_SIZE": ""
-        #     }),
-        #     "TEST": Namespace(**{
-        #         # Data Loading
-        #         "NUM_SPATIAL_CROPS": "",
-        #         "NUM_SPATIAL_CROPS": "",
-        #         "NUM_ENSEMBLE_VIEWS": "",
-
-        #     }),
-        # })
-        dataset = Epickitchens(args.cfg, mode,
-                                pretrain = True, pretrain_transform=transform, 
+        
+        dataset = Epickitchens(args.cfg, mode = "train",
+                                pretrain = True, pretrain_transform=pretrain_transform, 
                                 flow_mode=args.flow_mode,
                                 flow_extractor = kwargs["flow_extractor"] if "flow_extractor" in kwargs.keys() else None,
                                 )
 
     else:
-        # if not pretrained on ego4d or epic-kitchens
-        transform = DataAugmentationForVideoMAE(args)
-        dataset = VideoMAE(
-            root=None,
-            setting=args.data_path,
-            video_ext='mp4',
-            is_color=True,
-            modality='rgb',
-            new_length=args.num_frames,
-            new_step=args.sampling_rate,
-            transform=transform,
-            temporal_jitter=False,
-            video_loader=True,
-            use_decord=True,
-            lazy_init=False)
+        raise ValueError(f"Unsupported dataset: {args.data_set}")
+
 
     print("Data Aug = %s" % str(transform))
     return dataset
