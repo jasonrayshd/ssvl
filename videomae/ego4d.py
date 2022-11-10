@@ -350,7 +350,7 @@ class Egoclip(Ego4dBase):
         # preprocess
         uid = info["video_uid"]
         clip_idx = info["clip_idx"]
-        frame_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, f"{uid}_{clip_idx}", "frames.zip")
+        frame_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_"+"{:05d}".format(clip_idx), "frames.zip")
         zf_fp = zipfile.ZipFile(frame_zip_path, "r")
         exist_frame_list = zf_fp.namelist()
 
