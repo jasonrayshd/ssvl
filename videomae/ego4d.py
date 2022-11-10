@@ -494,7 +494,7 @@ class Egoclip(Ego4dBase):
         msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']}"
         # load frames and label
         frames, uflows, vflows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
-
+        # flows = [flow[0],flow[1] for flow in zip(uflows, vflows)]
         if frames is None:
             raise ValueError(msg + "," + "frame is None")
         frames, flows, mask = self.data_transform([frames, flows])
