@@ -452,8 +452,8 @@ def extract_zip(path_to_save, ext="tar", frame_list = [], flow=False, cache_dest
 
 
 def read_from_tarfile(source, name, frame_idx, as_pil=False, flow=False):
-
     frame_list = [] if not flow else [[], []]
+    _debug_shape = []
     with tarfile.open(os.path.join(source,f"{name}.tar")) as tf:
         for i in range(0, len(frame_idx), 1 if not flow else 2):
             idx = frame_idx[i]
@@ -480,12 +480,14 @@ def read_from_tarfile(source, name, frame_idx, as_pil=False, flow=False):
                     rgb = Image.open(io.BytesIO(rgb_bytes))
                     if not as_pil:
                         rgb = np.array(rgb)
+                    _debug_shape.append(rgb.size)
                     frame_list.append(rgb)
                 except Exception as e:
                     print(source, name, frame_idx, img_name)
                     print(e)
-
-        return frame_list
+    
+    print(_debug_shape)
+    return frame_list
 
 def retry_load_images(image_paths, retry=10, backend="pytorch", 
             as_pil=False, path_to_compressed="", online_extracting=False,
