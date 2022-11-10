@@ -435,7 +435,7 @@ class Egoclip(Ego4dBase):
 
         return frame_name_lst, flow_name_lst
 
-    def sample_frames_idx(start, end, num_frames):
+    def sample_frames_idx(self, start, end, num_frames):
         """
             return list of indexes of sampled frames (rgb or flow), given start and end frame
 
