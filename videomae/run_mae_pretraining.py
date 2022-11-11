@@ -204,6 +204,12 @@ def load_weight_for_rgb_encoder(raw_checkpoints):
 def main(args):
     utils.init_distributed_mode(args)
 
+    logging.basicConfig(
+        filename=os.path.join(opts.output_dir, opts.name, f"console_{utils.get_rank()}_{os.environ['LOCAL_RANK']}.log"),
+        filemode="w",
+        level=logging.DEBUG,
+    )
+
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -460,10 +466,5 @@ if __name__ == '__main__':
         Path(opts.output_dir).mkdir(parents=True, exist_ok=True)
 
     os.makedirs(os.path.join(opts.output_dir, opts.name), exist_ok=True)
-    logging.basicConfig(
-        filename=os.path.join(opts.output_dir, opts.name, f"console_{utils.get_rank()}_{os.environ['LOCAL_RANK']}.log"),
-        filemode="w",
-        level=logging.DEBUG,
-    )
 
     main(opts)
