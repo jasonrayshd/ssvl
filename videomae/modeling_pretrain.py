@@ -455,15 +455,15 @@ class PretrainMultiModalEncoder(nn.Module):
 
         num_patches = self.rgb_patch_embed.num_patches
 
-        self.rgb_type_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
-        self.flow_type_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
+        # self.rgb_type_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
+        # self.flow_type_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
         if use_learnable_pos_emb:
-            self.x1_pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
-            self.x2_pos_embed = nn.Parameter(torch.zeros(2*num_patches, embed_dim))
+            self.pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
+            # self.x2_pos_embed = nn.Parameter(torch.zeros(2*num_patches, embed_dim))
         else:
             # sine-cosine positional embeddings is on the way
-            self.x1_pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
-            self.x2_pos_embed = get_sinusoid_encoding_table(2*num_patches, embed_dim)
+            self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
+            # self.x2_pos_embed = get_sinusoid_encoding_table(2*num_patches, embed_dim)
 
         self.pos_drop = nn.Dropout(p=drop_rate)
 
@@ -515,27 +515,28 @@ class PretrainMultiModalEncoder(nn.Module):
         x_flow = self.flow_patch_embed(flow)
         B, _, C = x_rgb.size()
 
-        if self.rgb_type_embed is not None:
-            x_rgb += self.rgb_type_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
-            x_flow += self.flow_type_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
+        # if self.rgb_type_embed is not None:
+        #     x_rgb += self.rgb_type_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
+        #     x_flow += self.flow_type_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
 
-        x2 = torch.cat([x_rgb, x_flow], dim=1)
         if self.x1_pos_embed is not None:
-            x_rgb += self.x1_pos_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
-            x_flow += self.x1_pos_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
-            x2 += self.x2_pos_embed.expand(B, -1, -1).type_as(x2).to(x2.device).clone().detach()
+            x_rgb += self.pos_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
+            x_flow += self.pos_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
+            # x2 += self.x2_pos_embed.expand(B, -1, -1).type_as(x2).to(x2.device).clone().detach()
+
+        # x2 = torch.cat([x_rgb, x_flow], dim=1)
 
         x_rgb_vis = x_rgb[~mask].reshape(B, -1, C) # ~mask means visible
         x_flow_vis = x_flow[~mask].reshape(B, -1, C) # ~mask means visible
 
         # print(mask.shape)
-        x2_mask = torch.cat([mask, mask], dim=1)
-        # print(x2_mask.shape)
-        x2_vis = x2[~x2_mask].reshape(B, -1, C)
-
+        # x2_mask = torch.cat([mask, mask], dim=1)
+        # # print(x2_mask.shape)
+        # x2_vis = x2[~x2_mask].reshape(B, -1, C)
         N1, N2 = x_rgb_vis.shape[1], x_flow_vis.shape[1]
-
         x1_vis = torch.cat([x_rgb_vis, x_flow_vis], dim=1)
+        x2_vis = torch.cat([x_rgb_vis, x_flow_vis], dim=1)
+
         token_dict = {
             "token_length": [N1, N2],
             "tokens": [x1_vis, x2_vis]
