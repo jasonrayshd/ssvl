@@ -519,10 +519,9 @@ class PretrainMultiModalEncoder(nn.Module):
         #     x_rgb += self.rgb_type_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
         #     x_flow += self.flow_type_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
 
-        if self.x1_pos_embed is not None:
-            x_rgb += self.pos_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
-            x_flow += self.pos_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
-            # x2 += self.x2_pos_embed.expand(B, -1, -1).type_as(x2).to(x2.device).clone().detach()
+        x_rgb += self.pos_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
+        x_flow += self.pos_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
+        # x2 += self.x2_pos_embed.expand(B, -1, -1).type_as(x2).to(x2.device).clone().detach()
 
         # x2 = torch.cat([x_rgb, x_flow], dim=1)
 
