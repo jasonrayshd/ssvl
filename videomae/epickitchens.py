@@ -102,7 +102,7 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
                 else:
                     # replicate last frames
                     rep_flag = True
-                    print("Replicating last two frames")
+                    logger.debug("Replicating last two frames")
                     index.extend(index[-2:])
             else:
                 if raw_index[i] < start_frame + num_frames:
@@ -110,13 +110,13 @@ def temporal_sampling(num_frames, start_idx, end_idx, num_samples, start_frame=0
                     index.append(raw_index[i])
                 else:
                     rep_flag = True
-                    print("Replicating last two frames")
+                    logger.debug("Replicating last two frames")
                     index.extend(index[-2:])
 
         index = torch.clamp( torch.as_tensor(index), start_frame, start_frame + num_frames - 1)
 
         if rep_flag:
-            print(raw_index, index, start_frame, start_frame + num_frames, num_frames)
+            logger.debug(f"{raw_index}, {index}, {start_frame}, {start_frame + num_frames}, {num_frames}")
 
         return index
 
@@ -189,6 +189,19 @@ def pack_frames_to_video_clip(cfg, video_record, temporal_sample_index, target_f
                                   start_frame = video_record.start_frame,
                                   flow_mode = flow_mode,
                                   )
+
+    if getattr(cfg.DATA, "READ_FROM_TAR", None):
+        source = path_to_video
+        name = f"{video_record.untrimmed_video_name}_{video_record._index}"
+        frames = utils.read_from_tarfile(source, name, frame_idx, as_pil=as_pil, flow=False)
+
+        if flow_mode == "local":
+            source = path_to_flow
+            uflows, vflows = utils.read_from_tarfile(source, name, frame_idx, as_pil=as_pil, flow=True)
+            return frames, uflows, vflows
+
+        return frames
+
     img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
 
     # code below will extract frames from compressed file [tar, ] if the directory not exist
@@ -469,7 +482,12 @@ class Epickitchens(torch.utils.data.Dataset):
                 flows = [uflows, vflows]
 
                 frames, flows, mask = self.pretrain_transform((frames, flows), flow_mode=self.flow_mode) # frames shape: C*T, H, W
-                frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) # 3, num_frames, H, W
+                try:
+                    frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) # 3, num_frames, H, W
+                except Exception as e:
+                    print(self._video_records[index])
+                    print(frames.size())
+                    print(e)
                 # flows are processed in pretrain_transform
                 # flows = flows.view((self.cfg.DATA.NUM_FRAMES, 2) + frames.size()[1:3]).transpose(0,1) # 2, num_flows, H, W
             else:

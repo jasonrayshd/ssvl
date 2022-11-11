@@ -1,4 +1,4 @@
-batch_size: 8
+batch_size: 12
 epochs: 100 
 update_freq: 1
 save_ckpt_freq: 10
@@ -64,7 +64,7 @@ mixup_switch_prob: 0.5            # help='Probability of switching to cutmix whe
 mixup_mode: 'batch'               # help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
 
 # Finetuning params
-finetune: '/mnt/code/ssvl/videomae/output/ts_preepic55_A2_cluster/checkpoint-299.pth'
+finetune: '/mnt/shuang/Output/output_ego4d/preepic55_A5/checkpoint-299.pth'
 model_key: 'model|module'
 model_prefix: ''
 init_scale: 0.001
@@ -84,18 +84,18 @@ sampling_rate: 4
 
 data_set: 'Ego4d-statechange-classification-localization'
 
-output_dir: /mnt/code/ssvl/videomae/output      # help='path where to save, empty for no saving')
-log_dir: /mnt/code/ssvl/videomae/output       # help='path where to tensorboard log')
+output_dir: /mnt/shuang/Output/output_ego4d     # help='path where to save, empty for no saving')
+log_dir: /mnt/shuang/Output/output_ego4d       # help='path where to tensorboard log')
 # device: 'cuda'      # help='device to use for training / testing')
 # seed: 0
 resume: ''          # help='resume from checkpoint')
-auto_resume: true
+auto_resume: false
 
 save_ckpt: true
 start_epoch: 0      # help='start epoch')
 # eval: false         # help='Perform evaluation only')
 # dist_eval: true    # help='Enabling distributed evaluation')
-num_workers: 8
+num_workers: 10
 # pin_mem: true
 
 # # distributed training parameters
@@ -113,7 +113,6 @@ num_workers: 8
 # pos_clip_save_path: ""    # help="save path of positive clips of ego4d state change")
 # neg_clip_save_path: ""    # help="save path of negative clips of ego4d state change")
 
-flow_mode: ""
 
 lamb_cls: 1
 lamb_loc: 1
@@ -121,10 +120,10 @@ lamb_loc: 1
 cfg:
   DATA: 
     # Data Loading
-    ANN_DIR: "/data/shared/ssvl/ego4d/v1/annotations"
-    VIDEO_DIR_PATH: "/data/shared/ssvl/ego4d/v1/full_scale"
-    CLIPS_SAVE_PATH: "/data/shared/ssvl/ego4d/v1/pos"  # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
-    NO_SC_PATH: "/data/shared/ssvl/ego4d/v1/neg"        # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+    ANN_DIR: "/mnt/shuang/Data/ego4d/data/v1/annotations"
+    VIDEO_DIR_PATH: "/mnt/shuang/Data/ego4d/data/v1/full_scale"
+    CLIPS_SAVE_PATH: "/mnt/shuang/Data/ego4d/preprocessed_data/pos"  # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+    NO_SC_PATH: "/mnt/shuang/Data/ego4d/preprocessed_data/neg"        # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
 
     SAVE_AS_ZIP: True                # save frames in zip file for efficient data loading
     READ_BY_CLIPS: False                  # read by clips or full_scale video

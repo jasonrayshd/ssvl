@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 
+from tokenizer_network import SimpleCNN, Tokenizer
+
 import einops
 
 def _cfg(url='', **kwargs):
@@ -352,6 +354,7 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
                 init_values=init_values)
             for i in range(depth)])
+
         self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
         self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
         self.temporal_norm = norm_layer(embed_dim)
@@ -431,7 +434,7 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
         num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
         tubelet_size = self.patch_embed.tubelet_size
         x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
-        x = x.mean(dim=2).squeeze()
+        x = x.mean(dim=2).squeeze(dim=2)
         x = self.temporal_norm(x)
         x = x.flatten(1)
         loc = self.loc_head(x) # shape: bs, frame num
@@ -440,145 +443,781 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
         return loc, cls
 
 
+class FintuneVisionTransformerEncoder(nn.Module):
+    """ Vision Transformer with support for patch or hybrid CNN input stage
+    """
+    def __init__(self, 
+                img_size=224, 
+                patch_size=16, 
+                in_chans=3, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
+                keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
+                ):
+        super().__init__()
 
-# class Ego4dTwoHead_TwoStreamVisionTransformer(nn.Module):
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
+        self.keep_dim = keep_dim
+        self.patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
+        num_patches = self.patch_embed.num_patches
 
-#     def __init__(self, 
-#                 img_size=224, 
-#                 patch_size=16, 
-#                 in_chans=3, 
-#                 num_classes=1000, 
-#                 embed_dim=768, 
-#                 depth=12,
-#                 num_heads=12, 
-#                 mlp_ratio=4., 
-#                 qkv_bias=False, 
-#                 qk_scale=None, 
-#                 drop_rate=0., 
-#                 attn_drop_rate=0.,
-#                 drop_path_rate=0., 
-#                 norm_layer=nn.LayerNorm, 
-#                 init_values=0.,
-#                 use_learnable_pos_emb=False, 
-#                 init_scale=0.,
-#                 all_frames=16,
-#                 tubelet_size=2,
-#                 use_mean_pooling=True,
-#                 # keep_dim = False,
-#                 ):
+        if use_learnable_pos_emb:
+            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+        else:
+            # sine-cosine positional embeddings is on the way
+            self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
 
-#         super().__init__()
-#         self.num_classes = num_classes
-#         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-#         self.tubelet_size = tubelet_size
+        self.pos_drop = nn.Dropout(p=drop_rate)
 
-#         self.num_frames = all_frames
-#         self.patch_embed = PatchEmbed(
-#             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
-#         num_patches = self.patch_embed.num_patches
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+        # self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        # self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        # self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
 
-#         if use_learnable_pos_emb:
-#             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
-#         else:
-#             # sine-cosine positional embeddings is on the way
-#             self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
 
-#         self.pos_drop = nn.Dropout(p=drop_rate)
+        self.apply(self._init_weights)
 
-#         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
-#         self.blocks = nn.ModuleList([
-#             Block(
-#                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-#                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-#                 init_values=init_values)
-#             for i in range(depth)])
-#         self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
-#         self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
-#         self.temporal_norm = norm_layer(embed_dim)
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
 
-#         if use_learnable_pos_emb:
-#             trunc_normal_(self.pos_embed, std=.02)
+    def get_num_layers(self):
+        return len(self.blocks)
 
-#         self.apply(self._init_weights)
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token'}
 
-#         self.cls_head = nn.Linear(embed_dim, 2)
-#         self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
+    def get_classifier(self):
+        return self.head
 
-#         trunc_normal_(self.cls_head.weight, std=.02)
-#         self.cls_head.weight.data.mul_(init_scale)
-#         self.cls_head.bias.data.mul_(init_scale)
+    def reset_classifier(self, num_classes, global_pool=''):
+        self.num_classes = num_classes
+        self.head = nn.Linear(self.embed_dim, num_classes)
 
-#         trunc_normal_(self.loc_head.weight, std=.02)
-#         self.loc_head.weight.data.mul_(init_scale)
-#         self.loc_head.bias.data.mul_(init_scale)
+    def forward_features(self, x):
+        B, C, T, H, W = x.shape
+        x = self.patch_embed(x)
+        B, _, _ = x.size()
 
-#     def _init_weights(self, m):
-#         if isinstance(m, nn.Linear):
-#             trunc_normal_(m.weight, std=.02)
-#             if isinstance(m, nn.Linear) and m.bias is not None:
-#                 nn.init.constant_(m.bias, 0)
-#         elif isinstance(m, nn.LayerNorm):
-#             nn.init.constant_(m.bias, 0)
-#             nn.init.constant_(m.weight, 1.0)
+        if self.pos_embed is not None:
+            x = x + self.pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
+        x = self.pos_drop(x)
 
-#     def get_num_layers(self):
-#         return len(self.blocks)
+        for blk in self.blocks:
+            x = blk(x)
 
-#     @torch.jit.ignore
-#     def no_weight_decay(self):
-#         return {'pos_embed', 'cls_token'}
+        return x
 
-#     # def get_classifier(self):
-#     #     return self.head
+    def forward(self, x):
+        x = self.forward_features(x)
 
-#     # def reset_classifier(self, num_classes, global_pool=''):
-#     #     self.num_classes = num_classes
-#     #     self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
-    
-#     def forward_features(self, x):
-#         # input shape: B, C, T, H, W
-#         x = self.patch_embed(x) # patch embedding
-#         B, _, _ = x.size()
-#         # shape: B, T x patch_height x patch_width, hidden_dim
-#         # e.g. (32, 16/2 x 224/16 x 224/16, 768) -> (32, 1568, 768)
-
-#         # add positional embedding
-#         if self.pos_embed is not None:
-#             x = x + self.pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
-#         x = self.pos_drop(x) # dropout
-#         # encoder
-#         for blk in self.blocks:
-#             x = blk(x) 
-
-#         return x
+        return x
 
 
-#     def forward(self, x):
-#         # NOTE                            Jiachen 2022.05.25
-#         # from ego4d state change classification and localization
-#         # the raw tensor frames from __getitem__() shape like: C, T, H, W
-#         # Thus, if no transformations are used to augment x, the shape of x will be:
-#         # bs, C, T, H, W
-#         B, C, T, H, W = x.shape
-#         x = self.forward_features(x)
-#         # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
+class Ego4dTwoHeadTwoStreamRGBVisionTransformer(nn.Module):
 
-#         if self.fc_norm is not None:
-#             cls = self.cls_head( self.fc_norm(x.mean(1)) )
-#         else:
-#             cls = self.cls_head( self.norm(x)[:, 0] )
+    def __init__(self, 
+                img_size=224, 
+                patch_size=16, 
+                in_chans=3, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
 
-#         num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
-#         tubelet_size = self.patch_embed.tubelet_size
-#         x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
-#         x = x.mean(dim=2).squeeze()
-#         x = self.temporal_norm(x)
-#         x = x.flatten(1)
-#         loc = self.loc_head(x) # shape: bs, frame num
-#         # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
+                ):
 
-#         return loc, cls
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
 
+        self.num_frames = all_frames
+        self.patch_size = (patch_size, patch_size)
+        self.num_patches = (img_size//patch_size)* (img_size//patch_size) * (all_frames // tubelet_size)
+
+        # if use_learnable_pos_emb:
+        #     self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
+        # else:
+        #     # sine-cosine positional embeddings is on the way
+        #     self.pos_embed = get_sinusoid_encoding_table(self.num_patches, embed_dim)
+
+        # self.pos_drop = nn.Dropout(p=drop_rate)
+
+        self.blocks = [i for i in range(depth)]
+
+        # dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.rgb_encoder = FintuneVisionTransformerEncoder(
+                                                img_size=img_size, 
+                                                patch_size=patch_size, 
+                                                in_chans=3, 
+                                                # num_classes=1000, 
+                                                embed_dim=embed_dim, 
+                                                depth=depth,
+                                                num_heads=num_heads, 
+                                                mlp_ratio=mlp_ratio, 
+                                                qkv_bias=qkv_bias, 
+                                                qk_scale=qk_scale, 
+                                                drop_rate=drop_rate, 
+                                                attn_drop_rate=attn_drop_rate,
+                                                drop_path_rate=drop_path_rate, 
+                                                norm_layer=norm_layer, 
+                                                init_values=init_values,
+                                                use_learnable_pos_emb=use_learnable_pos_emb, 
+                                                init_scale=init_scale,
+                                                all_frames=all_frames,
+                                                tubelet_size=tubelet_size,
+                                                use_mean_pooling=use_mean_pooling,
+                                        )
+
+        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        self.temporal_norm = norm_layer(embed_dim)
+
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.apply(self._init_weights)
+
+        self.cls_head = nn.Linear(embed_dim, 2)
+        self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
+
+        trunc_normal_(self.cls_head.weight, std=.02)
+        self.cls_head.weight.data.mul_(init_scale)
+        self.cls_head.bias.data.mul_(init_scale)
+
+        trunc_normal_(self.loc_head.weight, std=.02)
+        self.loc_head.weight.data.mul_(init_scale)
+        self.loc_head.bias.data.mul_(init_scale)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {
+            'pos_embed', "rgb_encoder.pos_embed",
+            'cls_token', 
+        }
+
+    def forward_features(self, frames):
+
+        flow_vis = self.rgb_encoder(frames)
+
+        return flow_vis
+
+
+    def forward(self, frames):
+        # NOTE                            Jiachen 2022.05.25
+        # from ego4d state change classification and localization
+        # the raw tensor frames from __getitem__() shape like: C, T, H, W
+        # Thus, if no transformations are used to augment x, the shape of x will be:
+        # bs, C, T, H, W
+        B, C, T, H, W = frames.shape
+        x = self.forward_features(frames)
+
+        # x = self.proj_head(x)
+        # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
+
+        if self.fc_norm is not None:
+            cls = self.cls_head( self.fc_norm(x.mean(1)) )
+        else:
+            cls = self.cls_head( self.norm(x)[:, 0] )
+
+        num_patches = (H//self.patch_size[0]) * (W//self.patch_size[1])
+        tubelet_size = self.tubelet_size
+        x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+        # Simply using squeeze() without specifying dimension will raise a dimension mismatch error
+        x = x.mean(dim=2).squeeze(dim=2)
+        x = self.temporal_norm(x)
+        x = x.flatten(1)
+        loc = self.loc_head(x) # shape: bs, frame num
+        # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
+
+        return loc, cls
+
+class Ego4dTwoHeadTwoStreamwTokenzierVisionTransformer(nn.Module):
+
+    def __init__(self, 
+                img_size=224, 
+                patch_size=16, 
+                in_chans=3, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
+
+                tokenizer_backbone = "simplecnn"
+                ):
+
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
+
+        self.num_frames = all_frames
+        self.patch_size = (patch_size, patch_size)
+        self.num_patches = (img_size//patch_size)* (img_size//patch_size) * (all_frames // tubelet_size)
+
+        self.tokenizer_backbone = tokenizer_backbone
+        # if use_learnable_pos_emb:
+        #     self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
+        # else:
+        #     # sine-cosine positional embeddings is on the way
+        #     self.pos_embed = get_sinusoid_encoding_table(self.num_patches, embed_dim)
+
+        # self.pos_drop = nn.Dropout(p=drop_rate)
+
+        self.blocks = [i for i in range(depth)]
+
+        # dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.rgb_encoder = FintuneVisionTransformerEncoder(
+                                                img_size=img_size, 
+                                                patch_size=patch_size, 
+                                                in_chans=3, 
+                                                # num_classes=1000, 
+                                                embed_dim=embed_dim, 
+                                                depth=depth,
+                                                num_heads=num_heads, 
+                                                mlp_ratio=mlp_ratio, 
+                                                qkv_bias=qkv_bias, 
+                                                qk_scale=qk_scale, 
+                                                drop_rate=drop_rate, 
+                                                attn_drop_rate=attn_drop_rate,
+                                                drop_path_rate=drop_path_rate, 
+                                                norm_layer=norm_layer, 
+                                                init_values=init_values,
+                                                use_learnable_pos_emb=use_learnable_pos_emb, 
+                                                init_scale=init_scale,
+                                                all_frames=all_frames,
+                                                tubelet_size=tubelet_size,
+                                                use_mean_pooling=use_mean_pooling,
+                                        )
+
+        self.rgb_tokenizer = Tokenizer(3, embed_dim, tubelet_size, [patch_size, patch_size], backbone=self.tokenizer_backbone)
+
+
+        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        self.temporal_norm = norm_layer(embed_dim)
+
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.apply(self._init_weights)
+
+        self.cls_head = nn.Linear(embed_dim, 2)
+        self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
+        self.proj_head = nn.Linear(embed_dim*2, embed_dim)
+
+        trunc_normal_(self.cls_head.weight, std=.02)
+        self.cls_head.weight.data.mul_(init_scale)
+        self.cls_head.bias.data.mul_(init_scale)
+
+        trunc_normal_(self.loc_head.weight, std=.02)
+        self.loc_head.weight.data.mul_(init_scale)
+        self.loc_head.bias.data.mul_(init_scale)
+
+        trunc_normal_(self.proj_head.weight, std=.02)
+        self.proj_head.weight.data.mul_(init_scale)
+        self.proj_head.bias.data.mul_(init_scale)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {
+            'pos_embed', "rgb_encoder.pos_embed",
+            'cls_token', 
+        }
+
+    def forward_features(self, frames):
+
+        rgb_vis = self.rgb_tokenizer(frames)
+        flow_vis = self.rgb_encoder(frames)
+
+        feat = torch.cat([rgb_vis, flow_vis], dim=2)
+
+        return feat
+
+
+    def forward(self, frames):
+        # NOTE                            Jiachen 2022.05.25
+        # from ego4d state change classification and localization
+        # the raw tensor frames from __getitem__() shape like: C, T, H, W
+        # Thus, if no transformations are used to augment x, the shape of x will be:
+        # bs, C, T, H, W
+        B, C, T, H, W = frames.shape
+        x = self.forward_features(frames)
+
+        x = self.proj_head(x)
+        # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
+
+        if self.fc_norm is not None:
+            cls = self.cls_head( self.fc_norm(x.mean(1)) )
+        else:
+            cls = self.cls_head( self.norm(x)[:, 0] )
+
+        num_patches = (H//self.patch_size[0]) * (W//self.patch_size[1])
+        tubelet_size = self.tubelet_size
+        x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+        # Simply using squeeze() without specifying dimension will raise a dimension mismatch error
+        x = x.mean(dim=2).squeeze(dim=2)
+        x = self.temporal_norm(x)
+        x = x.flatten(1)
+        loc = self.loc_head(x) # shape: bs, frame num
+        # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
+
+        return loc, cls
+
+class Ego4dTwoHeadTwoStreamCrossEncoderVisionTransformer(nn.Module):
+
+    def __init__(self, 
+                img_size=224, 
+                patch_size=16, 
+                in_chans=3, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
+                ):
+
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
+
+        self.num_frames = all_frames
+        self.patch_size = (patch_size, patch_size)
+        self.num_patches = (img_size//patch_size)* (img_size//patch_size) * (all_frames // tubelet_size)
+
+        # if use_learnable_pos_emb:
+        #     self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
+        # else:
+        #     # sine-cosine positional embeddings is on the way
+        #     self.pos_embed = get_sinusoid_encoding_table(self.num_patches, embed_dim)
+
+        # self.pos_drop = nn.Dropout(p=drop_rate)
+
+        self.blocks = [i for i in range(depth)]
+
+        # dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.rgb_encoder = FintuneVisionTransformerEncoder(
+                                                img_size=img_size, 
+                                                patch_size=patch_size, 
+                                                in_chans=3, 
+                                                # num_classes=1000, 
+                                                embed_dim=embed_dim, 
+                                                depth=depth,
+                                                num_heads=num_heads, 
+                                                mlp_ratio=mlp_ratio, 
+                                                qkv_bias=qkv_bias, 
+                                                qk_scale=qk_scale, 
+                                                drop_rate=drop_rate, 
+                                                attn_drop_rate=attn_drop_rate,
+                                                drop_path_rate=drop_path_rate, 
+                                                norm_layer=norm_layer, 
+                                                init_values=init_values,
+                                                use_learnable_pos_emb=use_learnable_pos_emb, 
+                                                init_scale=init_scale,
+                                                all_frames=all_frames,
+                                                tubelet_size=tubelet_size,
+                                                use_mean_pooling=use_mean_pooling,
+                                        )
+
+        self.flow_encoder = FintuneVisionTransformerEncoder(
+                                                img_size=img_size, 
+                                                patch_size=patch_size, 
+                                                in_chans=2, 
+                                                # num_classes=1000, 
+                                                embed_dim=embed_dim, 
+                                                depth=depth,
+                                                num_heads=num_heads, 
+                                                mlp_ratio=mlp_ratio, 
+                                                qkv_bias=qkv_bias, 
+                                                qk_scale=qk_scale, 
+                                                drop_rate=drop_rate, 
+                                                attn_drop_rate=attn_drop_rate,
+                                                drop_path_rate=drop_path_rate, 
+                                                norm_layer=norm_layer, 
+                                                init_values=init_values,
+                                                use_learnable_pos_emb=use_learnable_pos_emb, 
+                                                init_scale=init_scale,
+                                                all_frames=all_frames//2,
+                                                tubelet_size=tubelet_size//2,
+                                                use_mean_pooling=use_mean_pooling,
+
+        )
+
+
+        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        self.temporal_norm = norm_layer(embed_dim)
+
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.apply(self._init_weights)
+
+        self.cls_head = nn.Linear(embed_dim, 2)
+        self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
+        self.proj_head = nn.Linear(embed_dim*2, embed_dim)
+
+        trunc_normal_(self.cls_head.weight, std=.02)
+        self.cls_head.weight.data.mul_(init_scale)
+        self.cls_head.bias.data.mul_(init_scale)
+
+        trunc_normal_(self.loc_head.weight, std=.02)
+        self.loc_head.weight.data.mul_(init_scale)
+        self.loc_head.bias.data.mul_(init_scale)
+
+        trunc_normal_(self.proj_head.weight, std=.02)
+        self.proj_head.weight.data.mul_(init_scale)
+        self.proj_head.bias.data.mul_(init_scale)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {
+            'pos_embed', "rgb_encoder.pos_embed", "flow_encoder.pos_embed",
+            'cls_token', 
+        }
+
+    def forward_features(self, frames, flows):
+
+        rgb_vis = self.rgb_encoder(frames)
+        flow_vis = self.flow_encoder(flows)
+
+        feat = torch.cat([rgb_vis, flow_vis], dim=2)
+
+        return feat
+
+
+    def forward(self, frames, flows):
+        # NOTE                            Jiachen 2022.05.25
+        # from ego4d state change classification and localization
+        # the raw tensor frames from __getitem__() shape like: C, T, H, W
+        # Thus, if no transformations are used to augment x, the shape of x will be:
+        # bs, C, T, H, W
+        B, C, T, H, W = frames.shape
+        x = self.forward_features(frames, flows)
+
+        x = self.proj_head(x)
+        # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
+
+        if self.fc_norm is not None:
+            cls = self.cls_head( self.fc_norm(x.mean(1)) )
+        else:
+            cls = self.cls_head( self.norm(x)[:, 0] )
+
+        num_patches = (H//self.patch_size[0]) * (W//self.patch_size[1])
+        tubelet_size = self.tubelet_size
+        x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+        # Simply using squeeze() without specifying dimension will raise a dimension mismatch error
+        x = x.mean(dim=2).squeeze(dim=2)
+        x = self.temporal_norm(x)
+        x = x.flatten(1)
+        loc = self.loc_head(x) # shape: bs, frame num
+        # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
+
+        return loc, cls
+
+class Ego4dTwoHeadTwoStreamVisionTransformer(nn.Module):
+
+    def __init__(self, 
+                img_size=224, 
+                patch_size=16, 
+                in_chans=3, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
+
+                tokenizer_backbone="simplecnn"
+                ):
+
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
+
+        self.num_frames = all_frames
+        self.patch_size = (patch_size, patch_size)
+        self.num_patches = (img_size//patch_size)* (img_size//patch_size) * (all_frames // tubelet_size)
+
+        # if use_learnable_pos_emb:
+        #     self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
+        # else:
+        #     # sine-cosine positional embeddings is on the way
+        #     self.pos_embed = get_sinusoid_encoding_table(self.num_patches, embed_dim)
+
+        # self.pos_drop = nn.Dropout(p=drop_rate)
+        self.tokenizer_backbone = tokenizer_backbone
+        self.blocks = [i for i in range(depth)]
+
+        # dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.rgb_encoder = FintuneVisionTransformerEncoder(
+                                                img_size=img_size, 
+                                                patch_size=patch_size, 
+                                                in_chans=3, 
+                                                # num_classes=1000, 
+                                                embed_dim=embed_dim, 
+                                                depth=depth,
+                                                num_heads=num_heads, 
+                                                mlp_ratio=mlp_ratio, 
+                                                qkv_bias=qkv_bias, 
+                                                qk_scale=qk_scale, 
+                                                drop_rate=drop_rate, 
+                                                attn_drop_rate=attn_drop_rate,
+                                                drop_path_rate=drop_path_rate, 
+                                                norm_layer=norm_layer, 
+                                                init_values=init_values,
+                                                use_learnable_pos_emb=use_learnable_pos_emb, 
+                                                init_scale=init_scale,
+                                                all_frames=all_frames,
+                                                tubelet_size=tubelet_size,
+                                                use_mean_pooling=use_mean_pooling,
+                                        )
+
+        self.flow_encoder = FintuneVisionTransformerEncoder(
+                                                img_size=img_size, 
+                                                patch_size=patch_size, 
+                                                in_chans=2, 
+                                                # num_classes=1000, 
+                                                embed_dim=embed_dim, 
+                                                depth=depth,
+                                                num_heads=num_heads, 
+                                                mlp_ratio=mlp_ratio, 
+                                                qkv_bias=qkv_bias, 
+                                                qk_scale=qk_scale, 
+                                                drop_rate=drop_rate, 
+                                                attn_drop_rate=attn_drop_rate,
+                                                drop_path_rate=drop_path_rate, 
+                                                norm_layer=norm_layer, 
+                                                init_values=init_values,
+                                                use_learnable_pos_emb=use_learnable_pos_emb, 
+                                                init_scale=init_scale,
+                                                all_frames=all_frames//2,
+                                                tubelet_size=tubelet_size//2,
+                                                use_mean_pooling=use_mean_pooling,
+
+        )
+
+        self.rgb_tokenizer = Tokenizer(3, embed_dim, tubelet_size, [patch_size, patch_size], backbone=self.tokenizer_backbone)
+        self.flow_tokenizer =Tokenizer(2, embed_dim, tubelet_size//2, [patch_size, patch_size], backbone=self.tokenizer_backbone)
+
+        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        self.temporal_norm = norm_layer(embed_dim)
+
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.apply(self._init_weights)
+
+        self.cls_head = nn.Linear(embed_dim, 2)
+        self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
+        # project to embed_dim
+        self.proj_head = nn.Linear(embed_dim*2, embed_dim)
+
+        # fuse information from rgb and flow respectively
+        self.fuse_head = nn.Linear(embed_dim*2, embed_dim)
+
+        trunc_normal_(self.cls_head.weight, std=.02)
+        self.cls_head.weight.data.mul_(init_scale)
+        self.cls_head.bias.data.mul_(init_scale)
+
+        trunc_normal_(self.loc_head.weight, std=.02)
+        self.loc_head.weight.data.mul_(init_scale)
+        self.loc_head.bias.data.mul_(init_scale)
+
+        trunc_normal_(self.proj_head.weight, std=.02)
+        self.proj_head.weight.data.mul_(init_scale)
+        self.proj_head.bias.data.mul_(init_scale)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {
+            'pos_embed', "rgb_encoder.pos_embed", "flow_encoder.pos_embed",
+            'cls_token', 
+        }
+
+    def forward_features(self, frames, flows):
+
+        rgb_vis = self.rgb_encoder(frames)
+        rgb_feat = self.rgb_tokenizer(frames)
+
+        flow_vis = self.flow_encoder(flows)
+        flow_feat = self.flow_tokenizer(flows)
+
+        rgb_cat = torch.cat([rgb_vis, rgb_feat], dim=2)
+        flow_cat = torch.cat([flow_feat, flow_vis], dim=2)
+
+        return rgb_cat, flow_cat
+
+
+    def forward(self, frames, flows):
+        # NOTE                            Jiachen 2022.05.25
+        # from ego4d state change classification and localization
+        # the raw tensor frames from __getitem__() shape like: C, T, H, W
+        # Thus, if no transformations are used to augment x, the shape of x will be:
+        # bs, C, T, H, W
+        B, C, T, H, W = frames.shape
+        rgb_cat, flow_cat = self.forward_features(frames, flows)
+
+        rgb_proj = self.proj_head(rgb_cat)
+        flow_proj = self.proj_head(flow_cat)
+
+        x = self.fuse_head(torch.cat([rgb_proj, flow_proj], dim=2))
+
+        # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
+
+        if self.fc_norm is not None:
+            cls = self.cls_head( self.fc_norm(x.mean(1)) )
+        else:
+            cls = self.cls_head( self.norm(x)[:, 0] )
+
+        num_patches = (H//self.patch_size[0]) * (W//self.patch_size[1])
+        tubelet_size = self.tubelet_size
+        x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+        # Simply using squeeze() without specifying dimension will raise a dimension mismatch error
+        x = x.mean(dim=2).squeeze(dim=2)
+        x = self.temporal_norm(x)
+        x = x.flatten(1)
+        loc = self.loc_head(x) # shape: bs, frame num
+        # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
+
+        return loc, cls
 
 @register_model
 def vit_twohead_base_patch16_224(pretrained=False, **kwargs):
@@ -590,17 +1229,56 @@ def vit_twohead_base_patch16_224(pretrained=False, **kwargs):
     model.default_cfg = _cfg()
     return model
 
+@register_model
+def vit_twohead_large_patch16_224(pretrained=False, **kwargs):
 
-# @register_model
-# def vit_ts_twohead_base_patch16_224(pretrained=False, **kwargs):
+    model = Ego4dTwoHead_VisionTransformer(
+            patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
 
-#     model = Ego4dTwoHead_TwoStreamVisionTransformer(
-#             patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
-#             norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model.default_cfg = _cfg()
+    return model
 
-#     model.default_cfg = _cfg()
-#     return model
 
+@register_model
+def vit_twohead_ts_rgb_cross_encoder_base_patch16_224(pretrained=False, **kwargs):
+
+    model = Ego4dTwoHeadTwoStreamRGBVisionTransformer(
+            patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+    model.default_cfg = _cfg()
+    return model
+
+@register_model
+def vit_twohead_ts_rgb_base_patch16_224(pretrained=False, **kwargs):
+
+    model = Ego4dTwoHeadTwoStreamwTokenzierVisionTransformer(
+            patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+    model.default_cfg = _cfg()
+    return model
+
+@register_model
+def vit_twohead_ts_cross_encoder_base_patch16_224(pretrained=False, **kwargs):
+
+    model = Ego4dTwoHeadTwoStreamCrossEncoderVisionTransformer(
+            patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+    model.default_cfg = _cfg()
+    return model
+
+@register_model
+def vit_twohead_ts_base_patch16_224(pretrained=False, **kwargs):
+
+    model = Ego4dTwoHeadTwoStreamVisionTransformer(
+            patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+    model.default_cfg = _cfg()
+    return model
 
 @register_model
 def vit_small_patch16_224(pretrained=False, **kwargs):

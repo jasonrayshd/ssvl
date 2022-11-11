@@ -10,17 +10,18 @@ import os
 from functools import partial
 from pathlib import Path
 from collections import OrderedDict
+from torch.utils.data._utils.collate import default_collate
 
 from timm.data.mixup import Mixup, mixup_target
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, TsLayerDecayValueAssigner
 
 from datasets import build_dataset
 from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
 from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate, multiple_samples_collate_ego4d, samples_collate_ego4d, collate_func_debug_val
+from utils import  multiple_samples_collate
 import utils
 import modeling_finetune
 
@@ -28,30 +29,183 @@ import wandb
 from loss import Ego4dTwoHead_Criterion
 from config_utils import parse_yml, combine
 
+from multiprocessing.managers import SyncManager
+import multiprocessing as mp
+from flow_extractor import flowExtractor
+
 class Ego4d_Compatible_Mixup(Mixup):
 
-    def __init__(self, **kwargs):
+    def __init__(self, use_flow, **kwargs):
         super().__init__(**kwargs)
+        self.use_flow = use_flow
+
+    # overwrite
+    def flow_mix_elem(self, x, flows):
+        batch_size = len(x)
+        lam_batch, use_cutmix = self._params_per_elem(batch_size)
+        x_orig = x.clone()  # need to keep an unmodified original for mixing source
+        flows_orig = flows.clone()
+        for i in range(batch_size):
+            j = batch_size - i - 1
+            lam = lam_batch[i]
+            if lam != 1.:
+                if use_cutmix[i]:
+                    (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
+                        x[i].shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
+                    x[i][:, yl:yh, xl:xh] = x_orig[j][:, yl:yh, xl:xh]
+                    flows[i][:, yl:yh, xl:xh] = flows_orig[j][:, yl:yh, xl:xh]
+                    lam_batch[i] = lam
+                else:
+                    x[i] = x[i] * lam + x_orig[j] * (1 - lam)
+        return torch.tensor(lam_batch, device=x.device, dtype=x.dtype).unsqueeze(1)
+
+
+    def flow_mix_pair(self, x, flows):
+        batch_size = len(x)
+        lam_batch, use_cutmix = self._params_per_elem(batch_size // 2)
+        x_orig = x.clone()  # need to keep an unmodified original for mixing source
+        for i in range(batch_size // 2):
+            j = batch_size - i - 1
+            lam = lam_batch[i]
+            if lam != 1.:
+                if use_cutmix[i]:
+                    (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
+                        x[i].shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
+                    x[i][:, yl:yh, xl:xh] = x_orig[j][:, yl:yh, xl:xh]
+                    x[j][:, yl:yh, xl:xh] = x_orig[i][:, yl:yh, xl:xh]
+                    lam_batch[i] = lam
+                else:
+                    x[i] = x[i] * lam + x_orig[j] * (1 - lam)
+                    x[j] = x[j] * lam + x_orig[i] * (1 - lam)
+        lam_batch = np.concatenate((lam_batch, lam_batch[::-1]))
+        return torch.tensor(lam_batch, device=x.device, dtype=x.dtype).unsqueeze(1)
+
+
+    def flow_mix_batch(self, x, flows):
+        lam, use_cutmix = self._params_per_batch()
+        if lam == 1.:
+            return 1.
+        if use_cutmix:
+            (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
+                x.shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
+            x[:, :, yl:yh, xl:xh] = x.flip(0)[:, :, yl:yh, xl:xh]
+        else:
+            x_flipped = x.flip(0).mul_(1. - lam)
+            x.mul_(lam).add_(x_flipped)
+        return lam
+    
 
     def __call__(self, x, target):
+        if self.use_flow:
+            x, flows = x
+
         assert len(x) % 2 == 0, 'Batch size should be even when using this'
-        if self.mode == 'elem':
-            lam = self._mix_elem(x)
-        elif self.mode == 'pair':
-            lam = self._mix_pair(x)
+
+        if self.use_flow:
+            if self.mode == 'elem':
+                lam = self.flow_mix_elem(x)
+            elif self.mode == 'pair':
+                lam = self.flow_mix_pair(x)
+            else:
+                lam = self.flow_mix_batch(x)
         else:
-            lam = self._mix_batch(x)
+            if self.mode == 'elem':
+                lam = self._mix_elem(x)
+            elif self.mode == 'pair':
+                lam = self._mix_pair(x)
+            else:
+                lam = self._mix_batch(x)
 
         if isinstance(target, torch.Tensor):
             target = mixup_target(target, self.num_classes, lam, self.label_smoothing, device=x.device)
         else:
             label, state = target
+            # print(label.shape, state.shape,)
             B, C, T, H, W = x.shape
+            # print(x.shape)
             label = mixup_target(label, T+1, lam, self.label_smoothing, device=x.device)
             state = mixup_target(state, 2, lam, self.label_smoothing, device=x.device)
             target = [label ,state]
-        
+
         return x, target
+
+
+# Codes below were edited by Jiachen Lei
+def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
+    """
+    Collate function for repeated augmentation. Each instance in the batch has
+    more than one sample.
+    Args:
+        batch (tuple or list): data batch to collate.
+    Returns:
+        (tuple): collated data batch.
+    """
+    inputs, target, flows, fps, info = zip(*batch)
+    # print(target)
+    inputs = [item for sublist in inputs for item in sublist]
+    flows = [item for sublist in flows for item in sublist]
+
+    if flows[0] is not None:
+        flows = default_collate(flows)
+    else:
+        flows = None
+
+    if nb_classes == -1:
+        labels = [label for sublist in target for label in sublist[0]]
+        states = [state for sublist in target for state in sublist[1]]
+
+        inputs, labels, states = (
+            default_collate(inputs),
+            default_collate(labels),
+            default_collate(states),
+        )
+        if fold:
+            return [inputs], [labels, states], flows, fps, info
+        else:
+            return inputs, [labels, states], flows, fps, info
+
+    elif nb_classes == 2:
+        states = [item for sublist in target for item in sublist]
+        inputs, states = (
+            default_collate(inputs),
+            default_collate(states),
+        )
+        if fold:
+            return [inputs], states, flows, fps, info
+        else:
+            return inputs , states, flows, fps, info
+
+    else:
+        labels = [item for sublist in target for item in sublist]
+        inputs, labels = (
+            default_collate(inputs),
+            default_collate(labels),
+        )
+        if fold:
+            return [inputs], labels, flows, fps, info
+        else:
+            return inputs, labels, flows, fps, info
+
+
+def samples_collate_ego4d(batch):
+
+    inputs, target, flows, fps, info = zip(*batch)
+
+    labels = [item[0] for item in target]
+    states = [item[1] for item in target]
+
+    if flows[0] is not None:
+        flows =  default_collate(flows)
+    else:
+        flows = None
+
+    inputs, labels, states = (
+        default_collate(inputs),
+        default_collate(labels),
+        default_collate(states),
+    )
+
+    return inputs, [labels, states], flows, fps, info
 
 
 def get_args():
@@ -253,7 +407,6 @@ def main(args, ds_init):
 
     utils.init_distributed_mode(args)
 
-
     # codes below should be called after distributed initialization
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -276,18 +429,29 @@ def main(args, ds_init):
 
     cudnn.benchmark = True
 
-    dataset_train, args.nb_classes = build_dataset(is_train=True, test_mode=False, args=args)
+    if args.flow_mode == "online":
+        mp.set_start_method('spawn', force=True)
+        SyncManager.register("flowExtractor", flowExtractor)
+        m = SyncManager()
+        m.start()
+        flow_extractor = m.flowExtractor(device=f"cuda:{args.gpu}")
+        print(f"Flow extractor manager started by {os.getpid()}.")
+    else:
+        flow_extractor = None
+
+    dataset_train, args.nb_classes = build_dataset(is_train=True, test_mode=False, args=args, flow_extractor=flow_extractor)
     if args.disable_eval_during_finetuning:
         dataset_val = None
         dataset_test = None
     else:
-        dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
-        # commented since test set of ego4d is not annotated yet.
+        dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args, flow_extractor=flow_extractor)
+
+        # test set of ego4d is not annotated yet.
         if "ego4d" in args.data_set.lower():
             dataset_test = None
         else:
+            # if is test and dataset is not ego4d then we do not need to pass flow_extractor
             dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
-
 
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
@@ -348,7 +512,7 @@ def main(args, ds_init):
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
             drop_last=False,
-            collate_fn=collate_func_debug_val,
+            collate_fn=collate_func,
         )
     else:
         data_loader_val = None
@@ -369,6 +533,8 @@ def main(args, ds_init):
     if mixup_active:
         print("Mixup is activated!")
         mixup_fn = Ego4d_Compatible_Mixup(
+            # args.flow_mode == "online", # if flow mode is online, then use flow in finetuning
+            False, # debug
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
@@ -386,11 +552,14 @@ def main(args, ds_init):
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
 
-        # if is ego4d and state change localization task, then the output dimension of feature 
-        # keep_dim = True if (args.nb_classes == args.num_frames+1) and ("ego4d" in args.data_set.lower()) else False
     )
 
-    patch_size = model.patch_embed.patch_size
+    try:
+        patch_size = model.patch_embed.patch_size
+    except AttributeError as e:
+        print("patch_embed.patch_size does not exist, read patch_size of model instead")
+        patch_size = model.patch_size
+
     print("Patch size = %s" % str(patch_size))
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
@@ -446,11 +615,15 @@ def main(args, ds_init):
                 new_dict[key[9:]] = checkpoint_model[key]
             elif key.startswith('encoder.'):
                 new_dict[key[8:]] = checkpoint_model[key]
-            elif key.startswith("rgb_encoder."):
-                # two stream rgb encoder
-                new_dict[key[12:]] = checkpoint_model[key]
+            # elif key.startswith("rgb_encoder."):
+            #     # two stream rgb encoder
+            #     new_dict[key[12:]] = checkpoint_model[key]
+            # elif key.startswith("flow_encoder."):
+            #     # two stream rgb tokenizer
+            #     new_dict[key[13:]] = checkpoint_model[key]
             else:
                 new_dict[key] = checkpoint_model[key]
+
         checkpoint_model = new_dict
 
         # interpolate position embedding
@@ -513,7 +686,11 @@ def main(args, ds_init):
 
     num_layers = model_without_ddp.get_num_layers()
     if args.layer_decay < 1.0:
-        assigner = LayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
+        if "ts" in args.model:
+            print("Using ts layer decay assigner")
+            assigner = TsLayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
+        else:
+            assigner = LayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
     else:
         assigner = None
 

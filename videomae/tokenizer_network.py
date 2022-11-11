@@ -31,24 +31,59 @@ class SimpleCNN(nn.Module):
     def forward(self, x):
 
         x = self.patch_embed(x)
-        print(x.shape)
+        # print(x.shape)
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        print(x.shape)
+        # print(x.shape)
 
         x = self.conv2(x)
         x = self.bn2(x)
         x = self.relu(x)
-        print(x.shape)
+        # print(x.shape)
 
         x = self.conv3(x)
         x = self.bn3(x)
         x = self.relu(x)
-        print(x.shape)
+        # print(x.shape)
 
         return x
 
+class Tokenizer(nn.Module):
+    """
+        Edited by jiachen
+        Feature extractor
+    """
+    def __init__(self, in_chans, feature_dim, tubelet_size, patch_size:list,  backbone="single"):
+        super().__init__()
+        self.backbone = backbone
+
+        if backbone == "single":
+            self.tokenizer =  nn.Conv3d(in_channels=in_chans, out_channels=feature_dim, 
+                            kernel_size = (tubelet_size,  patch_size[0], patch_size[1]), 
+                            stride=(tubelet_size,  patch_size[0],  patch_size[1]))
+
+        elif backbone == "simplecnn":
+            self.tokenizer = SimpleCNN(in_ch=in_chans, tublet_size=tubelet_size, patch_size=patch_size, num_classes=feature_dim)
+
+        else:
+            raise NotImplementedError(f"Unkown tokenizer backbone: {backbone}, expected to be one of [single, simplecnn]")
+
+    def forward(self, x):
+        """
+        
+            all_tokens: whether return all tokens or only return unmasked tokens
+        """
+        if self.backbone == "single":
+            x = self.tokenizer(x).flatten(2).transpose(1, 2)
+        elif self.backbone == "simplecnn":
+            x = self.tokenizer(x).flatten(2).transpose(1, 2)
+        else:
+            raise NotImplementedError(f"Unkown tokenizer backbone: {self.backbone}, expected to be one of [single, simplecnn]")
+
+        B, _, C = x.shape
+
+        return x
 
 class NonLocalBlock(nn.Module):
     def __init__(self, dim_in, dim_out, dim_inner):

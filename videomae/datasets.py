@@ -158,7 +158,8 @@ def build_pretraining_dataset(args, **kwargs):
     return dataset
 
 
-def build_dataset(is_train, test_mode, args):
+# build finetuning dataset
+def build_dataset(is_train, test_mode, args, flow_extractor=None):
 
     if "Ego4d-statechange" in args.data_set:
         mode = None
@@ -207,7 +208,7 @@ def build_dataset(is_train, test_mode, args):
         #     })
         # })
 
-        dataset = StateChangeDetectionAndKeyframeLocalisation(args.cfg, mode, args=args, pretrain=False)
+        dataset = StateChangeDetectionAndKeyframeLocalisation(args.cfg, mode, args=args, pretrain=False, flow_extractor=flow_extractor)
         """
             Jiachen 2022.05.25
             dataset.__getitem__() will return 
