@@ -551,7 +551,7 @@ class PretrainMultiModalEncoder(nn.Module):
         return token_dict
 
 
-class PretrainVisionTransformerMultiModalDecoder(nn.Module):
+class PretrainVisionTransformerMultiModalSharedDecoder(nn.Module):
     """ 
         Edited by jiachen
         Two-stream vit shared decoder which reconstruct flow or image with separate heads
@@ -631,6 +631,72 @@ class PretrainVisionTransformerMultiModalDecoder(nn.Module):
                 return x_flow
 
 
+class PretrainVisionTransformerMultiModalDecoder(nn.Module):
+    """ 
+        Edited by jiachen
+        Two-stream vit shared decoder which reconstruct flow or image with separate heads
+    """
+    def __init__(self, num_classes=768,  embed_dim=768, depth=12,
+                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
+                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None, 
+                #  use_flow = False
+                 ):
+        super().__init__()
+
+        self.num_classes = num_classes
+
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        # self.patch_size = patch_size
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+
+        self.norm =  norm_layer(embed_dim)
+        self.head = nn.Linear(embed_dim, self.num_classes) if self.num_classes > 0 else nn.Identity()
+        self.apply(self._init_weights)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        raise NotImplementedError("no_weight_decay is not implemented in PretrainVisionTransformerSharedDecoder")
+
+    def get_classifier(self):
+        return self.head
+
+    def reset_classifier(self, num_classes, global_pool=''):
+        raise NotImplementedError("reset_classifier is not implemented in PretrainVisionTransformerSharedDecoder")
+        # self.num_classes = num_classes
+        # self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+
+    def forward(self, x, return_token_num):
+
+        for blk in self.blocks:
+            x = blk(x)
+
+        if return_token_num > 0:
+            x = self.head(self.norm(x[:, -return_token_num:])) # only return the mask tokens predict pixels
+        else:
+            x = self.head(self.norm(x)) # only return the mask tokens predict pixels
+
+        return x
+
 class PretrainMultiModalTransformer(nn.Module):
 
     def __init__(self,
@@ -697,10 +763,27 @@ class PretrainMultiModalTransformer(nn.Module):
             init_values=init_values,
             use_learnable_pos_emb=use_learnable_pos_emb)
 
-        self.decoder = PretrainVisionTransformerMultiModalDecoder(
+        self.rgb_decoder = PretrainVisionTransformerMultiModalDecoder(
 
-            rgb_num_classes=rgb_num_classes, 
-            flow_num_classes=flow_num_classes,
+            num_classes=rgb_num_classes, 
+
+            embed_dim=decoder_embed_dim, 
+            depth=decoder_depth,
+            num_heads=decoder_num_heads, 
+            mlp_ratio=mlp_ratio, 
+            qkv_bias=qkv_bias, 
+            qk_scale=qk_scale, 
+            drop_rate=drop_rate, 
+            attn_drop_rate=attn_drop_rate,
+            drop_path_rate=drop_path_rate, 
+            norm_layer=norm_layer, 
+            init_values=init_values,
+            # tubelet_size=tubelet_size,
+            )
+        
+        self.flow_decoder = PretrainVisionTransformerMultiModalDecoder(
+
+            num_classes=flow_num_classes,
 
             embed_dim=decoder_embed_dim, 
             depth=decoder_depth,
@@ -766,8 +849,8 @@ class PretrainMultiModalTransformer(nn.Module):
         rgb_full = torch.cat([rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
         flow_full = torch.cat([flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
 
-        rgb_hat = self.decoder(rgb_full, pos_emd_mask.shape[1] if not all_token else 0, modality="rgb") # [2*B, N_mask, 3 * 16 * 16]
-        flow_hat = self.decoder(flow_full, pos_emd_mask.shape[1] if not all_token else 0, modality="flow") # [2*B, N_mask, 2 * 16 * 16]
+        rgb_hat = self.rgb_decoder(rgb_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+        flow_hat = self.flow_decoder(flow_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
 
         return rgb_hat, flow_hat
 
