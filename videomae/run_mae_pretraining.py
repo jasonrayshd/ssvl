@@ -188,15 +188,28 @@ def get_model(args):
     return model
 
 
-def load_weight_for_rgb_encoder(raw_checkpoints):
+def load_weight_for_rgb_encoder(raw_checkpoints, pretrain="ts"):
     """
         when pretraining, load weight for rgb cross-modality encoder
     """
     rgb_encoder_checkpoints = {}
 
-    for k, v in raw_checkpoints["model"].items():
-        if k.startswith("encoder"):
-            rgb_encoder_checkpoints["rgb_encoder"+k[7:]] = v
+    if pretrain == "ts":
+        for k, v in raw_checkpoints["model"].items():
+            if k.startswith("encoder"):
+                rgb_encoder_checkpoints["rgb_encoder"+k[7:]] = v
+    elif pretrain == "multimodal":
+         for k, v in raw_checkpoints["model"].items():
+            if k.startswith("encoder"):
+                if "patch_embed" in k:
+                    _tmp = k.split(".")
+                    _tmp[1] = "rgb_patch_embed"
+                    k = ".".join(_tmp)
+
+                rgb_encoder_checkpoints[k] = v
+
+            elif k == "mask_token":
+                rgb_encoder_checkpoints["rgb_mask_token"] = v
 
     return rgb_encoder_checkpoints
 
@@ -230,12 +243,12 @@ def main(args):
     ckpt = getattr(args, "ckpt", "")
     if ckpt != "":
         raw_checkpoints = torch.load(ckpt, map_location="cpu")
-        rgb_encoder_checkpoints = load_weight_for_rgb_encoder(raw_checkpoints)
+        rgb_encoder_checkpoints = load_weight_for_rgb_encoder(raw_checkpoints, pretrain=args.pretrain)
         missing_keys_lst, unexpected_keys_lst = model.load_state_dict(rgb_encoder_checkpoints, strict=False)
         # Check if rgb cross-modality encoder weights are loaded successfully
         flag = True
         for k in missing_keys_lst:
-            if "rgb_encoder." in k:
+            if "rgb_encoder." or "encoder" in k:
                 flag = False
                 print(f"Found an unloaded paramter of RGB cross-modality encoder:{k}")
         if flag:

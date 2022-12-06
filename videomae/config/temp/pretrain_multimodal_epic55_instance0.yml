@@ -26,7 +26,6 @@ weight_decay_end: null    # help="""Final value of the
                           # (Set the same value with args.weight_decay to keep weight decay no change)""")
 
 lr: 5.0e-5                # metavar='LR help='learning rate (default: 1.5e-4)
-flow_encoder_lr: null
 
 warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
 min_lr: 1.0e-7              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
@@ -51,14 +50,14 @@ resume: ""                                  # help='resume from checkpoint
 auto_resume: true                           # 
 
 start_epoch: 0                              # help='start epoch
-num_workers: 20
+num_workers: 30
 pin_mem: true
 # flow images
 pretrain: "multimodal"
 # predict_preprocessed_flow: true               # whether use preprocessed flow images as target at pretraining
 flow_mode: "local"                                # mode of sampling flow images  [A]
 
-lamb: [1, 1, 1, 1]
+lamb: [20, 20, 1, 1]
 
 # configuration file
 # config: ""                                  # help='path to configuration file
@@ -70,7 +69,7 @@ lamb: [1, 1, 1, 1]
 # dist_url: 'env://'                          # help='url used to set up distributed training
 
 data_set: "epic-kitchen"
-# ckpt: "/mnt/code/ssvl/videomae/ckpt/pretrain_vitb_1600_kinetics400.pth"
+ckpt: "/data/shared/output/ckpt/pretrain_vitb_1600_kinetics400.pth"
 
 # configurations for epic-kitchens dataset
 cfg:

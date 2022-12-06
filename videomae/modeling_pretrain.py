@@ -434,7 +434,7 @@ class PretrainMultiModalEncoder(nn.Module):
                 use_learnable_pos_emb=False, 
                 init_scale=0.,
 
-                use_mean_pooling=True,
+                use_mean_pooling=False,
                 keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
                 ):
         super().__init__()
@@ -474,7 +474,8 @@ class PretrainMultiModalEncoder(nn.Module):
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
                 init_values=init_values)
             for i in range(depth)])
-        # self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+
+        self.norm = norm_layer(embed_dim)
         # self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
         # self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
 
