@@ -610,17 +610,17 @@ def main(args, ds_init):
 
         all_keys = list(checkpoint_model.keys())
         new_dict = OrderedDict()
+
         for key in all_keys:
             if key.startswith('backbone.'):
                 new_dict[key[9:]] = checkpoint_model[key]
             elif key.startswith('encoder.'):
-                new_dict[key[8:]] = checkpoint_model[key]
-            # elif key.startswith("rgb_encoder."):
-            #     # two stream rgb encoder
-            #     new_dict[key[12:]] = checkpoint_model[key]
-            # elif key.startswith("flow_encoder."):
-            #     # two stream rgb tokenizer
-            #     new_dict[key[13:]] = checkpoint_model[key]
+                if "rgb_patch_embed" in key:
+                    new_dict[key[12:]] = checkpoint_model[key]
+                elif "flow_patch_embed" not in key:
+                    new_dict[key[8:]] = checkpoint_model[key]
+                elif "encoder.norm" in key:
+                    continue
             else:
                 new_dict[key] = checkpoint_model[key]
 

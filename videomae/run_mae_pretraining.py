@@ -16,7 +16,7 @@ from flow_extractor import flowExtractor
 from timm.models import create_model
 from optim_factory import create_optimizer
 from datasets import build_pretraining_dataset
-from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch, train_multimodal_one_epoch
+from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch, train_multimodal_one_epoch, train_multicae_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
@@ -182,6 +182,16 @@ def get_model(args):
             drop_block_rate=None,
             decoder_depth=args.decoder_depth
         )
+    
+    elif args.pretrain == "multicae":
+         model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
+            regressor_depth =args.regressor_depth
+        )
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
@@ -259,7 +269,7 @@ def main(args):
         patch_size = model.rgb_encoder.patch_embed.patch_size
     elif args.pretrain == "mae":
         patch_size = model.encoder.patch_embed.patch_size
-    elif args.pretrain == "multimodal":
+    elif args.pretrain == "multimodal" or args.pretrain == "multicae":
         patch_size = model.encoder.rgb_patch_embed.patch_size
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
@@ -440,7 +450,19 @@ def main(args):
                 normlize_target=args.normlize_target,
 
                 lamb = args.lamb,
+            )
+        elif args.pretrain == "multicae":
+            train_stats = train_multicae_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+                patch_size=patch_size[0],
+                normlize_target=args.normlize_target,
 
+                lamb = args.lamb,
             )
         else:
             raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")

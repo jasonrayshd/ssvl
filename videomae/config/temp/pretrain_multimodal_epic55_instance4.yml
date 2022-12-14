@@ -69,7 +69,7 @@ lamb: [20, 20, 1, 1]
 # dist_url: 'env://'                          # help='url used to set up distributed training
 
 data_set: "epic-kitchen"
-ckpt: "/data/shared/output/ckpt/pretrain_vitb_1600_kinetics400.pth"
+ckpt: ""
 
 # configurations for epic-kitchens dataset
 cfg:
