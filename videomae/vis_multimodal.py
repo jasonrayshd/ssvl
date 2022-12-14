@@ -38,14 +38,25 @@ def get_args():
 def get_model(args):
     print(f"Creating model: {args.model}")
 
-    model = create_model(
-        args.model,
-        pretrained=False,
-        drop_path_rate=args.drop_path,
-        drop_block_rate=None,
-        decoder_depth=args.decoder_depth,
+    if args.pretrain == "multimodal":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
 
-    )
+        )
+    elif args.pretrain == "multicae":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
+            regressor_depth=args.regressor_depth,
+        )
+
     return model
 
 
@@ -55,9 +66,10 @@ def main(args):
     model = get_model(args)
 
     checkpoints = []
-    for ckpt in args.ckpt.split(","):
-        checkpoints.append(torch.load(ckpt, map_location='cpu'))
 
+    for ckpt in args.ckpt.split(","):
+        if ckpt == "": continue
+        checkpoints.append(torch.load(ckpt, map_location='cpu'))
     patch_size = model.encoder.rgb_patch_embed.patch_size
 
     # import sys
@@ -70,9 +82,9 @@ def main(args):
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train,
         batch_size=1,
-        num_workers=1,
-        pin_memory=True,
-        shuffle=False,
+        num_workers=4,
+        # pin_memory=False,
+        # shuffle=False,
         # worker_init_fn=utils.seed_worker
     )
 
@@ -82,11 +94,12 @@ def main(args):
     model.to(device)
     model.eval()
     for i, batch in enumerate(data_loader_train):
-
+        print(f"processing {i}")
         for j, weights in enumerate(checkpoints):
             model.load_state_dict(weights['model'], strict=True)
 
             frame, mask, flows = batch[0].to(device), batch[1].to(device), batch[2].to(device)
+            B,*_ = frame.shape
             mask = mask.flatten(1).to(torch.bool).cpu()
             output = model(frame, flows, mask, all_token=True)
             
@@ -100,39 +113,65 @@ def main(args):
             unnormed_frame_post = cv2.cvtColor(unnormed_frame_post, cv2.COLOR_BGR2RGB)
 
             rgb_hat, flow_hat = output
-            B, N ,C = rgb_hat.shape
-            rgb_rgb_hat = rgb_hat[:B//2, :, :]
-            flow_rgb_hat = rgb_hat[B//2:, :, :]
+            B_hat, N ,C = rgb_hat.shape
+            print("1")
+            if B == B_hat: # multicae
+                num_masked_tokens = int(14*14*args.mask_ratio*8)
 
-            flow_flow_hat = flow_hat[:B//2, :, :]
-            rgb_flow_hat = flow_hat[B//2:, :, :]
+                unnormed_frame = frame.squeeze() * std + mean
+                # print(torch.cat([mask,mask],dim=0).shape)
+                rgb_hat_reshape = unpatchify_rgb(rgb_hat, mask, num_masked_tokens)
+                print((rgb_hat_reshape-unnormed_frame).pow(2).mean())
 
-            masked_tokens = int(14*14*args.mask_ratio*8)
+                flow_hat_reshape = unpatchify_flow(flow_hat, mask, num_masked_tokens)
 
-            unnormed_frame = frame.squeeze() * std + mean
-            # print(torch.cat([mask,mask],dim=0).shape)
-            rgb_rgb_hat_reshape = unpatchify_rgb(rgb_rgb_hat, mask, masked_tokens)
-            print((rgb_rgb_hat_reshape-unnormed_frame).pow(2).mean())
+                unnormed_frame = unnormed_frame.transpose(0, 1)
+                flows_rgb = []
+                flow_hat_rgb = []
+                for t in range(8):
+                    flows_rgb.append(flow_to_color(flows.squeeze()[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
+                    flow_hat_rgb.append(flow_to_color(flow_hat_reshape[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
 
-            flow_rgb_hat_reshape = unpatchify_rgb(flow_rgb_hat, mask, masked_tokens)
-            flow_flow_hat_reshape = unpatchify_flow(flow_flow_hat, mask, masked_tokens)
-            rgb_flow_hat_reshape = unpatchify_flow(rgb_flow_hat, mask, masked_tokens)
+                flows_rgb = torch.from_numpy(np.stack(flows_rgb, axis=0).transpose(0, 3, 1, 2))
+                flow_hat_rgb = torch.from_numpy(np.stack(flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
 
-            unnormed_frame = unnormed_frame.transpose(0, 1)
-            flows_rgb = []
-            flow_flow_hat_rgb = []
-            rgb_flow_hat_rgb = []
-            for t in range(8):
-                flows_rgb.append(flow_to_color(flows.squeeze()[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
-                flow_flow_hat_rgb.append(flow_to_color(flow_flow_hat_reshape[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
-                rgb_flow_hat_rgb.append(flow_to_color(rgb_flow_hat_reshape[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
+                all_cat = torch.cat((flows_rgb/255, flow_hat_rgb/255, unnormed_frame.cpu(), rgb_hat_reshape.cpu().transpose(0, 1)), dim=0)
+                save_image(all_cat, f"./log/flow_vis_{i}.png")
 
-            flows_rgb = torch.from_numpy(np.stack(flows_rgb, axis=0).transpose(0, 3, 1, 2))
-            flow_flow_hat_rgb = torch.from_numpy(np.stack(flow_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
-            rgb_flow_hat_rgb = torch.from_numpy(np.stack(rgb_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
+            else: # multimodal
+                B, N ,C = rgb_hat.shape
+                rgb_rgb_hat = rgb_hat[:B//2, :, :]
+                flow_rgb_hat = rgb_hat[B//2:, :, :]
 
-            all_cat = torch.cat((flows_rgb/255, flow_flow_hat_rgb/255, rgb_flow_hat_rgb/255, unnormed_frame.cpu(), rgb_rgb_hat_reshape.cpu().transpose(0, 1), flow_rgb_hat_reshape.cpu().transpose(0, 1)), dim=0)
-            save_image(all_cat, f"./log/flow_vis_{i}.png")
+                flow_flow_hat = flow_hat[:B//2, :, :]
+                rgb_flow_hat = flow_hat[B//2:, :, :]
+
+                masked_tokens = int(14*14*args.mask_ratio*8)
+
+                unnormed_frame = frame.squeeze() * std + mean
+                # print(torch.cat([mask,mask],dim=0).shape)
+                rgb_rgb_hat_reshape = unpatchify_rgb(rgb_rgb_hat, mask, masked_tokens)
+                print((rgb_rgb_hat_reshape-unnormed_frame).pow(2).mean())
+
+                flow_rgb_hat_reshape = unpatchify_rgb(flow_rgb_hat, mask, masked_tokens)
+                flow_flow_hat_reshape = unpatchify_flow(flow_flow_hat, mask, masked_tokens)
+                rgb_flow_hat_reshape = unpatchify_flow(rgb_flow_hat, mask, masked_tokens)
+
+                unnormed_frame = unnormed_frame.transpose(0, 1)
+                flows_rgb = []
+                flow_flow_hat_rgb = []
+                rgb_flow_hat_rgb = []
+                for t in range(8):
+                    flows_rgb.append(flow_to_color(flows.squeeze()[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
+                    flow_flow_hat_rgb.append(flow_to_color(flow_flow_hat_reshape[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
+                    rgb_flow_hat_rgb.append(flow_to_color(rgb_flow_hat_reshape[:, t, ...].cpu().numpy().transpose(1, 2, 0), convert_to_bgr=False))
+
+                flows_rgb = torch.from_numpy(np.stack(flows_rgb, axis=0).transpose(0, 3, 1, 2))
+                flow_flow_hat_rgb = torch.from_numpy(np.stack(flow_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
+                rgb_flow_hat_rgb = torch.from_numpy(np.stack(rgb_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
+
+                all_cat = torch.cat((flows_rgb/255, flow_flow_hat_rgb/255, rgb_flow_hat_rgb/255, unnormed_frame.cpu(), rgb_rgb_hat_reshape.cpu().transpose(0, 1), flow_rgb_hat_reshape.cpu().transpose(0, 1)), dim=0)
+                save_image(all_cat, f"./log/flow_vis_{i}.png")
 
            
 

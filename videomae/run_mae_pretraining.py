@@ -16,7 +16,7 @@ from flow_extractor import flowExtractor
 from timm.models import create_model
 from optim_factory import create_optimizer
 from datasets import build_pretraining_dataset
-from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch, train_multimodal_one_epoch
+from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch, train_multimodal_one_epoch, train_multicae_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
@@ -182,21 +182,44 @@ def get_model(args):
             drop_block_rate=None,
             decoder_depth=args.decoder_depth
         )
+    
+    elif args.pretrain == "multicae":
+         model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
+            regressor_depth =args.regressor_depth
+        )
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
     return model
 
 
-def load_weight_for_rgb_encoder(raw_checkpoints):
+def load_weight_for_rgb_encoder(raw_checkpoints, pretrain="ts"):
     """
         when pretraining, load weight for rgb cross-modality encoder
     """
     rgb_encoder_checkpoints = {}
 
-    for k, v in raw_checkpoints["model"].items():
-        if k.startswith("encoder"):
-            rgb_encoder_checkpoints["rgb_encoder"+k[7:]] = v
+    if pretrain == "ts":
+        for k, v in raw_checkpoints["model"].items():
+            if k.startswith("encoder"):
+                rgb_encoder_checkpoints["rgb_encoder"+k[7:]] = v
+    elif pretrain == "multimodal":
+         for k, v in raw_checkpoints["model"].items():
+            if k.startswith("encoder"):
+                if "patch_embed" in k:
+                    _tmp = k.split(".")
+                    _tmp[1] = "rgb_patch_embed"
+                    k = ".".join(_tmp)
+
+                rgb_encoder_checkpoints[k] = v
+
+            elif k == "mask_token":
+                rgb_encoder_checkpoints["rgb_mask_token"] = v
 
     return rgb_encoder_checkpoints
 
@@ -230,12 +253,12 @@ def main(args):
     ckpt = getattr(args, "ckpt", "")
     if ckpt != "":
         raw_checkpoints = torch.load(ckpt, map_location="cpu")
-        rgb_encoder_checkpoints = load_weight_for_rgb_encoder(raw_checkpoints)
+        rgb_encoder_checkpoints = load_weight_for_rgb_encoder(raw_checkpoints, pretrain=args.pretrain)
         missing_keys_lst, unexpected_keys_lst = model.load_state_dict(rgb_encoder_checkpoints, strict=False)
         # Check if rgb cross-modality encoder weights are loaded successfully
         flag = True
         for k in missing_keys_lst:
-            if "rgb_encoder." in k:
+            if "rgb_encoder." or "encoder" in k:
                 flag = False
                 print(f"Found an unloaded paramter of RGB cross-modality encoder:{k}")
         if flag:
@@ -246,7 +269,7 @@ def main(args):
         patch_size = model.rgb_encoder.patch_embed.patch_size
     elif args.pretrain == "mae":
         patch_size = model.encoder.patch_embed.patch_size
-    elif args.pretrain == "multimodal":
+    elif args.pretrain == "multimodal" or args.pretrain == "multicae":
         patch_size = model.encoder.rgb_patch_embed.patch_size
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
@@ -427,7 +450,19 @@ def main(args):
                 normlize_target=args.normlize_target,
 
                 lamb = args.lamb,
+            )
+        elif args.pretrain == "multicae":
+            train_stats = train_multicae_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+                patch_size=patch_size[0],
+                normlize_target=args.normlize_target,
 
+                lamb = args.lamb,
             )
         else:
             raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")

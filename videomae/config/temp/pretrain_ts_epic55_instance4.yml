@@ -1,0 +1,113 @@
+# configuration for pretraining
+# configurations needed in pretraining
+
+batch_size: 16
+epochs: 300
+save_ckpt_freq: 10
+
+# Model parameters
+model: "pretrain_tsvit_base_patch16_224"
+decoder_depth: 4
+mask_type: "agnostic"         # choices=['tube']
+mask_ratio: 0.9
+input_size: 224           # videos input size for backbone
+drop_path: 0.0            # help='Drop path rate (default: 0.1)    
+normlize_target: False     #help='normalized the target patch pixels
+
+# Optimizer parameters
+opt: "adamw"               # help='Optimizer, default: "adamw"
+opt_eps: 1.0e-8             # help='Optimizer Epsilon (default: 1e-8)
+opt_betas: null           # type=float, nargs='+  metavar='BETA help='Optimizer Betas (default: None, use opt default)
+clip_grad: null           # type=float, None, metavar='NORM help='Clip gradient norm (default: None, no clipping)
+momentum: 0.9             # metavar='M help='SGD momentum (default: 0.9)
+weight_decay: 0.05        # help='weight decay (default: 0.05)
+weight_decay_end: null    # help="""Final value of the
+                          # weight decay. We use a cosine schedule for WD. 
+                          # (Set the same value with args.weight_decay to keep weight decay no change)""")
+
+lr: 1.5e-4                # metavar='LR help='learning rate (default: 1.5e-4)
+flow_encoder_lr: null
+
+warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
+min_lr: 1.0e-7              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
+
+warmup_epochs: 20         # metavar='N help='epochs to warmup LR, if scheduler supports
+warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
+
+# Augmentation parameters
+color_jitter: 0.0                           # metavar='PCT help='Color jitter factor (default: 0.4)
+train_interpolation: 'bicubic'              # help='Training interpolation (random, bilinear, bicubic default: "bicubic")
+
+# Dataset parameters
+data_path: '/path/to/list_kinetics-400'     # help='dataset path
+imagenet_default_mean_and_std: true         # action='store_true
+num_frames: 16
+sampling_rate: 4
+output_dir: "/data/shared/output"                              # help='path where to save, empty for no saving
+log_dir: "/data/shared/output"                              # help='path where to tensorboard log
+# device: 'cuda'                              # help='device to use for training / testing
+# seed: 0
+resume: ""                                  # help='resume from checkpoint
+auto_resume: true                           # 
+
+start_epoch: 0                              # help='start epoch
+num_workers: 12
+pin_mem: true
+# flow images
+ts_pretrain: true
+# predict_preprocessed_flow: true               # whether use preprocessed flow images as target at pretraining
+flow_mode: "local"                                # mode of sampling flow images  [A]
+fuse_scheme: "concate"
+tokenizer_backbone: "simplecnn"
+
+version: "3.0"
+use_rgb_stat: ""
+mask_tokenizer: false               # if ture, then mask token will be shared between transformer encoder and CNN encoder within each modality
+share_proj_layer: false
+share_within_modality_proj_layer: true
+weighted_flow2rgb_recons: false
+
+tau: 0.01
+lamb: [1, 1, 1, 1, 0.1, 0.1]
+ctr: "hard"
+# configuration file
+# config: ""                                  # help='path to configuration file
+
+# distributed training parameters
+# world_size: 1                               # help='number of distributed processes
+# local_rank: -1
+# dist_on_itp: false                          # action='store_true
+# dist_url: 'env://'                          # help='url used to set up distributed training
+
+data_set: "epic-kitchen"
+ckpt: "/data/shared/output/ckpt/pretrain_vitb_1600_kinetics400.pth"
+# configurations for epic-kitchens dataset
+cfg:
+  EPICKITCHENS:
+    # epic-kitchen100: path to directory that contains each participant's data
+    # epic-kitchen50: path to directory that contains two directories: flow and rgb
+    # VISUAL_DATA_DIR: "/data/jiachen/partial-epic-kitchens55/frames_rgb_flow"
+    VISUAL_DATA_DIR: "/data/sharedA100/epic-kitchens55/frames_rgb_flow"
+    # path to annotation file
+    # ANNOTATIONS_DIR: "/data/jiachen/partial-epic-kitchens55/annotations"
+    ANNOTATIONS_DIR: "/data/sharedA100/epic-kitchens55/annotations"
+    # annotation file name of train/val/test data
+    TRAIN_LIST: "EPIC_train_action_labels.pkl"
+    VAL_LIST: ""
+    TEST_LIST: ""
+  DATA:
+    # do not need in pretrain
+    # - MEAN: ""
+    # - STD: ""
+    SAMPLING_RATE: 2
+    NUM_FRAMES: 16
+    TRAIN_JITTER_SCALES: [256, 320]
+    TRAIN_CROP_SIZE: 224
+    TEST_CROP_SIZE: 224
+    REPEATED_SAMPLING: false
+    READ_BY_TAR: false
+  TEST:
+    NUM_SPATIAL_CROPS: ""
+    NUM_ENSEMBLE_VIEWS: ""
+  VERSION: 55
+  ONINE_EXTRACTING: true

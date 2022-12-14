@@ -3,8 +3,11 @@ from builtins import ValueError
 from lib2to3.pgen2 import token
 import torch
 import torch.nn as nn
-# import torch.nn.functional as F
+import torch.nn.functional as F
 
+
+import math
+import random
 from functools import partial
 
 from modeling_finetune import Block, _cfg, PatchEmbed, get_sinusoid_encoding_table
@@ -434,7 +437,7 @@ class PretrainMultiModalEncoder(nn.Module):
                 use_learnable_pos_emb=False, 
                 init_scale=0.,
 
-                use_mean_pooling=True,
+                use_mean_pooling=False,
                 keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
                 ):
         super().__init__()
@@ -474,7 +477,8 @@ class PretrainMultiModalEncoder(nn.Module):
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
                 init_values=init_values)
             for i in range(depth)])
-        # self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+
+        self.norm = norm_layer(embed_dim)
         # self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
         # self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
 
@@ -697,6 +701,7 @@ class PretrainVisionTransformerMultiModalDecoder(nn.Module):
 
         return x
 
+
 class PretrainMultiModalTransformer(nn.Module):
 
     def __init__(self,
@@ -851,6 +856,483 @@ class PretrainMultiModalTransformer(nn.Module):
 
         rgb_hat = self.rgb_decoder(rgb_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
         flow_hat = self.flow_decoder(flow_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+
+        return rgb_hat, flow_hat
+
+
+class PretrainMultiCAEEncoder(nn.Module):
+
+    def __init__(self, 
+                
+
+                rgb_in_chans=3, 
+                flow_in_chans=2,
+
+                rgb_num_frames=16,
+                flow_num_frames=8,
+                
+                rgb_tubelet_size=2,
+                flow_tubelet_size=1,
+
+                img_size=224, 
+                patch_size=16, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+
+                use_mean_pooling=False,
+                keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
+                ):
+        super().__init__()
+
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+
+        self.keep_dim = keep_dim
+
+        self.rgb_patch_embed = PatchEmbed(
+                        img_size=img_size, patch_size=patch_size, in_chans=rgb_in_chans,
+                        embed_dim=embed_dim, num_frames=rgb_num_frames, tubelet_size=rgb_tubelet_size)
+
+        self.flow_patch_embed = PatchEmbed(
+                        img_size=img_size, patch_size=patch_size, in_chans=flow_in_chans,
+                        embed_dim=embed_dim, num_frames=flow_num_frames, tubelet_size=flow_tubelet_size)
+
+
+        num_patches = self.rgb_patch_embed.num_patches
+
+        # self.rgb_type_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
+        # self.flow_type_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
+        if use_learnable_pos_emb:
+            self.pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
+            # self.x2_pos_embed = nn.Parameter(torch.zeros(2*num_patches, embed_dim))
+        else:
+            # sine-cosine positional embeddings is on the way
+            self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
+            # self.x2_pos_embed = get_sinusoid_encoding_table(2*num_patches, embed_dim)
+
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+
+        self.norm = norm_layer(embed_dim)
+        # self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        # self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
+
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token'}
+
+    def get_classifier(self):
+        return self.head
+
+    def reset_classifier(self, num_classes, global_pool=''):
+        self.num_classes = num_classes
+        self.head = nn.Linear(self.embed_dim, num_classes)
+
+    def forward_features(self, rgb, flow, mask):
+        """
+            rgb:  torch.Tensor,  B, 3, T, H, W
+            flow: torch.Tensor,  B, 2, T//2, H, W
+        """
+        x_rgb = self.rgb_patch_embed(rgb)
+        B, _, C = x_rgb.size()
+        x_rgb += self.pos_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
+        x_rgb_vis = x_rgb[~mask].reshape(B, -1, C) # ~mask means visible
+        N1 = x_rgb_vis.shape[1]
+
+        if flow is not None:
+            x_flow = self.flow_patch_embed(flow)
+            x_flow += self.pos_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
+            x_flow_vis = x_flow[~mask].reshape(B, -1, C) # ~mask means visible
+            N2 = x_flow_vis.shape[1]
+            x_vis = torch.cat([x_rgb_vis, x_flow_vis], dim=1)
+
+        else:
+            x_vis = x_rgb_vis
+
+        for blk in self.blocks:
+            x_vis = blk(x_vis)
+
+        return x_vis
+
+    def forward(self, rgb, flow, mask):
+        token_dict = self.forward_features(rgb, flow, mask)
+
+        return token_dict
+
+
+class CrossAttention(nn.Module):
+    def __init__(
+            self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0.,
+            proj_drop=0., window_size=None, attn_head_dim=None):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        if attn_head_dim is not None:
+            head_dim = attn_head_dim
+        all_head_dim = head_dim * self.num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+
+        self.q = nn.Linear(dim, all_head_dim, bias=False)
+        self.k = nn.Linear(dim, all_head_dim, bias=False)
+        self.v = nn.Linear(dim, all_head_dim, bias=False)
+
+        if qkv_bias:
+            self.q_bias = nn.Parameter(torch.zeros(all_head_dim))
+            self.v_bias = nn.Parameter(torch.zeros(all_head_dim))
+        else:
+            self.q_bias = None
+            self.k_bias = None
+            self.v_bias = None
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(all_head_dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x, bool_masked_pos=None, k=None, v=None):
+        B, N, C = x.shape
+        N_k = k.shape[1]
+        N_v = v.shape[1]
+
+        q_bias, k_bias, v_bias = None, None, None
+        if self.q_bias is not None:
+            q_bias = self.q_bias
+            k_bias = torch.zeros_like(self.v_bias, requires_grad=False)
+            v_bias = self.v_bias
+
+        q = F.linear(input=x, weight=self.q.weight, bias=q_bias)
+        q = q.reshape(B, N, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)    # (B, N_head, N_q, dim)
+
+        k = F.linear(input=k, weight=self.k.weight, bias=k_bias)
+        k = k.reshape(B, N_k, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)
+
+        v = F.linear(input=v, weight=self.v.weight, bias=v_bias)   
+        v = v.reshape(B, N_v, 1, self.num_heads, -1).permute(2, 0, 3, 1, 4).squeeze(0)
+
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))      # (B, N_head, N_q, N_k)
+        
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, -1) 
+        x = self.proj(x)
+        x = self.proj_drop(x)
+
+        return x
+
+
+class RegressorBlock(nn.Module):
+    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=nn.LayerNorm,
+                 window_size=None, attn_head_dim=None):
+        super().__init__()
+        self.norm1_q = norm_layer(dim)
+        self.norm1_k = norm_layer(dim)
+        self.norm1_v = norm_layer(dim)
+        self.norm2_cross = norm_layer(dim)
+        self.cross_attn =  CrossAttention(
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+            attn_drop=attn_drop, proj_drop=drop, window_size=window_size, attn_head_dim=attn_head_dim)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        
+        self.mlp_cross = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+
+        if init_values > 0:
+            self.gamma_1_cross = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
+            self.gamma_2_cross = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
+        else:
+            self.gamma_1_cross = nn.Parameter(torch.ones((dim)),requires_grad=False)
+            self.gamma_2_cross = nn.Parameter(torch.ones((dim)),requires_grad=False)
+
+    def forward(self, x_q, x_kv, pos_q, pos_k, bool_masked_pos):
+        x = x_q + self.drop_path(self.gamma_1_cross * self.cross_attn(self.norm1_q(x_q + pos_q),
+         bool_masked_pos, k=self.norm1_k(x_kv + pos_k), v=self.norm1_v(x_kv)))
+        x = self.norm2_cross(x)
+        x = x + self.drop_path(self.gamma_2_cross * self.mlp_cross(x))
+
+        return x
+
+
+class MultiCAERegressor(nn.Module):
+    def __init__(self, patch_size=16, num_classes=8192, embed_dim=768, depth=6, 
+                 num_heads=12, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
+                 drop_path_rate=0., norm_layer=None, init_values=None, num_patches=196, init_std=0.02, args=None, patch_shape=(14,14)):
+        super().__init__()
+
+        self.num_features = self.embed_dim = embed_dim
+        self.patch_size = patch_size
+        self.args = args
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
+
+        # context regressor
+        self.regressor_blocks = nn.ModuleList([
+            RegressorBlock(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+
+        self.norm = norm_layer(embed_dim)
+        self.init_std = init_std
+
+        # init the model
+        self.apply(self._init_weights)
+        self.fix_init_weight()
+
+    def fix_init_weight(self):
+        def rescale(param, layer_id):
+            param.div_(math.sqrt(2.0 * layer_id))
+
+        for layer_id, layer in enumerate(self.regressor_blocks):
+            rescale(layer.cross_attn.proj.weight.data, layer_id + 1)
+            rescale(layer.mlp_cross.fc2.weight.data, layer_id + 1)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=self.init_std)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv2d):
+            trunc_normal_(m.weight, std=self.init_std)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token'}
+
+    def forward(self, x_masked, x_unmasked, pos_embed_masked, pos_embed_unmasked, bool_masked_pos):                
+        # latent contextual regressor
+        for blk in self.regressor_blocks:
+            x_masked = blk(x_masked, torch.cat([x_unmasked, x_masked], dim=1), pos_embed_masked, torch.cat([pos_embed_unmasked, pos_embed_masked], dim=1), bool_masked_pos)
+        x_masked = self.norm(x_masked)
+
+        return x_masked
+
+
+class PretrainMultiCAETransformer(nn.Module):
+
+    def __init__(self,
+                rgb_in_chans=3, 
+                flow_in_chans=2,
+
+                rgb_num_frames=16,
+                flow_num_frames=8,
+                
+                rgb_tubelet_size=2,
+                flow_tubelet_size=1,
+
+                rgb_num_classes= 1536,
+                flow_num_classes= 512,
+
+                img_size=224, 
+                patch_size=16, 
+                # encoder_in_chans=3, 
+                encoder_num_classes=0, 
+                encoder_embed_dim=768, 
+                encoder_depth=12,
+                encoder_num_heads=12, 
+                # decoder_num_classes=1536, #  decoder_num_classes=768, 
+                decoder_embed_dim=512, 
+                decoder_depth=8,
+                decoder_num_heads=8, 
+
+                regressor_depth = 6,
+
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False,
+                # tubelet_size=2,
+                num_classes=0, # avoid the error from create_fn in timm
+                in_chans=0, # avoid the error from create_fn in timm
+
+                ):
+        super().__init__()
+        self.encoder = PretrainMultiCAEEncoder(
+                                                   # default value
+            rgb_in_chans = rgb_in_chans,           # 3
+            flow_in_chans = flow_in_chans,         # 2
+            rgb_num_frames = rgb_num_frames,       # 16
+            flow_num_frames = flow_num_frames,     # 8
+            rgb_tubelet_size = rgb_tubelet_size,   # 2
+            flow_tubelet_size = flow_tubelet_size, # 1
+
+            img_size=img_size, 
+            patch_size=patch_size, 
+            num_classes=encoder_num_classes, 
+            embed_dim=encoder_embed_dim, 
+            depth=encoder_depth,
+            num_heads=encoder_num_heads, 
+            mlp_ratio=mlp_ratio, 
+            qkv_bias=qkv_bias, 
+            qk_scale=qk_scale, 
+            drop_rate=drop_rate, 
+            attn_drop_rate=attn_drop_rate,
+            drop_path_rate=drop_path_rate, 
+            norm_layer=norm_layer, 
+            init_values=init_values,
+            use_learnable_pos_emb=use_learnable_pos_emb)
+
+        self.rgb_decoder = PretrainVisionTransformerMultiModalDecoder(
+
+            num_classes=rgb_num_classes, 
+
+            embed_dim=decoder_embed_dim, 
+            depth=decoder_depth,
+            num_heads=decoder_num_heads, 
+            mlp_ratio=mlp_ratio, 
+            qkv_bias=qkv_bias, 
+            qk_scale=qk_scale, 
+            drop_rate=drop_rate, 
+            attn_drop_rate=attn_drop_rate,
+            drop_path_rate=drop_path_rate, 
+            norm_layer=norm_layer, 
+            init_values=init_values,
+            # tubelet_size=tubelet_size,
+            )
+        
+        self.flow_decoder = PretrainVisionTransformerMultiModalDecoder(
+
+            num_classes=flow_num_classes,
+
+            embed_dim=decoder_embed_dim, 
+            depth=decoder_depth,
+            num_heads=decoder_num_heads, 
+            mlp_ratio=mlp_ratio, 
+            qkv_bias=qkv_bias, 
+            qk_scale=qk_scale, 
+            drop_rate=drop_rate, 
+            attn_drop_rate=attn_drop_rate,
+            drop_path_rate=drop_path_rate, 
+            norm_layer=norm_layer, 
+            init_values=init_values,
+            # tubelet_size=tubelet_size,
+            )
+
+        
+        self.regressor = MultiCAERegressor(
+            patch_size=patch_size, 
+            embed_dim=decoder_embed_dim, 
+
+            depth=regressor_depth, 
+
+            num_heads=decoder_num_heads, 
+            mlp_ratio=mlp_ratio, 
+            qkv_bias=qkv_bias, 
+            qk_scale=qk_scale, 
+            drop_rate=drop_rate, 
+            attn_drop_rate=attn_drop_rate,
+            drop_path_rate=drop_path_rate, 
+            norm_layer=norm_layer, 
+            init_values=init_values, 
+            num_patches=self.encoder.rgb_patch_embed.num_patches, 
+
+        )
+
+        self.encoder_to_decoder = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=False)
+        self.flow_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+        self.pos_embed = get_sinusoid_encoding_table(self.encoder.rgb_patch_embed.num_patches, decoder_embed_dim)
+
+        trunc_normal_(self.mask_token, std=.02)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token', 'mask_token'}
+
+    def forward(self, rgb, flow, mask, all_token=False):
+        # _, _, T, _, _ = x.shape
+
+        p = random.random()
+        if p > 0.5:
+            flow = None
+
+        x_vis = self.encoder(rgb, flow, mask) 
+        x_vis = self.encoder_to_decoder(x_vis)
+
+        B, _, C = x_vis.shape
+
+        expand_pos_embed = self.pos_embed.expand(B, -1, -1).type_as(x_vis).to(x_vis.device).clone().detach()
+        pos_emd_vis = expand_pos_embed[~mask].reshape(B, -1, C)
+        pos_emd_mask = expand_pos_embed[mask].reshape(B, -1, C)
+        # masked embedding '''
+
+        B, N, C = pos_emd_vis.shape
+        if p > 0.5:   
+            x_masked = self.flow_token.expand(B, pos_emd_vis.shape[1], -1)
+            # B, N_mask, C
+            latent_pred = self.regressor(x_masked, x_vis, pos_emd_vis, pos_emd_vis, mask)
+            x_flow = torch.cat([latent_pred + pos_emd_vis, self.mask_token + pos_emd_mask], dim=1)
+        else:
+            x_flow = torch.cat([x_vis[:, N:] + pos_emd_vis, self.mask_token + pos_emd_mask], dim=1)   
+
+        x_rgb = torch.cat([x_vis[:, :N] + pos_emd_vis, self.mask_token + pos_emd_mask], dim=1)
+
+        rgb_hat = self.rgb_decoder(x_rgb, pos_emd_mask.shape[1] if not all_token else 0) 
+        flow_hat = self.flow_decoder(x_flow, pos_emd_mask.shape[1] if not all_token else 0) 
 
         return rgb_hat, flow_hat
 
@@ -1679,6 +2161,42 @@ def pretrain_videomae_multimodal_base_patch16_224(pretrained=False, **kwargs):
         model.load_state_dict(checkpoint["model"])
     return model
  
+@register_model
+def pretrain_videomae_multicae_base_patch16_224(pretrained=False, **kwargs):
+    model = PretrainMultiCAETransformer(
+        rgb_in_chans=3, 
+        flow_in_chans=2,
+
+        rgb_num_frames=16,
+        flow_num_frames=8,
+        
+        rgb_tubelet_size=2,
+        flow_tubelet_size=1,
+
+        rgb_num_classes= 1536,
+        flow_num_classes= 512,
+
+        img_size=224,
+        patch_size=16, 
+        encoder_embed_dim=768, 
+        encoder_depth=12, 
+        encoder_num_heads=12,
+        encoder_num_classes=0,
+        # decoder_num_classes=1536,
+        decoder_embed_dim=384,
+        decoder_num_heads=6,
+
+        mlp_ratio=4, 
+        qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), 
+        **kwargs)
+    model.default_cfg = _cfg()
+    if pretrained:
+        checkpoint = torch.load(
+            kwargs["init_ckpt"], map_location="cpu"
+        )
+        model.load_state_dict(checkpoint["model"])
+    return model
 
 
 if __name__ == "__main__":
