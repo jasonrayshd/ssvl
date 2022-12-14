@@ -854,7 +854,6 @@ class PretrainMultiModalTransformer(nn.Module):
 
         return rgb_hat, flow_hat
 
-
 ############# Two stream training scheme     #############
 
 class PretrainVisionTransformerSharedDecoder(nn.Module):
