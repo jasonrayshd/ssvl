@@ -10,6 +10,7 @@ from pathlib import Path
 import argparse
 from config_utils import parse_yml, combine
 
+import random
 import numpy as np
 from einops import rearrange
 from flow_vis import flow_to_color
@@ -94,15 +95,22 @@ def main(args):
     model.to(device)
     model.eval()
     for i, batch in enumerate(data_loader_train):
-        print(f"processing {i}")
         for j, weights in enumerate(checkpoints):
             model.load_state_dict(weights['model'], strict=True)
 
             frame, mask, flows = batch[0].to(device), batch[1].to(device), batch[2].to(device)
             B,*_ = frame.shape
             mask = mask.flatten(1).to(torch.bool).cpu()
-            output = model(frame, flows, mask, all_token=True)
-            
+
+            if args.pretrain == "multicae":
+                p = random.random()
+                if p > 0.5:
+                    output = model(frame, None, mask, all_token=True)
+                    print(f"batch:{i} flows is None")
+                else:
+                    output = model(frame, flows, mask, all_token=True)
+            else:
+                output = model(frame, flows, mask, all_token=True)
 
             # de-normalize input frames
             unnormed_frame = frame.squeeze() * std + mean
@@ -114,8 +122,8 @@ def main(args):
 
             rgb_hat, flow_hat = output
             B_hat, N ,C = rgb_hat.shape
-            print("1")
-            if B == B_hat: # multicae
+
+            if args.pretrain == "multicae": # multicae
                 num_masked_tokens = int(14*14*args.mask_ratio*8)
 
                 unnormed_frame = frame.squeeze() * std + mean

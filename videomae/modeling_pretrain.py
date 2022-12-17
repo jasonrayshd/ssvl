@@ -1306,10 +1306,6 @@ class PretrainMultiCAETransformer(nn.Module):
     def forward(self, rgb, flow, mask, all_token=False):
         # _, _, T, _, _ = x.shape
 
-        p = random.random()
-        if p > 0.5:
-            flow = None
-
         x_vis = self.encoder(rgb, flow, mask) 
         x_vis = self.encoder_to_decoder(x_vis)
 
@@ -1321,7 +1317,7 @@ class PretrainMultiCAETransformer(nn.Module):
         # masked embedding '''
 
         B, N, C = pos_emd_vis.shape
-        if p > 0.5:   
+        if flow is None:  # only rgb input
             x_masked = self.flow_token.expand(B, pos_emd_vis.shape[1], -1)
             # B, N_mask, C
             latent_pred = self.regressor(x_masked, x_vis, pos_emd_vis, pos_emd_vis, mask)

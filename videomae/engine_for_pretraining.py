@@ -1,6 +1,10 @@
-import math
 import os
 import sys
+import cv2
+import math
+import random
+import numpy as np
+
 from typing import Iterable
 import torch
 import torch.nn as nn
@@ -10,8 +14,7 @@ from einops import rearrange
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
 from torchvision.utils import save_image
-import numpy as np
-import cv2
+
 
 # class FlowMSELoss(nn.Module):
 
@@ -1003,6 +1006,9 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
         flow_target = flow_target.to(device, non_blocking=True)
 
         with torch.cuda.amp.autocast():
+            p = random.random()
+            if p > 0.5:
+                flows = None
             outputs = model(videos, flows, bool_masked_pos)
  
             loss_dct = loss_func(outputs, rgb_target, flow_target)
@@ -1027,7 +1033,11 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
 
         metric_logger.update(loss=loss_value)
         metric_logger.update(rgb_recons_loss=loss_dct["rgb_recons"])
-        metric_logger.update(flow_recons_loss=loss_dct["flow_recons"])
+        if flows is not None:
+            metric_logger.update(flow_recons_loss=loss_dct["flow_recons"])
+        else:
+            metric_logger.update(rgb2flow_loss=loss_dct["flow_recons"])
+
         metric_logger.update(recons_loss=loss_dct["rgb_recons"]+loss_dct["flow_recons"])
         metric_logger.update(loss_scale=loss_scale_value)
 
@@ -1050,7 +1060,12 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
         if log_writer is not None:
             log_writer.update(loss=loss_value, head="loss")
             log_writer.update(rgb_recons=loss_dct["rgb_recons"], head="rgb_recons")
-            log_writer.update(flow_recons=loss_dct["flow_recons"], head="flow_recons")
+
+            if flows is not None:
+                log_writer.update(flow_recons=loss_dct["flow_recons"], head="flow_recons")
+            else:
+                log_writer.update(flow_recons=loss_dct["rgb2flow_recons"], head="flow_recons")
+
             log_writer.update(recons_loss=loss_dct["rgb_recons"] + loss_dct["flow_recons"], head="recons_loss")
 
             log_writer.update(loss_scale=loss_scale_value, head="opt")
