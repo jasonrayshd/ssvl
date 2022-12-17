@@ -38,14 +38,25 @@ def get_args():
 def get_model(args):
     print(f"Creating model: {args.model}")
 
-    model = create_model(
-        args.model,
-        pretrained=False,
-        drop_path_rate=args.drop_path,
-        drop_block_rate=None,
-        decoder_depth=args.decoder_depth,
+    if args.pretrain == "multimodal":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
 
-    )
+        )
+    elif args.pretrain == "multicae":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth,
+            regressor_depth=args.regressor_depth,
+        )
+
     return model
 
 
@@ -55,10 +66,10 @@ def main(args):
     model = get_model(args)
 
     checkpoints = []
+
     for ckpt in args.ckpt.split(","):
         if ckpt == "": continue
         checkpoints.append(torch.load(ckpt, map_location='cpu'))
-
     patch_size = model.encoder.rgb_patch_embed.patch_size
 
     # import sys
@@ -71,9 +82,9 @@ def main(args):
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train,
         batch_size=1,
-        num_workers=1,
-        pin_memory=True,
-        shuffle=False,
+        num_workers=4,
+        # pin_memory=False,
+        # shuffle=False,
         # worker_init_fn=utils.seed_worker
     )
 
@@ -83,7 +94,7 @@ def main(args):
     model.to(device)
     model.eval()
     for i, batch in enumerate(data_loader_train):
-
+        print(f"processing {i}")
         for j, weights in enumerate(checkpoints):
             model.load_state_dict(weights['model'], strict=True)
 
@@ -103,7 +114,7 @@ def main(args):
 
             rgb_hat, flow_hat = output
             B_hat, N ,C = rgb_hat.shape
-
+            print("1")
             if B == B_hat: # multicae
                 num_masked_tokens = int(14*14*args.mask_ratio*8)
 
@@ -114,6 +125,7 @@ def main(args):
 
                 flow_hat_reshape = unpatchify_flow(flow_hat, mask, num_masked_tokens)
 
+                unnormed_frame = unnormed_frame.transpose(0, 1)
                 flows_rgb = []
                 flow_hat_rgb = []
                 for t in range(8):
