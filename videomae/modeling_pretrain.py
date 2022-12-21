@@ -374,13 +374,13 @@ class MultiModalBlock(nn.Module):
         Bn, N, C = x.shape          # Bn=B*2, N=N1+N2
         B = Bn // 2
 
-        # attention layer
+        # layer normalization on all tokens
         x = self.norm1(x)
         # slice tensor
         x1 = x[:B, :, :]
-        x1_rgb = x1[:, :N1, :]
-        x1_flow = x1[:, N1:, :]
-        x2 = x[B:, :, :]
+        x1_rgb = x1[:, :N1, :] # rgb token set for within-modality learning
+        x1_flow = x1[:, N1:, :] # flow token set for within-modality learning
+        x2 = x[B:, :, :] # rgb and flow token set for cross-modality learning
 
         x1_rgb = self.attn(x1_rgb)
         x1_flow = self.attn(x1_flow)
