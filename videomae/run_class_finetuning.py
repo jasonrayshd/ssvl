@@ -16,7 +16,7 @@ from timm.data.mixup import Mixup, mixup_target
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, TsLayerDecayValueAssigner
+from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, CustomLayerDecayValueAssigner
 
 from datasets import build_dataset
 from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
@@ -551,7 +551,7 @@ def main(args, ds_init):
         drop_block_rate=None,
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
-
+        
     )
 
     try:
@@ -618,7 +618,10 @@ def main(args, ds_init):
                 if "rgb_patch_embed" in key:
                     new_dict[key[12:]] = checkpoint_model[key]
                 elif "flow_patch_embed" not in key:
+                    # other blocks except flow_path_embed
                     new_dict[key[8:]] = checkpoint_model[key]
+                # elif "regressor" in key:
+                #     new_dict[key[8:]] = checkpoint_model[key]
                 elif "encoder.norm" in key:
                     continue
             else:
@@ -686,11 +689,11 @@ def main(args, ds_init):
 
     num_layers = model_without_ddp.get_num_layers()
     if args.layer_decay < 1.0:
-        if "ts" in args.model:
-            print("Using ts layer decay assigner")
-            assigner = TsLayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
-        else:
-            assigner = LayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
+        # if "ts" in args.model:
+        print("Using customized layer decay assigner")
+        assigner = CustomLayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
+        # else:
+        #     assigner = LayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
     else:
         assigner = None
 
