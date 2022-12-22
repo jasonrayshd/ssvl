@@ -11,7 +11,7 @@ import random
 from functools import partial
 
 from modeling_finetune import Block, _cfg, PatchEmbed, get_sinusoid_encoding_table
-from modeling_finetune import Attention, Mlp, DropPath
+from modeling_finetune import Attention, Mlp, DropPath, CrossAttention
 
 
 from timm.models.registry import register_model
@@ -332,8 +332,109 @@ class MultiModalBlock(nn.Module):
                  drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=nn.LayerNorm,
                  attn_head_dim=None):
         super().__init__()
-        self.norm1 = norm_layer(dim)
+        self.norm1_intra_rgb = norm_layer(dim)
+        self.norm1_intra_flow = norm_layer(dim)
+        self.norm1_cross = norm_layer(dim)
         self.attn = Attention(
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+            attn_drop=attn_drop, proj_drop=drop, attn_head_dim=attn_head_dim)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2_intra_rgb = norm_layer(dim)
+        self.norm2_intra_flow = norm_layer(dim)
+        self.norm2_cross = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+
+        # if init_values > 0:
+        #     self.gamma_1 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
+        #     self.gamma_2 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
+        # else:
+        #     self.gamma_1, self.gamma_2 = None, None
+
+    def forward(self, token_dict):
+           
+        """
+            Parameters:
+            token_dict: dict
+            e.g.:
+                token_dict = {
+                    split_point: N1, # split rgb and flow tokens at specific point along spatio-temporal (2nd) dimension
+                    tokens:[
+
+                        # for within-modality attention
+                        x1: torch.Tensor(B, N1+N2, C)    # concatenated tokens (along token dimension)
+
+                        # for cross-modality attention
+                        x2: torch.Tensor(B, N1+N2, C)
+                    ]
+                }
+            Return:
+                token_dict: same format as input
+        """
+
+        # x = torch.cat(token_dict["tokens"], dim=0)     # torch.Tensor, concate along batch dimension
+        x1, x2 = token_dict["tokens"]
+        N1 = token_dict["split_point"]
+        B, *_ = x1.shape          # Bn=B*2, N=N1+N2
+
+        # layer normalization on all tokens
+        # x = self.norm1(x)
+        # slice tensor
+        # x1 = x[:B, :, :]
+        # x1_rgb = x1[:, :N1, :] # rgb token set for within-modality learning
+        # x1_flow = x1[:, N1:, :] # flow token set for within-modality learning
+        # x2 = x[B:, :, :] # rgb and flow token set for cross-modality learning
+
+        x1_rgb = x1[:, :N1, :]
+        x1_flow = x1[:, N1:, :]
+        x1_rgb = self.norm1_intra_rgb(x1_rgb)
+        x1_flow = self.norm1_intra_flow(x1_flow)
+        x2 = self.norm1_cross(x2)
+
+        x1_rgb = self.attn(x1_rgb)   # compute self-attention within rgb tokens
+        x1_flow = self.attn(x1_flow) # compute self-attention within flow tokens
+        x2 = self.attn(x2)           # compute self-attention among rgb and flow tokens
+
+        # x1 = torch.cat([x1_rgb, x1_flow], dim=1) # concat rgb and flow token along spatio-temporal dimension
+        # x = torch.cat([x1, x2], dim=0)  # concat all sets of tokens along batch dimension
+
+        # if self.gamma_1 is not None:
+        #     x1_rgb =  self.gamma_1 * x1_rgb
+
+        x1_rgb = self.norm2_intra_rgb( x1_rgb + self.drop_path(x1_rgb) )
+        x1_flow = self.norm2_intra_flow( x1_flow + self.drop_path(x1_flow) )
+        x2 = self.norm2_cross( x2 + self.drop_path(x2) )
+
+        # mlp layer
+        x1_rgb = self.mlp(x1_rgb)
+        x1_flow = self.mlp(x1_flow)
+        x2 = self.mlp(x2)
+        # if self.gamma_2 is not None:
+        #     x =  self.gamma_2 * x
+
+        x1_rgb = x1_rgb + self.drop_path(x1_rgb)
+        x1_flow = x1_flow + self.drop_path(x1_flow)
+        x2 = x2 + self.drop_path(x2)
+        # x = x + self.drop_path(x)            
+        x1 = torch.cat([x1_rgb,x1_flow], dim=1)
+        # 
+        # x1 = x[:B, :, :]
+        # x2 = x[B:, :, :]
+        token_dict["tokens"] = [x1, x2]
+
+        return token_dict
+
+
+class MultiModalCrossAttentionBlock(nn.Module):
+    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
+                drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=nn.LayerNorm,
+                attn_head_dim=None):
+        super().__init__()
+        self.norm1_q = norm_layer(dim)
+        self.norm1_k = norm_layer(dim)
+        self.norm1_v = norm_layer(dim)
+        self.attn = CrossAttention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
             attn_drop=attn_drop, proj_drop=drop, attn_head_dim=attn_head_dim)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
@@ -348,63 +449,16 @@ class MultiModalBlock(nn.Module):
         else:
             self.gamma_1, self.gamma_2 = None, None
 
-    def forward(self, token_dict):
-           
-        """
-            Parameters:
-            token_dict: dict
-            e.g.:
-                token_dict = {
-                    token_length: [N1, N2],              # token length of each modality
-                    tokens:[
+    def forward(self, x, y):
+        if self.gamma_1 is None:
+            x = x + self.drop_path(self.attn(self.norm1_q(x), k=self.norm1_k(y), v=self.norm1_v(y)))
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+        else:
+            x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1_q(x), k=self.norm1_k(y), v=self.norm1_v(y)))
+            x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x)))
 
-                        # for within-modality attention
-                        x1: torch.Tensor(B, N1+N2, C)    # concatenated tokens (along token dimension)
+        return x
 
-                        # for cross-modality attention
-                        x2: torch.Tensor(B, N1+N2, C)
-                    ]
-                }
-            Return:
-                token_dict: same type as input
-        """
-
-        x = torch.cat(token_dict["tokens"], dim=0)     # torch.Tensor, concate along batch dimension
-        N1, N2 = token_dict["token_length"]
-        Bn, N, C = x.shape          # Bn=B*2, N=N1+N2
-        B = Bn // 2
-
-        # layer normalization on all tokens
-        x = self.norm1(x)
-        # slice tensor
-        x1 = x[:B, :, :]
-        x1_rgb = x1[:, :N1, :] # rgb token set for within-modality learning
-        x1_flow = x1[:, N1:, :] # flow token set for within-modality learning
-        x2 = x[B:, :, :] # rgb and flow token set for cross-modality learning
-
-        x1_rgb = self.attn(x1_rgb)
-        x1_flow = self.attn(x1_flow)
-        x2 = self.attn(x2)
-
-        x1 = torch.cat([x1_rgb, x1_flow], dim=1)
-        x = torch.cat([x1, x2], dim=0)
-
-        if self.gamma_1 is not None:
-            x =  self.gamma_1 * x
-        x = x + self.drop_path(x)
-
-        # mlp layer
-        x = self.mlp(self.norm2(x))
-        if self.gamma_2 is not None:
-            x =  self.gamma_2 * x
-        x = x + self.drop_path(x)            
-
-        # 
-        x1 = x[:B, :, :]
-        x2 = x[B:, :, :]
-        token_dict["tokens"] = [x1, x2]
-
-        return token_dict
 
 class PretrainMultiModalEncoder(nn.Module):
 
@@ -455,11 +509,12 @@ class PretrainMultiModalEncoder(nn.Module):
                         img_size=img_size, patch_size=patch_size, in_chans=flow_in_chans,
                         embed_dim=embed_dim, num_frames=flow_num_frames, tubelet_size=flow_tubelet_size)
 
-
         num_patches = self.rgb_patch_embed.num_patches
 
-        # self.rgb_type_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
-        # self.flow_type_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
+        self.global_embed1 = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.global_embed2 = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        trunc_normal_(self.global_embed1, std=.02)
+        trunc_normal_(self.global_embed2, std=.02)
         if use_learnable_pos_emb:
             self.pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
             # self.x2_pos_embed = nn.Parameter(torch.zeros(2*num_patches, embed_dim))
@@ -501,7 +556,7 @@ class PretrainMultiModalEncoder(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {'pos_embed', 'cls_token'}
+        return {'pos_embed', 'cls_token', 'global_embed1', 'global_embed2'}
 
     def get_classifier(self):
         return self.head
@@ -532,16 +587,18 @@ class PretrainMultiModalEncoder(nn.Module):
         x_rgb_vis = x_rgb[~mask].reshape(B, -1, C) # ~mask means visible
         x_flow_vis = x_flow[~mask].reshape(B, -1, C) # ~mask means visible
 
+        expand_global_embed1 = self.global_embed1.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device)
+        expand_global_embed2 = self.global_embed2.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device)
         # print(mask.shape)
         # x2_mask = torch.cat([mask, mask], dim=1)
         # # print(x2_mask.shape)
         # x2_vis = x2[~x2_mask].reshape(B, -1, C)
         N1, N2 = x_rgb_vis.shape[1], x_flow_vis.shape[1]
-        x1_vis = torch.cat([x_rgb_vis, x_flow_vis], dim=1)
-        x2_vis = torch.cat([x_rgb_vis, x_flow_vis], dim=1)
+        x1_vis = torch.cat([expand_global_embed1, x_rgb_vis, expand_global_embed1, x_flow_vis], dim=1)
+        x2_vis = torch.cat([expand_global_embed2, x_rgb_vis, x_flow_vis], dim=1)
 
         token_dict = {
-            "token_length": [N1, N2],
+            "split_point": N1+1,
             "tokens": [x1_vis, x2_vis]
         }
         for blk in self.blocks:
@@ -633,6 +690,83 @@ class PretrainVisionTransformerMultiModalSharedDecoder(nn.Module):
             else:
                 x_flow = self.flow_head(self.norm(x)) # only return the mask tokens predict pixels
                 return x_flow
+
+
+class PretrainMultiModalCrossAttentionDecoder(nn.Module):
+    """ 
+        Edited by jiachen
+        Two-stream vit shared decoder which reconstruct flow or image with separate heads
+    """
+    def __init__(self, num_classes=768,  embed_dim=768, depth=12, num_cross_blocks=1,
+                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
+                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None, 
+                #  use_flow = False
+                 ):
+        super().__init__()
+
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        # self.patch_size = patch_size
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+
+        self.num_cross_blocks = num_cross_blocks
+        self.cross_blocks = nn.ModuleList([
+            MultiModalCrossAttentionBlock(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(num_cross_blocks)
+        ])
+
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(num_cross_blocks, depth)])
+
+        self.norm =  norm_layer(embed_dim)
+        self.head = nn.Linear(embed_dim, self.num_classes) if self.num_classes > 0 else nn.Identity()
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        raise NotImplementedError("no_weight_decay is not implemented in PretrainVisionTransformerSharedDecoder")
+
+    def get_classifier(self):
+        return self.head
+
+    def reset_classifier(self, num_classes, global_pool=''):
+        raise NotImplementedError("reset_classifier is not implemented in PretrainVisionTransformerSharedDecoder")
+        # self.num_classes = num_classes
+        # self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+
+    def forward(self, x, y, return_token_num):
+        for blk in self.cross_blocks:
+            x = blk(x, y)
+
+        for blk in self.blocks:
+            x = blk(x)
+
+        if return_token_num > 0:
+            x = self.head(self.norm(x[:, -return_token_num:])) # only return the mask tokens predict pixels
+        else:
+            x = self.head(self.norm(x)) # only return the mask tokens predict pixels
+
+        return x
 
 
 class PretrainVisionTransformerMultiModalDecoder(nn.Module):
@@ -768,12 +902,13 @@ class PretrainMultiModalTransformer(nn.Module):
             init_values=init_values,
             use_learnable_pos_emb=use_learnable_pos_emb)
 
-        self.rgb_decoder = PretrainVisionTransformerMultiModalDecoder(
+        self.rgb_decoder = PretrainMultiModalCrossAttentionDecoder(
 
             num_classes=rgb_num_classes, 
 
             embed_dim=decoder_embed_dim, 
             depth=decoder_depth,
+            num_cross_blocks = 4,
             num_heads=decoder_num_heads, 
             mlp_ratio=mlp_ratio, 
             qkv_bias=qkv_bias, 
@@ -784,14 +919,16 @@ class PretrainMultiModalTransformer(nn.Module):
             norm_layer=norm_layer, 
             init_values=init_values,
             # tubelet_size=tubelet_size,
+
             )
         
-        self.flow_decoder = PretrainVisionTransformerMultiModalDecoder(
+        self.flow_decoder = PretrainMultiModalCrossAttentionDecoder(
 
             num_classes=flow_num_classes,
 
             embed_dim=decoder_embed_dim, 
             depth=decoder_depth,
+            num_cross_blocks=2,
             num_heads=decoder_num_heads, 
             mlp_ratio=mlp_ratio, 
             qkv_bias=qkv_bias, 
@@ -814,6 +951,10 @@ class PretrainMultiModalTransformer(nn.Module):
         trunc_normal_(self.rgb_mask_token, std=.02)
         trunc_normal_(self.flow_mask_token, std=.02)
 
+        self.rgb_type_embed = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+        self.flow_type_embed = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+        trunc_normal_(self.rgb_type_embed, std=.02)
+        trunc_normal_(self.flow_type_embed, std=.02)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -829,33 +970,63 @@ class PretrainMultiModalTransformer(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {'pos_embed', 'cls_token', 'mask_token'}
+        return {'pos_embed', 'cls_token', 
+        'rgb_mask_token','flow_mask_token' 
+        "rgb_type_embed", "flow_type_embed",
+        "global_embed1", "global_embed2",
+        }
 
     def forward(self, rgb, flow, mask, all_token=False):
         # _, _, T, _, _ = x.shape
         token_dict = self.encoder(rgb, flow, mask) 
 
-        N1, N2 = token_dict["token_length"]
+        N1 = token_dict["split_point"]
         x1, x2 = token_dict["tokens"] # [B, 2*N_vis, C_e]
-        rgb_vis = torch.cat([x1[:, :N1, :], x2[:, N1:, :]], dim=0)  # [2*B, N_vis, C_e]
-        flow_vis = torch.cat([x1[:, N1:, :], x2[:, :N1, :]], dim=0) # [2*B, N_vis, C_e]
 
-        tokens_vis = self.encoder_to_decoder(torch.cat([rgb_vis, flow_vis], dim=0))   # [4*B, N_vis, C_d]
-        B4, N, C = tokens_vis.shape
-        rgb_vis, flow_vis = tokens_vis[:B4//2, :, :], tokens_vis[B4//2:, :, :]
+        # rgb_vis = torch.cat([x1[:, :N1, :], x2[:, N1:, :]], dim=0)  # [2*B, N_vis, C_e]
+        # flow_vis = torch.cat([x1[:, N1:, :], x2[:, :N1, :]], dim=0) # [2*B, N_vis, C_e]
+
+        x1 = self.encoder_to_decoder(x1)   # [4*B, N_vis, C_d]
+        x2 = self.encoder_to_decoder(x2)
+
+        rgb_vis = torch.cat([x1[:, 1:N1, :], x2[:, N1:, :]], dim=0)
+        flow_vis = torch.cat([x1[:, N1+1:, :], x2[:, 1:N1, :]], dim=0)
+
         B, N, C = rgb_vis.shape
+
         # we don't unshuffle the correct visible token order, 
         # but shuffle the pos embedding accorddingly.
-        expand_mask = torch.cat([mask, mask], dim=0)
-        expand_pos_embed = self.pos_embed.expand(B, -1, -1).type_as(x1).to(x1.device).clone().detach()
-        pos_emd_vis = expand_pos_embed[~expand_mask].reshape(B, -1, C)
-        pos_emd_mask = expand_pos_embed[expand_mask].reshape(B, -1, C)
+        # expand_mask = torch.cat([mask, mask], dim=0)
+        expand_pos_embed = self.pos_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device).clone().detach()
+        pos_emd_vis = expand_pos_embed[~mask].reshape(B//2, -1, C)
+        pos_emd_mask = expand_pos_embed[mask].reshape(B//2, -1, C)
 
-        rgb_full = torch.cat([rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
-        flow_full = torch.cat([flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
+        intra_rgb_vis, cross_flow_vis = rgb_vis[:B//2], rgb_vis[B//2:]
+        intra_flow_vis, cross_rgb_vis = flow_vis[:B//2], flow_vis[B//2:]
 
-        rgb_hat = self.rgb_decoder(rgb_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
-        flow_hat = self.flow_decoder(flow_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+        # intra_rgb_vis += self.rgb_type_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device)
+        # intra_flow_vis += self.flow_type_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device)
+
+        cross_rgb_vis += self.rgb_type_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device)
+        cross_flow_vis += self.flow_type_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device)
+
+        # intra_rgb_full = torch.cat([intra_rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
+        # intra_flow_full = torch.cat([intra_flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
+
+        # cross_rgb_full = torch.cat([cross_rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
+        # cross_flow_full = torch.cat([cross_flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
+        cross_full = torch.cat([cross_rgb_vis + pos_emd_vis, cross_flow_vis + pos_emd_vis], dim=1)
+        intra_rgb_full = torch.cat([intra_rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
+        intra_flow_full = torch.cat([intra_flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
+
+        cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+        cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+
+        intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+        intra_flow_hat = self.flow_decoder(intra_flow_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+
+        rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
+        flow_hat = torch.cat([intra_flow_hat, cross_flow_hat], dim=0)
 
         return rgb_hat, flow_hat
 
@@ -2143,8 +2314,8 @@ def pretrain_videomae_multimodal_base_patch16_224(pretrained=False, **kwargs):
         encoder_num_heads=12,
         encoder_num_classes=0,
         # decoder_num_classes=1536,
-        decoder_embed_dim=384,
-        decoder_num_heads=6,
+        decoder_embed_dim=512,
+        decoder_num_heads=8,
         mlp_ratio=4, 
         qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), 
