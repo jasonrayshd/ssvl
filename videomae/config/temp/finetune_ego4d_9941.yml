@@ -1,5 +1,5 @@
-batch_size: 12
-epochs: 100 
+batch_size: 8
+epochs: 100
 update_freq: 1
 save_ckpt_freq: 10
 
@@ -56,10 +56,10 @@ cutmix: 1.0
 cutmix_minmax: null
 mixup_prob: 1.0
 mixup_switch_prob: 0.5
-mixup_mode: 'batch
+mixup_mode: 'batch'
 
 # Finetuning params
-finetune: '/data/shared/output/ts_preepic55_B0/checkpoint-299.pth'
+finetune: '/data/jiachen/ssvl_output/ts_preepic55_A33/checkpoint-599.pth'
 model_key: 'model|module'
 model_prefix: ''
 init_scale: 0.001
@@ -76,8 +76,8 @@ use_mean_pooling: true # if false, then use cls
 # sampling_rate: 4
 
 task: "oscc-pnr"
-output_dir: /data/shared/output 
-log_dir: /data/shared/output
+output_dir: /data/shared/output/jiachen/ssvl 
+log_dir: /data/shared/output/jiachen/ssvl 
 # seed: 0
 resume: ''
 auto_resume: true
@@ -92,10 +92,10 @@ lamb_loc: 1
 cfg:
   DATA: 
     # Data Loading
-    ANN_DIR: "/data/ego4d/v1/annotations"
-    VIDEO_DIR_PATH: "/data/ego4d/v1/full_scale"
-    CLIPS_SAVE_PATH: "/data/ego4d/v1/pos"  # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
-    NO_SC_PATH: "/data/ego4d/v1/neg"        # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
+    ANN_DIR: "/data/shared/ssvl/ego4d/v1/annotations"
+    VIDEO_DIR_PATH: "/data/shared/ssvl/ego4d/v1/full_scale"
+    CLIPS_SAVE_PATH: "/data/shared/ssvl/ego4d/v1/fho_oscc/pos"  # "/mnt/shuang/Data/ego4d/preprocessed_data/pos"
+    NO_SC_PATH: "/data/shared/ssvl/ego4d/v1/fho_oscc/neg"        # "/mnt/shuang/Data/ego4d/preprocessed_data/neg"
 
     SAVE_AS_ZIP: True                # save frames in zip file for efficient data loading
     READ_BY_CLIPS: False                  # read by clips or full_scale video

@@ -3,7 +3,7 @@ import os
 import math
 import time
 import json
-from collections import defaultdict, deque
+from collections import defaultdict, deque, OrderedDict
 import datetime
 import numpy as np
 from timm.utils import get_state_dict
@@ -14,6 +14,8 @@ import torch
 import torch.distributed as dist
 from torch._six import inf
 import random
+
+from timm.data.mixup import Mixup, mixup_target
 
 from tensorboardX import SummaryWriter
 
@@ -561,14 +563,103 @@ def multiple_samples_collate(batch, fold=False):
         return inputs, labels, video_idx, extra_data
 
 
-def samples_collate_ego4d_test(batch):
-    inputs, flows, info, frame_index = zip(*batch)
-    # print(f"worker: inputs[0] shape:{inputs[0].shape}")
-    inputs = torch.stack(inputs, dim=0)
-    frame_index = torch.tensor(frame_index)
+def multiple_samples_collate_osccpnr(batch):
+    """
+    Collate function for repeated augmentation. Each instance in the batch has
+    more than one sample.
+    Args:
+        batch (tuple or list): data batch to collate.
+    Returns:
+        (tuple): collated data batch.
+    """
+    inputs, target, flows, fps, info = zip(*batch)
+    # print(target)
+    inputs = [item for sublist in inputs for item in sublist]
+    flows = [item for sublist in flows for item in sublist]
 
     if flows[0] is not None:
-        flows = torch.stack(flows, dim=0)
+        flows = default_collate(flows)
     else:
         flows = None
-    return inputs, flows, info, frame_index
+
+    labels = [label for sublist in target for label in sublist[0]]
+    states = [state for sublist in target for state in sublist[1]]
+
+    inputs, labels, states = (
+        default_collate(inputs),
+        default_collate(labels),
+        default_collate(states),
+    )
+
+    return inputs, [labels, states], flows, fps, info
+
+
+def samples_collate_ego4d(batch):
+
+    inputs, target, flows, fps, info = zip(*batch)
+
+    labels = [item[0] for item in target]
+    states = [item[1] for item in target]
+
+    if flows[0] is not None:
+        flows =  default_collate(flows)
+    else:
+        flows = None
+
+    inputs, labels, states = (
+        default_collate(inputs),
+        default_collate(labels),
+        default_collate(states),
+    )
+
+    return inputs, [labels, states], flows, fps, info
+
+
+def filter_checkpoint_fho(checkpoint_model):
+    all_keys = list(checkpoint_model.keys())
+    new_dict = OrderedDict()
+
+    for key in all_keys:
+        if key.startswith('backbone.'):
+            new_dict[key[9:]] = checkpoint_model[key]
+        elif key.startswith('encoder.'):
+            if "rgb_patch_embed" in key:
+                new_dict[key[12:]] = checkpoint_model[key]
+            elif "flow_patch_embed" not in key:
+                # other blocks except flow_path_embed
+                new_dict[key[8:]] = checkpoint_model[key]
+            # elif "regressor" in key:
+            #     new_dict[key[8:]] = checkpoint_model[key]
+            elif "encoder.norm" in key:
+                continue
+        else:
+            new_dict[key] = checkpoint_model[key]
+
+    return new_dict
+
+class OSCCPNRMixup(Mixup):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __call__(self, x, target):
+
+        assert len(x) % 2 == 0, 'Batch size should be even when using this'
+
+        if self.mode == 'elem':
+            lam = self._mix_elem(x)
+        elif self.mode == 'pair':
+            lam = self._mix_pair(x)
+        else:
+            lam = self._mix_batch(x)
+
+        # mixup for OSCC and PNR-TL at the same time
+        label, state = target
+        # print(label.shape, state.shape,)
+        B, C, T, H, W = x.shape
+        # print(x.shape)
+        label = mixup_target(label, T+1, lam, self.label_smoothing, device=x.device)
+        state = mixup_target(state, 2, lam, self.label_smoothing, device=x.device)
+        target = [label ,state]
+
+        return x, target

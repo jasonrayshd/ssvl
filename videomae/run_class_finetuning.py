@@ -1,211 +1,41 @@
-import argparse
-from cmath import e
-import datetime
-import numpy as np
+import os
 import time
+import json
+import wandb
+
+import datetime
+import argparse
+
+import numpy as np
+from pathlib import Path
+from functools import partial
+
 import torch
 import torch.backends.cudnn as cudnn
-import json
-import os
-from functools import partial
-from pathlib import Path
-from collections import OrderedDict
 from torch.utils.data._utils.collate import default_collate
-
-from timm.data.mixup import Mixup, mixup_target
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, CustomLayerDecayValueAssigner
+from timm.data.mixup import Mixup
 
-from datasets import build_dataset
-from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
-from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate
-import utils
+import multiprocessing as mp
+from multiprocessing.managers import SyncManager
+
 import modeling_finetune
 
-import wandb
-from loss import Ego4dTwoHead_Criterion
-from config_utils import parse_yml, combine
+import utils
+from utils import NativeScalerWithGradNormCount as NativeScaler
+from utils import filter_checkpoint_fho, OSCCPNRMixup
+from utils import  multiple_samples_collate, multiple_samples_collate_osccpnr, samples_collate_ego4d
 
-from multiprocessing.managers import SyncManager
-import multiprocessing as mp
+from datasets import build_dataset
+from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, validation_one_epoch, final_test, merge
+from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, CustomLayerDecayValueAssigner
+
+from loss import Ego4dTwoHead_Criterion, ActionAnticipationLoss
+from config_utils import parse_yml, combine
 from flow_extractor import flowExtractor
 
-class Ego4d_Compatible_Mixup(Mixup):
-
-    def __init__(self, use_flow, **kwargs):
-        super().__init__(**kwargs)
-        self.use_flow = use_flow
-
-    # overwrite
-    def flow_mix_elem(self, x, flows):
-        batch_size = len(x)
-        lam_batch, use_cutmix = self._params_per_elem(batch_size)
-        x_orig = x.clone()  # need to keep an unmodified original for mixing source
-        flows_orig = flows.clone()
-        for i in range(batch_size):
-            j = batch_size - i - 1
-            lam = lam_batch[i]
-            if lam != 1.:
-                if use_cutmix[i]:
-                    (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
-                        x[i].shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
-                    x[i][:, yl:yh, xl:xh] = x_orig[j][:, yl:yh, xl:xh]
-                    flows[i][:, yl:yh, xl:xh] = flows_orig[j][:, yl:yh, xl:xh]
-                    lam_batch[i] = lam
-                else:
-                    x[i] = x[i] * lam + x_orig[j] * (1 - lam)
-        return torch.tensor(lam_batch, device=x.device, dtype=x.dtype).unsqueeze(1)
-
-
-    def flow_mix_pair(self, x, flows):
-        batch_size = len(x)
-        lam_batch, use_cutmix = self._params_per_elem(batch_size // 2)
-        x_orig = x.clone()  # need to keep an unmodified original for mixing source
-        for i in range(batch_size // 2):
-            j = batch_size - i - 1
-            lam = lam_batch[i]
-            if lam != 1.:
-                if use_cutmix[i]:
-                    (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
-                        x[i].shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
-                    x[i][:, yl:yh, xl:xh] = x_orig[j][:, yl:yh, xl:xh]
-                    x[j][:, yl:yh, xl:xh] = x_orig[i][:, yl:yh, xl:xh]
-                    lam_batch[i] = lam
-                else:
-                    x[i] = x[i] * lam + x_orig[j] * (1 - lam)
-                    x[j] = x[j] * lam + x_orig[i] * (1 - lam)
-        lam_batch = np.concatenate((lam_batch, lam_batch[::-1]))
-        return torch.tensor(lam_batch, device=x.device, dtype=x.dtype).unsqueeze(1)
-
-
-    def flow_mix_batch(self, x, flows):
-        lam, use_cutmix = self._params_per_batch()
-        if lam == 1.:
-            return 1.
-        if use_cutmix:
-            (yl, yh, xl, xh), lam = cutmix_bbox_and_lam(
-                x.shape, lam, ratio_minmax=self.cutmix_minmax, correct_lam=self.correct_lam)
-            x[:, :, yl:yh, xl:xh] = x.flip(0)[:, :, yl:yh, xl:xh]
-        else:
-            x_flipped = x.flip(0).mul_(1. - lam)
-            x.mul_(lam).add_(x_flipped)
-        return lam
-    
-
-    def __call__(self, x, target):
-        if self.use_flow:
-            x, flows = x
-
-        assert len(x) % 2 == 0, 'Batch size should be even when using this'
-
-        if self.use_flow:
-            if self.mode == 'elem':
-                lam = self.flow_mix_elem(x)
-            elif self.mode == 'pair':
-                lam = self.flow_mix_pair(x)
-            else:
-                lam = self.flow_mix_batch(x)
-        else:
-            if self.mode == 'elem':
-                lam = self._mix_elem(x)
-            elif self.mode == 'pair':
-                lam = self._mix_pair(x)
-            else:
-                lam = self._mix_batch(x)
-
-        if isinstance(target, torch.Tensor):
-            target = mixup_target(target, self.num_classes, lam, self.label_smoothing, device=x.device)
-        else:
-            label, state = target
-            # print(label.shape, state.shape,)
-            B, C, T, H, W = x.shape
-            # print(x.shape)
-            label = mixup_target(label, T+1, lam, self.label_smoothing, device=x.device)
-            state = mixup_target(state, 2, lam, self.label_smoothing, device=x.device)
-            target = [label ,state]
-
-        return x, target
-
-
-# Codes below were edited by Jiachen Lei
-def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
-    """
-    Collate function for repeated augmentation. Each instance in the batch has
-    more than one sample.
-    Args:
-        batch (tuple or list): data batch to collate.
-    Returns:
-        (tuple): collated data batch.
-    """
-    inputs, target, flows, fps, info = zip(*batch)
-    # print(target)
-    inputs = [item for sublist in inputs for item in sublist]
-    flows = [item for sublist in flows for item in sublist]
-
-    if flows[0] is not None:
-        flows = default_collate(flows)
-    else:
-        flows = None
-
-    if nb_classes == -1:
-        labels = [label for sublist in target for label in sublist[0]]
-        states = [state for sublist in target for state in sublist[1]]
-
-        inputs, labels, states = (
-            default_collate(inputs),
-            default_collate(labels),
-            default_collate(states),
-        )
-        if fold:
-            return [inputs], [labels, states], flows, fps, info
-        else:
-            return inputs, [labels, states], flows, fps, info
-
-    elif nb_classes == 2:
-        states = [item for sublist in target for item in sublist]
-        inputs, states = (
-            default_collate(inputs),
-            default_collate(states),
-        )
-        if fold:
-            return [inputs], states, flows, fps, info
-        else:
-            return inputs , states, flows, fps, info
-
-    else:
-        labels = [item for sublist in target for item in sublist]
-        inputs, labels = (
-            default_collate(inputs),
-            default_collate(labels),
-        )
-        if fold:
-            return [inputs], labels, flows, fps, info
-        else:
-            return inputs, labels, flows, fps, info
-
-
-def samples_collate_ego4d(batch):
-
-    inputs, target, flows, fps, info = zip(*batch)
-
-    labels = [item[0] for item in target]
-    states = [item[1] for item in target]
-
-    if flows[0] is not None:
-        flows =  default_collate(flows)
-    else:
-        flows = None
-
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
-
-    return inputs, [labels, states], flows, fps, info
 
 
 def get_args():
@@ -230,9 +60,6 @@ def get_args():
                         help='Drop path rate (default: 0.1)')
 
     parser.add_argument('--disable_eval_during_finetuning', action='store_true', default=False)
-    parser.add_argument('--model_ema', action='store_true', default=False)
-    parser.add_argument('--model_ema_decay', type=float, default=0.9999, help='')
-    parser.add_argument('--model_ema_force_cpu', action='store_true', default=False, help='')
 
     # Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
@@ -378,8 +205,6 @@ def get_args():
     parser.add_argument('--debug', action='store_true', help="debug or not")
     parser.set_defaults(debug=False)
     parser.add_argument('--anno_path', type=str, default="", help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
-    parser.add_argument('--pos_clip_save_path', type=str, default="", help="save path of positive clips of ego4d state change")
-    parser.add_argument('--neg_clip_save_path', type=str, default="", help="save path of negative clips of ego4d state change")
 
     parser.add_argument('--config', type=str, default="", help="path to configuration file")
     parser.add_argument('--project', type=str, default="", help="project name for wandb log")
@@ -439,19 +264,11 @@ def main(args, ds_init):
     else:
         flow_extractor = None
 
-    dataset_train, args.nb_classes = build_dataset(is_train=True, test_mode=False, args=args, flow_extractor=flow_extractor)
+    dataset_train, args.nb_classes = build_dataset(mode="train", args=args, flow_extractor=flow_extractor)
     if args.disable_eval_during_finetuning:
         dataset_val = None
-        dataset_test = None
     else:
-        dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args, flow_extractor=flow_extractor)
-
-        # test set of ego4d is not annotated yet.
-        if "ego4d" in args.data_set.lower():
-            dataset_test = None
-        else:
-            # if is test and dataset is not ego4d then we do not need to pass flow_extractor
-            dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
+        dataset_val, _ = build_dataset(mode="val", args=args, flow_extractor=flow_extractor)
 
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
@@ -464,12 +281,8 @@ def main(args, ds_init):
                     'equal num of samples per-process.')
         sampler_val = torch.utils.data.DistributedSampler(
             dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False)
-        if dataset_test is not None:
-            sampler_test = torch.utils.data.DistributedSampler(
-                dataset_test, num_replicas=num_tasks, rank=global_rank, shuffle=False)
     else:
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-        sampler_test = torch.utils.data.SequentialSampler(dataset_test)
 
 
     assert args.log_dir is not None and args.output_dir is not None, "log_dir and output_dir should not be empty"
@@ -483,12 +296,12 @@ def main(args, ds_init):
         log_writer = None
 
     if args.num_sample > 1:
-        if "ego4d" in args.data_set.lower():
-            collate_func = partial(multiple_samples_collate_ego4d, fold=False,  nb_classes = args.nb_classes)
+        if "oscc" in args.task or "pnr" in args.task:
+            collate_func = multiple_samples_collate_osccpnr
         else:
             collate_func = partial(multiple_samples_collate, fold=False)
     else:
-        if "ego4d" in args.data_set.lower() and args.nb_classes == -1:
+        if "oscc" in args.task or "pnr" in args.task:
             # if finetune state classification and localization at the same time on ego4d
             # then the target will be a list
             print("Using collate function for ego4d dataset")
@@ -517,32 +330,25 @@ def main(args, ds_init):
     else:
         data_loader_val = None
 
-    if dataset_test is not None:
-        data_loader_test = torch.utils.data.DataLoader(
-            dataset_test, sampler=sampler_test,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            pin_memory=args.pin_mem,
-            drop_last=False
-        )
-    else:
-        data_loader_test = None
-
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
         print("Mixup is activated!")
-        mixup_fn = Ego4d_Compatible_Mixup(
-            # args.flow_mode == "online", # if flow mode is online, then use flow in finetuning
-            False, # debug
-            mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
-            prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-            label_smoothing=args.smoothing, num_classes=args.nb_classes)
+        
+        if "oscc" in args.task or "pnr" in args.task:
+            mixup_fn = OSCCPNRMixup(
+                mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
+                prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
+                label_smoothing=args.smoothing)
+        else:
+            mixup_fn = Mixup(mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
+                prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
+                label_smoothing=args.smoothing)
 
     model = create_model(
         args.model,
         pretrained=False,
-        num_classes=args.nb_classes, # when equals to 1, perform ego4d state classification and localization tasks at the same time
+        # num_classes=args.nb_classes, # when equals to 1, perform ego4d state classification and localization tasks at the same time
         all_frames=args.num_frames * args.num_segments,
         tubelet_size=args.tubelet_size,
         drop_rate=args.drop,
@@ -551,43 +357,20 @@ def main(args, ds_init):
         drop_block_rate=None,
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
-        
     )
-
     try:
         patch_size = model.patch_embed.patch_size
-    except AttributeError as e:
-        print("patch_embed.patch_size does not exist, read patch_size of model instead")
+    except:
         patch_size = model.patch_size
 
     print("Patch size = %s" % str(patch_size))
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
-    if args.finetune:
+    if args.finetune: # if provided pretrained weights
         if args.finetune.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.finetune, map_location='cpu', check_hash=True)
-        elif args.finetune.startswith("GoogleDrive://"):
-            # Download from GoogleDrive provieded by VideoMAE
-            from download_ckpt_utils import pretrain_ckpt_lst, download_from
-            ckpt = pretrain_ckpt_lst()
-            pretrain_file_name = args.finetune.split("/")[2]
-
-            _retry = 5
-            i = 0
-            if not os.path.exists("./ckpt/"+pretrain_file_name):                
-                download_from(ckpt[pretrain_file_name], output="./ckpt/" + pretrain_file_name)
-                while not os.path.exists( "./ckpt/"+pretrain_file_name ) and i < _retry:
-                    print(f"Failed to fetch file, try again in {5*(i+1)}s Attempted:[{i+1}/{_retry}]")
-                    time.sleep(5*(i+1))
-                    download_from(ckpt[pretrain_file_name], output="./ckpt/" + pretrain_file_name)
-                    i += 1
-                    if i == _retry:
-                        print(f"Failed after tried {_retry} times...")
-            else:
-                print("Found cached file in ./ckpt")
-            checkpoint = torch.load("./ckpt/"+pretrain_file_name, map_location="cpu")
         else:
             checkpoint = torch.load(args.finetune, map_location='cpu')
 
@@ -608,67 +391,40 @@ def main(args, ds_init):
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
 
-        all_keys = list(checkpoint_model.keys())
-        new_dict = OrderedDict()
-
-        for key in all_keys:
-            if key.startswith('backbone.'):
-                new_dict[key[9:]] = checkpoint_model[key]
-            elif key.startswith('encoder.'):
-                if "rgb_patch_embed" in key:
-                    new_dict[key[12:]] = checkpoint_model[key]
-                elif "flow_patch_embed" not in key:
-                    # other blocks except flow_path_embed
-                    new_dict[key[8:]] = checkpoint_model[key]
-                # elif "regressor" in key:
-                #     new_dict[key[8:]] = checkpoint_model[key]
-                elif "encoder.norm" in key:
-                    continue
-            else:
-                new_dict[key] = checkpoint_model[key]
-
-        checkpoint_model = new_dict
+        # filter paramters depending on the pretrained model architecture
+        checkpoint_model = filter_checkpoint_fho(checkpoint_model)
 
         # interpolate position embedding
-        if 'pos_embed' in checkpoint_model:
-            pos_embed_checkpoint = checkpoint_model['pos_embed']
-            embedding_size = pos_embed_checkpoint.shape[-1] # channel dim
-            num_patches = model.patch_embed.num_patches # 
-            num_extra_tokens = model.pos_embed.shape[-2] - num_patches # 0/1
+        # if 'pos_embed' in checkpoint_model:
+        #     pos_embed_checkpoint = checkpoint_model['pos_embed']
+        #     embedding_size = pos_embed_checkpoint.shape[-1] # channel dim
+        #     num_patches = model.patch_embed.num_patches # 
+        #     num_extra_tokens = model.pos_embed.shape[-2] - num_patches # 0/1
 
-            # height (== width) for the checkpoint position embedding 
-            orig_size = int(((pos_embed_checkpoint.shape[-2] - num_extra_tokens)//(args.num_frames // model.patch_embed.tubelet_size)) ** 0.5)
-            # height (== width) for the new position embedding
-            new_size = int((num_patches // (args.num_frames // model.patch_embed.tubelet_size) )** 0.5)
-            # class_token and dist_token are kept unchanged
-            if orig_size != new_size:
-                print("Position interpolate from %dx%d to %dx%d" % (orig_size, orig_size, new_size, new_size))
-                extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
-                # only the position tokens are interpolated
-                pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
-                # B, L, C -> BT, H, W, C -> BT, C, H, W
-                pos_tokens = pos_tokens.reshape(-1, args.num_frames // model.patch_embed.tubelet_size, orig_size, orig_size, embedding_size)
-                pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
-                pos_tokens = torch.nn.functional.interpolate(
-                    pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
-                # BT, C, H, W -> BT, H, W, C ->  B, T, H, W, C
-                pos_tokens = pos_tokens.permute(0, 2, 3, 1).reshape(-1, args.num_frames // model.patch_embed.tubelet_size, new_size, new_size, embedding_size) 
-                pos_tokens = pos_tokens.flatten(1, 3) # B, L, C
-                new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
-                checkpoint_model['pos_embed'] = new_pos_embed
+        #     # height (== width) for the checkpoint position embedding 
+        #     orig_size = int(((pos_embed_checkpoint.shape[-2] - num_extra_tokens)//(args.num_frames // model.patch_embed.tubelet_size)) ** 0.5)
+        #     # height (== width) for the new position embedding
+        #     new_size = int((num_patches // (args.num_frames // model.patch_embed.tubelet_size) )** 0.5)
+        #     # class_token and dist_token are kept unchanged
+        #     if orig_size != new_size:
+        #         print("Position interpolate from %dx%d to %dx%d" % (orig_size, orig_size, new_size, new_size))
+        #         extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
+        #         # only the position tokens are interpolated
+        #         pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
+        #         # B, L, C -> BT, H, W, C -> BT, C, H, W
+        #         pos_tokens = pos_tokens.reshape(-1, args.num_frames // model.patch_embed.tubelet_size, orig_size, orig_size, embedding_size)
+        #         pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
+        #         pos_tokens = torch.nn.functional.interpolate(
+        #             pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
+        #         # BT, C, H, W -> BT, H, W, C ->  B, T, H, W, C
+        #         pos_tokens = pos_tokens.permute(0, 2, 3, 1).reshape(-1, args.num_frames // model.patch_embed.tubelet_size, new_size, new_size, embedding_size) 
+        #         pos_tokens = pos_tokens.flatten(1, 3) # B, L, C
+        #         new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
+        #         checkpoint_model['pos_embed'] = new_pos_embed
 
         utils.load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
 
     model.to(device)
-
-    model_ema = None
-    if args.model_ema:
-        model_ema = ModelEma(
-            model,
-            decay=args.model_ema_decay,
-            device='cpu' if args.model_ema_force_cpu else '',
-            resume='')
-        print("Using EMA with decay = %.8f" % args.model_ema_decay)
 
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -692,8 +448,6 @@ def main(args, ds_init):
         # if "ts" in args.model:
         print("Using customized layer decay assigner")
         assigner = CustomLayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
-        # else:
-        #     assigner = LayerDecayValueAssigner(list(args.layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2)))
     else:
         assigner = None
 
@@ -702,7 +456,6 @@ def main(args, ds_init):
 
     skip_weight_decay_list = model.no_weight_decay()
     print("Skip weight decay list: ", skip_weight_decay_list)
-
     if args.enable_deepspeed:
         loss_scaler = None
         optimizer_params = get_parameter_groups(
@@ -739,46 +492,32 @@ def main(args, ds_init):
         args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
     print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
-    if mixup_fn is not None:
-        # smoothing is handled with mixup label transform
-        criterion = SoftTargetCrossEntropy()
-    elif args.smoothing > 0.:
-        criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
-    else:
-        criterion = torch.nn.CrossEntropyLoss()
+    if args.task == "oscc-pnr":
+        if mixup_fn is not None:
+            # smoothing is handled with mixup label transform
+            criterion = SoftTargetCrossEntropy()
+        elif args.smoothing > 0.:
+            criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
+        else:
+            criterion = torch.nn.CrossEntropyLoss()
 
-    if args.nb_classes == -1:
         criterion = Ego4dTwoHead_Criterion(criterion, lamb_cls=args.lamb_cls, lamb_loc=args.lamb_loc)
+    elif "lta" in args.task:
+        criterion = ActionAnticipationLoss(task=args.task) # lta_verb or lta_noun
 
     print("criterion = %s" % str(criterion))
 
     utils.auto_load_model(
         args=args, model=model, model_without_ddp=model_without_ddp,
-        optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
-
-    # added by Jiachen
-    if args.eval:
-        preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
-        criterion = torch.nn.CrossEntropyLoss() 
-        test_stats = final_test(data_loader_test, model, device, preds_file, criterion)
-        torch.distributed.barrier()
-        if global_rank == 0:
-            print("Start merging results...")
-            final_top1 ,final_top5 = merge(args.output_dir, num_tasks)
-            print(f"Accuracy of the network on the {len(dataset_test)} test videos: Top-1: {final_top1:.2f}%, Top-5: {final_top5:.2f}%")
-            log_stats = {'Final top-1': final_top1,
-                        'Final Top-5': final_top1}
-            if args.output_dir and utils.is_main_process():
-                with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-                    f.write(json.dumps(log_stats) + "\n")
-        exit(0)
+        optimizer=optimizer, loss_scaler=loss_scaler)
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-    if args.nb_classes != -1:
-        max_accuracy = 0.0
-    else:
+
+    if args.task == "oscc-pnr":
         max_accuracy = [0.0, 0.0]
+    else:
+        max_accuracy = 0.0
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -786,24 +525,37 @@ def main(args, ds_init):
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch * args.update_freq)
 
-        train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer,
-            device, epoch, loss_scaler, args.clip_grad, model_ema, mixup_fn,
-            log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
-            lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
-            num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
-        )
+        if "oscc" in args.task or "pnr" in args.task:
+
+            train_stats = osccpnr_train_one_epoch(
+                model, criterion, data_loader_train, optimizer,
+                device, epoch, loss_scaler, args.clip_grad, mixup_fn,
+                log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
+                num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
+            )
+        
+        elif "lta" in args.task:
+            train_stats = lta_train_one_epoch(
+                model, criterion, data_loader_train, optimizer,
+                device, epoch, loss_scaler, args.clip_grad, mixup_fn,
+                log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
+                num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
+            )
 
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
                 utils.save_model(
                     args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                    loss_scaler=loss_scaler, epoch=epoch, model_ema=model_ema)
+                    loss_scaler=loss_scaler, epoch=epoch)
         
         if data_loader_val is not None:
 
-            if args.nb_classes == -1:
+            if args.task == "oscc-pnr":
                 val_criterion = Ego4dTwoHead_Criterion(torch.nn.CrossEntropyLoss(), lamb_cls=args.lamb_cls, lamb_loc=args.lamb_loc)
+            elif "lta" in args.task:
+                val_criterion = ActionAnticipationLoss(task=args.task) # lta_verb or lta_noun
             else:
                 val_criterion = torch.nn.CrossEntropyLoss()
 
@@ -814,29 +566,29 @@ def main(args, ds_init):
                 print(f"{k}:{v:.3f}%")
 
             # strategy for saving model
-            if args.nb_classes != -1 and max_accuracy < test_stats["acc1"]:
-                max_accuracy = test_stats["acc1"]
-                if args.output_dir and args.save_ckpt:
-                    utils.save_model(
-                        args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                        loss_scaler=loss_scaler, epoch="best", model_ema=model_ema)
-                print(f"Max accuracy: {max_accuracy[0]:.2f}%")
-
-            elif args.nb_classes == -1:
+            if args.task == "oscc-pnr":
                 if max_accuracy[0] < test_stats["loc_acc1"]:
                     max_accuracy[0] = test_stats["loc_acc1"]
                     if args.output_dir and args.save_ckpt:
                         utils.save_model(
                             args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                            loss_scaler=loss_scaler, epoch="best_state_loc", model_ema=model_ema)
+                            loss_scaler=loss_scaler, epoch="best_state_loc")
                 elif max_accuracy[1] < test_stats["cls_acc1"]:
                     max_accuracy[1] = test_stats["cls_acc1"]
                     if args.output_dir and args.save_ckpt:
                         utils.save_model(
                             args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                            loss_scaler=loss_scaler, epoch="best_state_cls", model_ema=model_ema)
+                            loss_scaler=loss_scaler, epoch="best_state_cls")
 
                 print(f'Max localization accuracy: {max_accuracy[0]:.2f}% Max classification accuracy: {max_accuracy[1]:.2f}')
+
+            elif max_accuracy < test_stats["acc"]:
+                max_accuracy = test_stats["acc"]
+                if args.output_dir and args.save_ckpt:
+                    utils.save_model(
+                        args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+                        loss_scaler=loss_scaler, epoch="best")
+                print(f"Max accuracy: {max_accuracy[0]:.2f}%")
 
             if log_writer is not None:
                 for k,v in test_stats.items():
@@ -865,19 +617,8 @@ def main(args, ds_init):
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
-    # preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
-    # test_stats = final_test(data_loader_test, model, device, preds_file)
-    torch.distributed.barrier()
 
-    # if global_rank == 0:
-    #     print("Start merging results...")
-    #     final_top1 ,final_top5 = merge(args.output_dir, num_tasks)
-    #     print(f"Accuracy of the network on the {len(dataset_test)} test videos: Top-1: {final_top1:.2f}%, Top-5: {final_top5:.2f}%")
-    #     log_stats = {'Final top-1': final_top1,
-    #                 'Final Top-5': final_top5}
-    #     if args.output_dir and utils.is_main_process():
-    #         with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-    #             f.write(json.dumps(log_stats) + "\n")
+    torch.distributed.barrier()
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
