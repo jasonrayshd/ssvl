@@ -88,10 +88,10 @@ def get_args():
                         help='epochs to warmup LR, if scheduler supports')
 
     # Augmentation parameters
-    parser.add_argument('--color_jitter', type=float, default=0.0, metavar='PCT',
-                        help='Color jitter factor (default: 0.4)')
-    parser.add_argument('--train_interpolation', type=str, default='bicubic',
-                        help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
+    # parser.add_argument('--color_jitter', type=float, default=0.0, metavar='PCT',
+    #                     help='Color jitter factor (default: 0.4)')
+    # parser.add_argument('--train_interpolation', type=str, default='bicubic',
+    #                     help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
 
     # Dataset parameters
     parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
@@ -280,17 +280,17 @@ def main(args):
     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
-    if args.flow_mode == "online":
-        mp.set_start_method('spawn')
-        SyncManager.register("flowExtractor", flowExtractor)
-        m = SyncManager()
-        m.start()
-        flow_extractor = m.flowExtractor(device=f"cuda:{args.gpu}")
-        print(f"Flow extractor manager started by {os.getpid()}.")
-    else:
-        flow_extractor = None
+    # if args.flow_mode == "online":
+    #     mp.set_start_method('spawn')
+    #     SyncManager.register("flowExtractor", flowExtractor)
+    #     m = SyncManager()
+    #     m.start()
+    #     flow_extractor = m.flowExtractor(device=f"cuda:{args.gpu}")
+    #     print(f"Flow extractor manager started by {os.getpid()}.")
+    # else:
+    #     flow_extractor = None
 
-    dataset_train = build_pretraining_dataset(args, flow_extractor=flow_extractor)
+    dataset_train = build_pretraining_dataset(args)
 
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -319,7 +319,7 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
-        multiprocessing_context="spawn" if args.flow_mode == "online" else None,
+        # multiprocessing_context="spawn" if args.flow_mode == "online" else None,
         worker_init_fn=utils.seed_worker
     )
 
@@ -417,7 +417,7 @@ def main(args):
                 # use mixed precision or not
                 train_wo_amp = args.train_wo_amp, 
                 # whether predict given flow images or recons input based on flow images
-                predict_preprocessed_flow = (args.flow_mode != ""),
+                # predict_preprocessed_flow = (args.flow_mode != ""),
             )
         elif args.pretrain == "ts":
             train_stats = train_tsvit_one_epoch(

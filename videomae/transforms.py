@@ -46,10 +46,9 @@ class GroupCenterCrop(object):
 
 
 class GroupNormalize(object):
-    def __init__(self, mean, std, flow_mode=""):
+    def __init__(self, mean, std):
         self.mean = mean
         self.std = std
-        self.flow_mode = flow_mode
         # flow image should be the same given normalized images
         # thus it do not need to be normalized
 
@@ -93,17 +92,16 @@ class GroupScale(object):
 
 class GroupMultiScaleCrop(object):
 
-    def __init__(self, input_size, scales=None, max_distort=1, fix_crop=True, more_fix_crop=True, flow_mode=""):
+    def __init__(self, input_size, scales=None, max_distort=1, fix_crop=True, more_fix_crop=True):
         self.scales = scales if scales is not None else [1, .875, .75, .66]
         self.max_distort = max_distort
         self.fix_crop = fix_crop
         self.more_fix_crop = more_fix_crop
-        self.flow_mode = flow_mode
         self.input_size = input_size if not isinstance(input_size, int) else [input_size, input_size]
         self.interpolation = Image.BILINEAR
 
     def __call__(self, img_tuple):
-        img_group, label = img_tuple
+        img_group, flows = img_tuple
 
         im_size = img_group[0].size
 
@@ -111,16 +109,14 @@ class GroupMultiScaleCrop(object):
         crop_img_group = [img.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for img in img_group]
         ret_img_group = [img.resize((self.input_size[0], self.input_size[1]), self.interpolation) for img in crop_img_group]
 
-        if self.flow_mode == "local":
-            # then, label is flow images
-            uflow, vflow = label
-            crop_uflow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in uflow]
-            ret_uflow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_uflow_group]
-            
-            crop_vflow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in vflow]
-            ret_vflow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_vflow_group]
+        uflow, vflow = flows
+        crop_uflow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in uflow]
+        ret_uflow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_uflow_group]
+        
+        crop_vflow_group = [flow.crop((offset_w, offset_h, offset_w + crop_w, offset_h + crop_h)) for flow in vflow]
+        ret_vflow_group = [flow.resize((self.input_size[0], self.input_size[1]), self.interpolation) for flow in crop_vflow_group]
 
-            return (ret_img_group, [ret_uflow_group, ret_vflow_group])
+        return (ret_img_group, [ret_uflow_group, ret_vflow_group])
 
 
         return (ret_img_group, label)
@@ -182,25 +178,21 @@ class Stack(object):
 
     def __init__(self, roll=False, flow_mode=""):
         self.roll = roll
-        self.flow_mode = flow_mode
 
     def __call__(self, img_tuple):
-        img_group, label = img_tuple
-
+        img_group, flows = img_tuple
         img_group_np = self._stack(img_group)
 
-        if self.flow_mode == "local":
-            uflows, vflows = label
-            assert len(uflows) == len(vflows), "Number of optical flow images u v should be equal"
+        uflows, vflows = flows
+        assert len(uflows) == len(vflows), "Number of optical flow images u v should be equal"
 
-            uflow_group_np = self._stack(uflows)
-            vflow_group_np = self._stack(vflows)
+        uflow_group_np = self._stack(uflows)
+        vflow_group_np = self._stack(vflows)
 
-            flow_group_np = np.stack([uflow_group_np, vflow_group_np], axis=3) # H, W, C, 2
+        flow_group_np = np.stack([uflow_group_np, vflow_group_np], axis=3) # H, W, C, 2
 
-            return (img_group_np, flow_group_np)
+        return (img_group_np, flow_group_np)
 
-        return (img_group_np, label)
 
     def _stack(self, img_group):
         if img_group[0].mode == 'L':
@@ -215,20 +207,18 @@ class Stack(object):
 class ToTorchFormatTensor(object):
     """ Converts a PIL.Image (RGB) or numpy.ndarray (H x W x C) in the range [0, 255]
     to a torch.FloatTensor of shape (C x H x W) in the range [0.0, 1.0] """
-    def __init__(self, div=True, flow_mode=""):
+    def __init__(self, div=True):
         self.div = div
-        self.flow_mode = flow_mode
 
     def __call__(self, pic_tuple):
-        pic, label = pic_tuple
+        pic, flows = pic_tuple
 
         img = self._totensor(pic)
 
-        if self.flow_mode == "local":
-            flow = torch.from_numpy(label).permute(3, 2, 0, 1).contiguous()
-            return (img.float().div(255.) if self.div else img.float(), flow.float().div(255.) if self.div else flow.float())
+        flows = torch.from_numpy(flows).permute(3, 2, 0, 1).contiguous()
+        return (img.float().div(255.) if self.div else img.float(), flows.float().div(255.) if self.div else flows.float())
 
-        return (img.float().div(255.) if self.div else img.float(), label)
+        # return (img.float().div(255.) if self.div else img.float(), label)
 
     def _totensor(self, img):
         if isinstance(img, np.ndarray):

@@ -15,7 +15,7 @@ import torch.backends.cudnn as cudnn
 from torch.utils.data._utils.collate import default_collate
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
-from timm.utils import ModelEma
+# from timm.utils import ModelEma
 from timm.data.mixup import Mixup
 
 import multiprocessing as mp
@@ -25,14 +25,14 @@ import modeling_finetune
 
 import utils
 from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import filter_checkpoint_fho, OSCCPNRMixup
-from utils import  multiple_samples_collate, multiple_samples_collate_osccpnr, samples_collate_ego4d
+from utils import filter_checkpoint_fho
+from utils import  multiple_samples_collate_fho
 
 from datasets import build_dataset
 from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, validation_one_epoch, final_test, merge
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, CustomLayerDecayValueAssigner
 
-from loss import Ego4dTwoHead_Criterion, ActionAnticipationLoss
+from loss import ActionAnticipationLoss
 from config_utils import parse_yml, combine
 from flow_extractor import flowExtractor
 
@@ -93,32 +93,32 @@ def get_args():
                         help='num of steps to warmup LR, will overload warmup_epochs if set > 0')
 
     # Augmentation parameters
-    parser.add_argument('--color_jitter', type=float, default=0.4, metavar='PCT',
-                        help='Color jitter factor (default: 0.4)')
-    parser.add_argument('--num_sample', type=int, default=2,
-                        help='Repeated_aug (default: 2)')
-    parser.add_argument('--aa', type=str, default='rand-m7-n4-mstd0.5-inc1', metavar='NAME',
-                        help='Use AutoAugment policy. "v0" or "original". " + "(default: rand-m7-n4-mstd0.5-inc1)'),
+    # parser.add_argument('--color_jitter', type=float, default=0.4, metavar='PCT',
+    #                     help='Color jitter factor (default: 0.4)')
+    # parser.add_argument('--num_sample', type=int, default=2,
+    #                     help='Repeated_aug (default: 2)')
+    # parser.add_argument('--aa', type=str, default='rand-m7-n4-mstd0.5-inc1', metavar='NAME',
+    #                     help='Use AutoAugment policy. "v0" or "original". " + "(default: rand-m7-n4-mstd0.5-inc1)'),
     parser.add_argument('--smoothing', type=float, default=0.1,
                         help='Label smoothing (default: 0.1)')
-    parser.add_argument('--train_interpolation', type=str, default='bicubic',
-                        help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
+    # parser.add_argument('--train_interpolation', type=str, default='bicubic',
+    #                     help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
 
     # Evaluation parameters
-    parser.add_argument('--crop_pct', type=float, default=None)
-    parser.add_argument('--short_side_size', type=int, default=224)
-    parser.add_argument('--test_num_segment', type=int, default=5)
-    parser.add_argument('--test_num_crop', type=int, default=3)
-    
+    # parser.add_argument('--crop_pct', type=float, default=None)
+    # parser.add_argument('--short_side_size', type=int, default=224)
+    # parser.add_argument('--test_num_segment', type=int, default=5)
+    # parser.add_argument('--test_num_crop', type=int, default=3)
+
     # Random Erase params
-    parser.add_argument('--reprob', type=float, default=0.25, metavar='PCT',
-                        help='Random erase prob (default: 0.25)')
-    parser.add_argument('--remode', type=str, default='pixel',
-                        help='Random erase mode (default: "pixel")')
-    parser.add_argument('--recount', type=int, default=1,
-                        help='Random erase count (default: 1)')
-    parser.add_argument('--resplit', action='store_true', default=False,
-                        help='Do not random erase first (clean) augmentation split')
+    # parser.add_argument('--reprob', type=float, default=0.25, metavar='PCT',
+    #                     help='Random erase prob (default: 0.25)')
+    # parser.add_argument('--remode', type=str, default='pixel',
+    #                     help='Random erase mode (default: "pixel")')
+    # parser.add_argument('--recount', type=int, default=1,
+    #                     help='Random erase count (default: 1)')
+    # parser.add_argument('--resplit', action='store_true', default=False,
+    #                     help='Do not random erase first (clean) augmentation split')
 
     # Mixup params
     parser.add_argument('--mixup', type=float, default=0.8,
@@ -144,23 +144,23 @@ def get_args():
     parser.add_argument('--use_cls', action='store_false', dest='use_mean_pooling')
 
     # Finetuning on ego4d
-    parser.add_argument('--clip_len', type=int, default=8, help="time duration of clip, default is 8s")
+    # parser.add_argument('--clip_len', type=int, default=8, help="time duration of clip, default is 8s")
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
-                        help='dataset path')
-    parser.add_argument('--eval_data_path', default=None, type=str,
-                        help='dataset path for evaluation')
-    parser.add_argument('--nb_classes', default=400, type=int,
-                        help='number of the classification types')
-    parser.add_argument('--imagenet_default_mean_and_std', default=True, action='store_true')
-    parser.add_argument('--num_segments', type=int, default= 1)
-    parser.add_argument('--num_frames', type=int, default= 16)
-    parser.add_argument('--sampling_rate', type=int, default= 4)
+    # parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
+    #                     help='dataset path')
+    # parser.add_argument('--eval_data_path', default=None, type=str,
+    #                     help='dataset path for evaluation')
+    # parser.add_argument('--nb_classes', default=400, type=int,
+    #                     help='number of the classification types')
+    # parser.add_argument('--imagenet_default_mean_and_std', default=True, action='store_true')
+    # parser.add_argument('--num_segments', type=int, default= 1)
+    # parser.add_argument('--num_frames', type=int, default= 16)
+    # parser.add_argument('--sampling_rate', type=int, default= 4)
     # parser.add_argument('--data_set', default='Kinetics-400', choices=['Kinetics-400', 'SSV2', 'UCF101', 'HMDB51','image_folder'],
     #                     type=str, help='dataset')
-    parser.add_argument('--data_set', default='Kinetics-400',
-                        type=str, help='dataset')
+    # parser.add_argument('--data_set', default='Kinetics-400',
+    #                     type=str, help='dataset')
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -204,7 +204,7 @@ def get_args():
     # Added by Jiachen, for ego4d state change pretraining
     parser.add_argument('--debug', action='store_true', help="debug or not")
     parser.set_defaults(debug=False)
-    parser.add_argument('--anno_path', type=str, default="", help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
+    # parser.add_argument('--anno_path', type=str, default="", help="save path of annotation files of ego4d state change, which includes train.json, val.json, test.json")
 
     parser.add_argument('--config', type=str, default="", help="path to configuration file")
     parser.add_argument('--project', type=str, default="", help="project name for wandb log")
@@ -254,7 +254,7 @@ def main(args, ds_init):
 
     cudnn.benchmark = True
 
-    if args.flow_mode == "online":
+    if args.cfg.load_flow == "online": # [online, local, none]
         mp.set_start_method('spawn', force=True)
         SyncManager.register("flowExtractor", flowExtractor)
         m = SyncManager()
@@ -264,11 +264,11 @@ def main(args, ds_init):
     else:
         flow_extractor = None
 
-    dataset_train, args.nb_classes = build_dataset(mode="train", args=args, flow_extractor=flow_extractor)
+    dataset_train = build_dataset(mode="train", args=args, flow_extractor=flow_extractor)
     if args.disable_eval_during_finetuning:
         dataset_val = None
     else:
-        dataset_val, _ = build_dataset(mode="val", args=args, flow_extractor=flow_extractor)
+        dataset_val = build_dataset(mode="val", args=args, flow_extractor=flow_extractor)
 
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
@@ -295,19 +295,10 @@ def main(args, ds_init):
     else:
         log_writer = None
 
-    if args.num_sample > 1:
-        if "oscc" in args.task or "pnr" in args.task:
-            collate_func = multiple_samples_collate_osccpnr
-        else:
-            collate_func = partial(multiple_samples_collate, fold=False)
+    if args.cfg.repeat_sample > 1:
+        collate_func = multiple_samples_collate_fho
     else:
-        if "oscc" in args.task or "pnr" in args.task:
-            # if finetune state classification and localization at the same time on ego4d
-            # then the target will be a list
-            print("Using collate function for ego4d dataset")
-            collate_func = samples_collate_ego4d
-        else:
-            collate_func = None
+        collate_func = None
 
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
@@ -334,22 +325,15 @@ def main(args, ds_init):
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
         print("Mixup is activated!")
-        
-        if "oscc" in args.task or "pnr" in args.task:
-            mixup_fn = OSCCPNRMixup(
-                mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
-                prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-                label_smoothing=args.smoothing)
-        else:
-            mixup_fn = Mixup(mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
-                prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-                label_smoothing=args.smoothing)
+        mixup_fn = Mixup(mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
+            prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
+            label_smoothing=args.smoothing)
 
     model = create_model(
         args.model,
         pretrained=False,
         # num_classes=args.nb_classes, # when equals to 1, perform ego4d state classification and localization tasks at the same time
-        all_frames=args.num_frames * args.num_segments,
+        all_frames=args.cfg.num_frames,
         tubelet_size=args.tubelet_size,
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
@@ -364,7 +348,7 @@ def main(args, ds_init):
         patch_size = model.patch_size
 
     print("Patch size = %s" % str(patch_size))
-    args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+    args.window_size = (args.cfg.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
     if args.finetune: # if provided pretrained weights
@@ -402,9 +386,9 @@ def main(args, ds_init):
         #     num_extra_tokens = model.pos_embed.shape[-2] - num_patches # 0/1
 
         #     # height (== width) for the checkpoint position embedding 
-        #     orig_size = int(((pos_embed_checkpoint.shape[-2] - num_extra_tokens)//(args.num_frames // model.patch_embed.tubelet_size)) ** 0.5)
+        #     orig_size = int(((pos_embed_checkpoint.shape[-2] - num_extra_tokens)//(args.cfg.num_frames // model.patch_embed.tubelet_size)) ** 0.5)
         #     # height (== width) for the new position embedding
-        #     new_size = int((num_patches // (args.num_frames // model.patch_embed.tubelet_size) )** 0.5)
+        #     new_size = int((num_patches // (args.cfg.num_frames // model.patch_embed.tubelet_size) )** 0.5)
         #     # class_token and dist_token are kept unchanged
         #     if orig_size != new_size:
         #         print("Position interpolate from %dx%d to %dx%d" % (orig_size, orig_size, new_size, new_size))
@@ -412,12 +396,12 @@ def main(args, ds_init):
         #         # only the position tokens are interpolated
         #         pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
         #         # B, L, C -> BT, H, W, C -> BT, C, H, W
-        #         pos_tokens = pos_tokens.reshape(-1, args.num_frames // model.patch_embed.tubelet_size, orig_size, orig_size, embedding_size)
+        #         pos_tokens = pos_tokens.reshape(-1, args.cfg.num_frames // model.patch_embed.tubelet_size, orig_size, orig_size, embedding_size)
         #         pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
         #         pos_tokens = torch.nn.functional.interpolate(
         #             pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
         #         # BT, C, H, W -> BT, H, W, C ->  B, T, H, W, C
-        #         pos_tokens = pos_tokens.permute(0, 2, 3, 1).reshape(-1, args.num_frames // model.patch_embed.tubelet_size, new_size, new_size, embedding_size) 
+        #         pos_tokens = pos_tokens.permute(0, 2, 3, 1).reshape(-1, args.cfg.num_frames // model.patch_embed.tubelet_size, new_size, new_size, embedding_size) 
         #         pos_tokens = pos_tokens.flatten(1, 3) # B, L, C
         #         new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
         #         checkpoint_model['pos_embed'] = new_pos_embed
@@ -492,7 +476,7 @@ def main(args, ds_init):
         args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
     print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
-    if args.task == "oscc-pnr":
+    if args.cfg.task == "oscc" or args.cfg.task == "pnr":
         if mixup_fn is not None:
             # smoothing is handled with mixup label transform
             criterion = SoftTargetCrossEntropy()
@@ -501,9 +485,14 @@ def main(args, ds_init):
         else:
             criterion = torch.nn.CrossEntropyLoss()
 
-        criterion = Ego4dTwoHead_Criterion(criterion, lamb_cls=args.lamb_cls, lamb_loc=args.lamb_loc)
-    elif "lta" in args.task:
-        criterion = ActionAnticipationLoss(task=args.task) # lta_verb or lta_noun
+        train_fn = osccpnr_train_one_epoch
+    # elif args.cfg.task == "oscc":
+    #     criterion = OsccCriterion(criterion)
+    # elif args.cfg.task == "pnr":
+    #     criterion = PNRCriterion(criterion)
+    elif "lta" in args.cfg.task:
+        criterion = ActionAnticipationLoss(task=args.cfg.task) # lta_verb or lta_noun
+        train_fn = lta_train_one_epoch
 
     print("criterion = %s" % str(criterion))
 
@@ -514,10 +503,8 @@ def main(args, ds_init):
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
 
-    if args.task == "oscc-pnr":
-        max_accuracy = [0.0, 0.0]
-    else:
-        max_accuracy = 0.0
+
+    max_accuracy = 0.0
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -525,18 +512,7 @@ def main(args, ds_init):
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch * args.update_freq)
 
-        if "oscc" in args.task or "pnr" in args.task:
-
-            train_stats = osccpnr_train_one_epoch(
-                model, criterion, data_loader_train, optimizer,
-                device, epoch, loss_scaler, args.clip_grad, mixup_fn,
-                log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
-                lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
-                num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
-            )
-        
-        elif "lta" in args.task:
-            train_stats = lta_train_one_epoch(
+        train_stats = train_fn( 
                 model, criterion, data_loader_train, optimizer,
                 device, epoch, loss_scaler, args.clip_grad, mixup_fn,
                 log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
@@ -552,10 +528,8 @@ def main(args, ds_init):
         
         if data_loader_val is not None:
 
-            if args.task == "oscc-pnr":
-                val_criterion = Ego4dTwoHead_Criterion(torch.nn.CrossEntropyLoss(), lamb_cls=args.lamb_cls, lamb_loc=args.lamb_loc)
-            elif "lta" in args.task:
-                val_criterion = ActionAnticipationLoss(task=args.task) # lta_verb or lta_noun
+            if "lta" in args.cfg.task:
+                val_criterion = ActionAnticipationLoss(task=args.cfg.task) # lta_verb or lta_noun
             else:
                 val_criterion = torch.nn.CrossEntropyLoss()
 
@@ -566,23 +540,23 @@ def main(args, ds_init):
                 print(f"{k}:{v:.3f}%")
 
             # strategy for saving model
-            if args.task == "oscc-pnr":
-                if max_accuracy[0] < test_stats["loc_acc1"]:
-                    max_accuracy[0] = test_stats["loc_acc1"]
-                    if args.output_dir and args.save_ckpt:
-                        utils.save_model(
-                            args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                            loss_scaler=loss_scaler, epoch="best_state_loc")
-                elif max_accuracy[1] < test_stats["cls_acc1"]:
-                    max_accuracy[1] = test_stats["cls_acc1"]
-                    if args.output_dir and args.save_ckpt:
-                        utils.save_model(
-                            args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                            loss_scaler=loss_scaler, epoch="best_state_cls")
+            # if args.cfg.task == "oscc-pnr":
+            #     if max_accuracy[0] < test_stats["loc_acc1"]:
+            #         max_accuracy[0] = test_stats["loc_acc1"]
+            #         if args.output_dir and args.save_ckpt:
+            #             utils.save_model(
+            #                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+            #                 loss_scaler=loss_scaler, epoch="best_state_loc")
+            #     elif max_accuracy[1] < test_stats["cls_acc1"]:
+            #         max_accuracy[1] = test_stats["cls_acc1"]
+            #         if args.output_dir and args.save_ckpt:
+            #             utils.save_model(
+            #                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+            #                 loss_scaler=loss_scaler, epoch="best_state_cls")
 
-                print(f'Max localization accuracy: {max_accuracy[0]:.2f}% Max classification accuracy: {max_accuracy[1]:.2f}')
+            #     print(f'Max localization accuracy: {max_accuracy[0]:.2f}% Max classification accuracy: {max_accuracy[1]:.2f}')
 
-            elif max_accuracy < test_stats["acc"]:
+            if max_accuracy < test_stats["acc"]:
                 max_accuracy = test_stats["acc"]
                 if args.output_dir and args.save_ckpt:
                     utils.save_model(

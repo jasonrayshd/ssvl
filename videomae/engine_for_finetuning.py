@@ -5,11 +5,11 @@ import sys
 from typing import Iterable, Optional
 import torch
 from timm.data import Mixup
-from timm.utils import accuracy, ModelEma
+from timm.utils import accuracy
 import utils
 
 from torch import nn
-from loss import Ego4dTwoHead_Criterion
+# from loss import Ego4dTwoHead_Criterion
 
 
 def train_class_batch(model, samples, target, criterion):
@@ -128,7 +128,7 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # compute metrics for action anticipation
         out_action =[out_cur, out_next, *out_future]
-        metric = lta_metric(out_action, future_action)
+        result = lta_metric(out_action, future_action)
         # correct_action += torch.sum(torch.argmax(out_next,1) == next_action).item()
 
         metric_logger.update(loss=loss_value)
@@ -138,7 +138,7 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(kld_future_goal=kld_future_goal)
         metric_logger.update(future_goal_diff=future_goal_diff)
 
-        metric_logger.update(metric=metric)
+        metric_logger.update(metric=result)
 
         metric_logger.update(loss_scale=loss_scale_value)
 
@@ -166,7 +166,7 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             log_writer.update(kld_future_goal=kld_future_goal, head="loss")
             log_writer.update(future_goal_diff=future_goal_diff, head="loss")
            
-            log_writer.update(metric=metric, head="loss")
+            log_writer.update(metric=result, head="loss")
 
             log_writer.update(loss_scale=loss_scale_value, head="opt")
             log_writer.update(lr=max_lr, head="opt")
@@ -192,6 +192,8 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('min_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    metric_logger.add_meter("metric", utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
@@ -201,7 +203,7 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     else:
         optimizer.zero_grad()
 
-    for data_iter_step, (samples, targets, flows, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (samples, flows, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
             continue
@@ -217,11 +219,7 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         samples = samples.to(device, non_blocking=False)
         if flows is not None:
             flows = flows.to(device, non_blocking=False)
-
-        labels, states = targets
-        labels = labels.to(device, non_blocking=False)
-        states = states.to(device, non_blocking=False)
-        targets = [labels, states]
+        targets = targets.to(device, non_blocking=False)
 
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
@@ -268,14 +266,6 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if mixup_fn is None:
             if isinstance(targets, torch.Tensor):
                 class_acc = (output.max(-1)[-1] == targets).float().mean()
-            else:
-                # print(targets[0].shape, targets[1].shape) # shape: (bs num_frames), (bs,)
-                loc_acc = (output[0].max(-1)[-1] == targets[0]).float().mean()
-                cls_acc = (output[1].max(-1)[-1] == targets[1]).float().mean()
-                metric_logger.update(loc_acc = loc_acc)
-                metric_logger.update(cls_acc = cls_acc)
-        else:
-            class_acc = None
 
         metric_logger.update(loss=loss_value)
         metric_logger.update(class_acc=class_acc)
@@ -295,16 +285,16 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(weight_decay=weight_decay_value)
         metric_logger.update(grad_norm=grad_norm)
 
-        if log_writer is not None:
-            log_writer.update(loss=loss_value, head="loss")
-            log_writer.update(class_acc=class_acc, head="loss")
-            log_writer.update(loss_scale=loss_scale_value, head="opt")
-            log_writer.update(lr=max_lr, head="opt")
-            log_writer.update(min_lr=min_lr, head="opt")
-            log_writer.update(weight_decay=weight_decay_value, head="opt")
-            log_writer.update(grad_norm=grad_norm, head="opt")
+        # if log_writer is not None:
+        #     log_writer.update(loss=loss_value, head="loss")
+        #     log_writer.update(class_acc=class_acc, head="loss")
+        #     log_writer.update(loss_scale=loss_scale_value, head="opt")
+        #     log_writer.update(lr=max_lr, head="opt")
+        #     log_writer.update(min_lr=min_lr, head="opt")
+        #     log_writer.update(weight_decay=weight_decay_value, head="opt")
+        #     log_writer.update(grad_norm=grad_norm, head="opt")
 
-            log_writer.set_step()
+        #     log_writer.set_step()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -330,12 +320,8 @@ def validation_one_epoch(data_loader, model, device, criterion):
         if flows is not None:
             flows = flows.to(device, non_blocking=True)
 
-        # print(target)
-        if not isinstance(target, list):
-            target = target.to(device, non_blocking=True)
-        else:
-            labels, states = target[0].to(device, non_blocking=True), target[1].to(device, non_blocking=True)
-            target = [labels, states]
+        target = target.to(device, non_blocking=True)
+
         # compute output
         with torch.cuda.amp.autocast():
             if flows is not None:
@@ -347,20 +333,14 @@ def validation_one_epoch(data_loader, model, device, criterion):
 
         batch_size = videos.shape[0]
         metric_logger.update(loss=loss.item())
-        if isinstance(target, list):
-            label_acc1, label_acc5 = accuracy(output[0], target[0], topk=(1, 5))
-            state_acc1 = accuracy(output[1], target[1], topk=(1,))[0]
-            metric_logger.meters['loc_acc1'].update(label_acc1.item(), n=batch_size)
-            metric_logger.meters['loc_acc5'].update(label_acc5.item(), n=batch_size)
-            metric_logger.meters['cls_acc1'].update(state_acc1.item(), n=batch_size)
+
+        if output.shape[1] > 5:
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+            metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
         else:
-            if output.shape[1] > 5:
-                acc1, acc5 = accuracy(output, target, topk=(1, 5))
-                metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-                metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
-            else:
-                acc1 = accuracy(output, target, topk=(1,))[0]
-                metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+            acc1 = accuracy(output, target, topk=(1,))[0]
+            metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

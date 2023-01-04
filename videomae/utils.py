@@ -547,23 +547,23 @@ def multiple_samples_collate(batch, fold=False):
     Returns:
         (tuple): collated data batch.
     """
-    inputs, labels, video_idx, extra_data = zip(*batch)
+    inputs, labels= zip(*batch)
     inputs = [item for sublist in inputs for item in sublist]
     labels = [item for sublist in labels for item in sublist]
-    video_idx = [item for sublist in video_idx for item in sublist]
-    inputs, labels, video_idx, extra_data = (
+    # video_idx = [item for sublist in video_idx for item in sublist]
+    inputs, labels= (
         default_collate(inputs),
         default_collate(labels),
-        default_collate(video_idx),
-        default_collate(extra_data),
+        # default_collate(video_idx),
+        # default_collate(extra_data),
     )
     if fold:
-        return [inputs], labels, video_idx, extra_data
+        return [inputs], labels
     else:
-        return inputs, labels, video_idx, extra_data
+        return inputs, labels
 
 
-def multiple_samples_collate_osccpnr(batch):
+def multiple_samples_collate_fho(batch):
     """
     Collate function for repeated augmentation. Each instance in the batch has
     more than one sample.
@@ -572,47 +572,45 @@ def multiple_samples_collate_osccpnr(batch):
     Returns:
         (tuple): collated data batch.
     """
-    inputs, target, flows, fps, info = zip(*batch)
+    inputs, flows, target = zip(*batch)
+    # print(target)
     # print(target)
     inputs = [item for sublist in inputs for item in sublist]
-    flows = [item for sublist in flows for item in sublist]
+    target = [item for sublist in target for item in sublist]
 
-    if flows[0] is not None:
+    inputs, target = (
+        default_collate(inputs),
+        default_collate(target),
+    )
+
+    if flows[0][0] is not None:
+        flows = [item for sublist in flows for item in sublist]
         flows = default_collate(flows)
     else:
         flows = None
 
-    labels = [label for sublist in target for label in sublist[0]]
-    states = [state for sublist in target for state in sublist[1]]
-
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
-
-    return inputs, [labels, states], flows, fps, info
+    return inputs, flows, target
 
 
-def samples_collate_ego4d(batch):
+# def samples_collate_ego4d(batch):
 
-    inputs, target, flows, fps, info = zip(*batch)
+#     inputs, target, flows, info = zip(*batch)
 
-    labels = [item[0] for item in target]
-    states = [item[1] for item in target]
+#     labels = [item[0] for item in target]
+#     states = [item[1] for item in target]
 
-    if flows[0] is not None:
-        flows =  default_collate(flows)
-    else:
-        flows = None
+#     if flows[0] is not None:
+#         flows =  default_collate(flows)
+#     else:
+#         flows = None
 
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
+#     inputs, labels, states = (
+#         default_collate(inputs),
+#         default_collate(labels),
+#         default_collate(states),
+#     )
 
-    return inputs, [labels, states], flows, fps, info
+#     return inputs, [labels, states], flows, info
 
 
 def filter_checkpoint_fho(checkpoint_model):
@@ -637,29 +635,26 @@ def filter_checkpoint_fho(checkpoint_model):
 
     return new_dict
 
-class OSCCPNRMixup(Mixup):
+# class OSCCPNRMixup(Mixup):
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+#     def __init__(self, **kwargs):
+#         super().__init__(**kwargs)
 
-    def __call__(self, x, target):
+#     def __call__(self, x, target, N):
+#         """
+#             Args:
+#                 N: number of classes
+#         """
+#         assert len(x) % 2 == 0, 'Batch size should be even when using this'
 
-        assert len(x) % 2 == 0, 'Batch size should be even when using this'
+#         if self.mode == 'elem':
+#             lam = self._mix_elem(x)
+#         elif self.mode == 'pair':
+#             lam = self._mix_pair(x)
+#         else:
+#             lam = self._mix_batch(x)
 
-        if self.mode == 'elem':
-            lam = self._mix_elem(x)
-        elif self.mode == 'pair':
-            lam = self._mix_pair(x)
-        else:
-            lam = self._mix_batch(x)
+#         # print(x.shape)
+#         target = mixup_target(target, N, lam, self.label_smoothing, device=x.device)
 
-        # mixup for OSCC and PNR-TL at the same time
-        label, state = target
-        # print(label.shape, state.shape,)
-        B, C, T, H, W = x.shape
-        # print(x.shape)
-        label = mixup_target(label, T+1, lam, self.label_smoothing, device=x.device)
-        state = mixup_target(state, 2, lam, self.label_smoothing, device=x.device)
-        target = [label ,state]
-
-        return x, target
+#         return x, target

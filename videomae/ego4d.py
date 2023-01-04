@@ -581,7 +581,7 @@ class Ego4dFhoOscc(Ego4dBase):
             self.package[count] = {
                 'unique_id': unique_id,
                 'pnr_frame': pnr_frame,
-                'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
                 'clip_start_sec': clip_start_sec,
                 'clip_end_sec': clip_end_sec,
                 'clip_start_frame': int(clip_start_frame),
@@ -625,14 +625,12 @@ class Ego4dFhoOscc(Ego4dBase):
                 volume_transforms.ClipToTensor(),
             ])
 
-
     def __len__(self):
         return len(self.package)
     
     def __getitem__(self, index):
 
         info = self.package[index]
-        state = info['state'] # int, [0,1], state change clasification label
 
         try:
             # check existance of clip frames, if some frames are missing then re-extract from video
@@ -641,22 +639,17 @@ class Ego4dFhoOscc(Ego4dBase):
             print(f"error occurs while reading {info['video_id']}")
             raise e
 
-        # list[np.ndarray], list, int, list[int]
-        clip, labels, effective_fps, frame_idx = self.prepare_clip_frames_labels(info, from_zip=self.save_as_zip)
- 
-        # label for temporal localization
-        if labels.sum() != 0:
-            labels = labels.nonzero()[0].item()
-        else:
-            labels = len(clip)
+        # labels is numpy.ndarray (label for oscc task or label for pnr task) 
+        clip, labels, _, frame_idx = self.prepare_clip_frames_labels(info, from_zip=self.save_as_zip)
 
         if self.mode == "train":
 
             # prepare clip frames and flows at the same time
             clip, flows = self.data_transform(clip, info, frame_idx)
+ 
             # supports repeat sampling
             if self.repeat_sample > 1:
-                clip, labels, state, flows = list( zip( *[ [ clip, labels, state, flows ] for _ in range(self.repeat_sample) ]) )
+                clip, labels, flows = list(zip(*[ [ clip, labels, flows ] for _ in range(self.repeat_sample) ] ))
 
         elif self.mode == "val":
             clip = self.data_transform(clip)
@@ -682,18 +675,9 @@ class Ego4dFhoOscc(Ego4dBase):
             flows = self.prepare_flow(clip, info, frame_idx)
             clip = self.normalize(clip)
 
-            return clip, flows, info, frame_idx
+            return clip, flows, frame_idx
 
-        if self.task == "fho_oscc_tl":
-            ground_truth =  [labels, state]
-        elif self.task == "fho_oscc":
-            ground_truth = state
-        elif self.task == "fho_tl":
-            ground_truth = labels
-        else:
-            raise ValueError(f"Unsupported task:{self.task} for Ego4dFhoOscc Dataset")
-
-        return clip, ground_truth, flows, info
+        return clip, flows, labels
 
 
     def check_extract_clip_frames(self, info, save_as_zip=False):
@@ -713,25 +697,31 @@ class Ego4dFhoOscc(Ego4dBase):
         #     clip_path = os.path.join(self.negative_vid_dir, unique_id)
 
         if os.path.exists(clip_path):
-            # The frames for this clip are already saved.
-            num_frames = len(os.listdir(clip_path))
-            # if frame number does not match annotation file and frames.zip does not exist
-            # delete files in $clip_path$ and re-extract frames from video
-            if num_frames < (clip_end_frame - clip_start_frame) and \
-                                        ( save_as_zip and not os.path.exists(os.path.join(clip_path, "frames.zip"))):
-                if save_as_zip and not os.path.exists(os.path.join(clip_path, "frames.zip")) :
-                    print(f"Deleting {clip_path} as it does not have a zip file")
-                else:
+
+            if not save_as_zip:
+
+                # The frames for this clip are already saved.
+                num_frames = len(os.listdir(clip_path))
+                # if frame number does not match annotation file and frames.zip does not exist
+                # delete files in $clip_path$ and re-extract frames from video
+                if num_frames < (clip_end_frame - clip_start_frame) and \
+                                            ( save_as_zip and not os.path.exists(os.path.join(clip_path, "frames.zip"))):
+                    # if save_as_zip and not os.path.exists(os.path.join(clip_path, "frames.zip")) :
+                    #     print(f"Deleting {clip_path} as it does not have a zip file")
+                    # else:
                     print(
                         f'Deleting {clip_path} as it has {num_frames} frames'
                     )
 
-                os.system(f'rm -r {clip_path}')
-            else:
-                return None
+                    os.system(f'rm -r {clip_path}')
+                else:
+                    return None
+
+            elif os.path.exists(os.path.join(clip_path, "frames.zip")):
+                    return None
 
         print(f'Saving frames for {clip_path}...')
-        os.makedirs(clip_path)
+        os.makedirs(clip_path, exist_ok=True)
 
         start = time.time()
 
@@ -778,7 +768,7 @@ class Ego4dFhoOscc(Ego4dBase):
             f'frames saved; {clip_path}')
 
 
-    def sample_frames(self,
+    def oscc_sample_frames(self,
         unique_id,
         clip_start_frame,
         clip_end_frame,
@@ -807,34 +797,42 @@ class Ego4dFhoOscc(Ego4dBase):
         upper_lim = np.ceil(num_frames/num_frames_required)
         lower_frames = list()
         upper_frames = list()
-        lower_keyframe_candidates_list = list()
-        upper_keyframe_candidates_list = list()
+        # lower_keyframe_candidates_list = list()
+        # upper_keyframe_candidates_list = list()
         for frame_count in range(clip_start_frame, clip_end_frame, 1):
             if frame_count % lower_lim == 0:
                 lower_frames.append(frame_count)
-                if pnr_frame is not None:
-                    lower_keyframe_candidates_list.append(
-                        np.abs(frame_count - pnr_frame)
-                    )
-                else:
-                    lower_keyframe_candidates_list.append(0.0)
+                # if pnr_frame is not None:
+                #     lower_keyframe_candidates_list.append(
+                #         np.abs(frame_count - pnr_frame)
+                #     )
+                # else:
+                #     lower_keyframe_candidates_list.append(0.0)
             if frame_count % upper_lim == 0:
                 upper_frames.append(frame_count)
-                if pnr_frame is not None:
-                    upper_keyframe_candidates_list.append(
-                        np.abs(frame_count - pnr_frame)
-                    )
-                else:
-                    upper_keyframe_candidates_list.append(0.0)
+                # if pnr_frame is not None:
+                #     upper_keyframe_candidates_list.append(
+                #         np.abs(frame_count - pnr_frame)
+                #     )
+                # else:
+                #     upper_keyframe_candidates_list.append(0.0)
         if len(upper_frames) < num_frames_required:
-            return (
-                lower_frames[:num_frames_required],
-                lower_keyframe_candidates_list[:num_frames_required]
-            )
-        return (
-            upper_frames[:num_frames_required],
-            upper_keyframe_candidates_list[:num_frames_required]
-        )
+            return lower_frames[:num_frames_required]
+            # lower_keyframe_candidates_list[:num_frames_required]
+        else:
+            return upper_frames[:num_frames_required]
+            # upper_keyframe_candidates_list[:num_frames_required]
+
+
+    def pnr_sample_frames(self,
+        unique_id,
+        clip_start_frame,
+        clip_end_frame,
+        num_frames_required,
+        pnr_frame
+    ):
+
+        pass
 
 
     def read_frames_from_video(self, video_path, frames_list):
@@ -868,7 +866,6 @@ class Ego4dFhoOscc(Ego4dBase):
         num_frames_per_clip= (
             self.cfg.SAMPLING_FPS * self.cfg.CLIP_LEN_SEC
         )
-
         pnr_frame = info['pnr_frame']
         if self.mode == 'train':
             # Random clipping
@@ -894,6 +891,7 @@ class Ego4dFhoOscc(Ego4dBase):
                 if keyframe_before_start:
                     random_start_frame = info['clip_start_frame']
         elif self.mode in ['test', 'val']:
+
             random_start_frame = info['clip_start_frame']
             random_end_frame = info['clip_end_frame']
 
@@ -906,13 +904,39 @@ class Ego4dFhoOscc(Ego4dBase):
                 f'frame {random_end_frame} info {info} clip path {clip_path}')
             assert random_start_frame < random_end_frame, message
 
-        candidate_frame_nums, keyframe_candidates_list = self.sample_frames(
-            info['unique_id'],
-            random_start_frame,
-            random_end_frame,
-            num_frames_per_clip,
-            pnr_frame
-        )
+        labels = None
+        if self.cfg.task == "oscc":
+            candidate_frame_nums  = self.oscc_sample_frames(
+                info['unique_id'],
+                random_start_frame,
+                random_end_frame,
+                num_frames_per_clip,
+                pnr_frame
+            )
+
+            labels = 1 if pnr_frame is not None else 0
+
+        elif self.cfg.task == "pnr":
+            candidate_frame_nums, keyframe_candidates_list = self.pnr_sample_frames(
+                info['unique_id'],
+                random_start_frame,
+                random_end_frame,
+                num_frames_per_clip,
+                pnr_frame
+            )
+
+            if pnr_frame is not None:
+                # if state change occurs, then prepare label for state change temporal localization
+                keyframe_location = np.argmin(keyframe_candidates_list)
+                # use hard labels by default
+                hard_labels = np.zeros(len(candidate_frame_nums))
+                hard_labels[keyframe_location] = 1
+                labels = hard_labels
+            else:
+                labels = keyframe_candidates_list # all zero
+
+        else:
+            raise NotImplementedError(f"Not implemented task:{self.cfg.task} for osccpnr dataset")
 
         # Start sampling frames given frame index list
         clip = list()
@@ -962,22 +986,12 @@ class Ego4dFhoOscc(Ego4dBase):
                                     \rRaw expception: {e} \
                                     ")
 
-        if pnr_frame is not None:
-            # if state change occurs, then prepare label for state change temporal localization
-            keyframe_location = np.argmin(keyframe_candidates_list)
-            # use hard labels by default
-            hard_labels = np.zeros(len(candidate_frame_nums))
-            hard_labels[keyframe_location] = 1
-            labels = hard_labels
-        else:
-            labels = keyframe_candidates_list # all zero
-
         # Calculating the effective fps. In other words, the fps after sampling
         # changes when we are randomly clipping and varying the duration of the
         # clip
         final_clip_length = (random_end_frame/30) - (random_start_frame/30)
         effective_fps = num_frames_per_clip / final_clip_length
-
+    
         return clip, np.array(labels), effective_fps, candidate_frame_nums
 
     def train_transformation(
@@ -1168,36 +1182,46 @@ class Ego4dFhoScod(Ego4dBase):
 
 class Ego4dFhoLTA(Ego4dBase):
 
-    def init_dataset(self, short_side_size, input_size):
+    def init_dataset(self):
         self.anno_path = os.path.join(
             self.cfg.ANN_DIR, "fho_lta_{}.json".format(self.mode)
         )
 
+        self.source = self.cfg.FRAME_DIR_PATH
         # self.observation_time_second = self.cfg.observation_time_second
         # self.avail_frame_num = self.observation_time_second * 30
-        self.short_side_size = short_side_size
-        self.input_size = input_size
+        self.short_side_size = self.cfg.short_side_size
+        self.input_size = self.cfg.input_size
         # train
+        self.num_frame = self.cfg.NUM_FRAMES
+    
         self.repeat_sample = self.cfg.repeat_sample
+        self.input_clip_num = self.cfg.input_clip_num
+        self.num_action_predict = self.cfg.num_action_predict
         # test
         self.test_num_clips = self.cfg.test_spatial_crop_num * self.cfg.test_temporal_crop_num
 
-    
+        self.mean = self.cfg.MEAN
+        self.std = self.cfg.STD
+
     def build_dataset(self):
 
         assert os.path.exists(self.anno_path), "annotation file not found"
 
-        self.package = {}
-
+        self.package = []
+        self.info = {}
         with open(self.anno_path, "r") as anno_fp:
             clips = json.load(anno_fp)["clips"] # list[dict]
         
         for i, clip in enumerate(clips):
             clip_uid = clip["clip_uid"]
-            if clip_uid not in self.package.keys():
-                self.package[clip_uid] = []
-            
-            self.package[clip_uid].append({
+            if clip_uid not in self.info.keys():
+                self.info[clip_uid] = []
+
+            self.info[clip_uid].append({
+                "video_uid": clip["video_uid"],
+                "clip_uid": clip["clip_uid"],
+
                 "parent_st_frame": clip["clip_parent_start_frame"],
                 "parent_end_frame": clip["clip_parent_end_frame"],
                 "clip_st_frame": clip["action_clip_start_frame"],
@@ -1207,7 +1231,18 @@ class Ego4dFhoLTA(Ego4dBase):
                 "verb_label": clip["verb_label"],
                 "noun_label": clip["noun_label"],
             })
-        
+
+        for clip_uid in self.info.keys():
+            clips = self.info[clip_uid]
+
+            for i in range(len(clips) - self.input_clip_num - self.num_action_predict):
+                self.package.append(
+                    {
+                        "input_clips": clips[i:i+self.input_clip_num],
+                        "forecast_clips": clips[i+self.input_clip_num, i+self.input_clip_num+self.num_action_predict ]
+                    }
+                )
+
     def init_transformation(self):
 
         if self.mode == "train":
@@ -1215,7 +1250,9 @@ class Ego4dFhoLTA(Ego4dBase):
             self.data_transform = video_transforms.Compose([
                 video_transforms.ShorterSideResize(self.short_side_size),
                 video_transforms.CenterCrop(size=(self.input_size, self.input_size)),
+                video_transforms.RandomHorizontalFlip(),
                 volume_transforms.ClipToTensor(),
+                video_transforms.Normalize(mean=self.mean, std=self.std),
             ])
 
         elif self.mode == 'val':
@@ -1223,14 +1260,59 @@ class Ego4dFhoLTA(Ego4dBase):
                 video_transforms.ShorterSideResize(self.short_side_size),
                 video_transforms.CenterCrop(size=(self.input_size, self.input_size)),
                 volume_transforms.ClipToTensor(),
+                video_transforms.Normalize(mean=self.mean, std=self.std),
             ])
 
         elif self.mode == 'test':
             self.data_transform = video_transforms.Compose([
                 video_transforms.ShorterSideResize(self.short_side_size),
                 volume_transforms.ClipToTensor(),
+                video_transforms.Normalize(mean=self.mean, std=self.std),
             ])
 
+    def sample_frames_from_clip(self, clip_info):
+        parent_st_frame = clip_info["clip_parent_start_frame"]
+        clip_st_frame = clip_info["action_clip_start_frame"]
+        clip_end_frame = clip_info["action_clip_end_frame"]
+
+        st_frame = parent_st_frame + clip_st_frame
+        end_frame = parent_st_frame + clip_end_frame
+
+        intervals = np.linspace(st_frame, end_frame, self.num_frame).astype(int)
+
+        frames = []
+        with zipfile.ZipFile(os.path.join(self.source, clip_info["clip_uid"], clip_info["clip_uid"]+"_%05d.zip".format(clip_info["action_idx"]) ) ,"r") as zipfp:
+            for frame_idx in intervals:
+                frame_fp = zipfp.open("%010d.jpg".format(frame_idx))
+                pil = Image.open( frame_fp)
+                frame = np.array(pil)
+                frames.append(frame)
+
+        return frames
+
+    def __getitem__(self, index):
+
+        info = self.package[index]
+
+        input_clips = info["input_clips"]
+        forecast_clips = info["forecast_clips"]
+
+        frames = [] # list of numpy array
+        target = [] # list of int
+        for clip_info in input_clips:
+            frames.extend( self.sample_frames_from_clip(clip_info) )
+
+        for clip_info in forecast_clips:
+            target.append(clip_info["verb_label"])
+            target.append(clip_info["noun_label"])
+
+        frames = self.data_transform(frames)
+        flows = None
+
+        return frames, flows, target
+
+    def __len__(self):
+        return len(self.package)
 
 
 class Ego4dFhoHands(Ego4dBase):
@@ -1510,6 +1592,29 @@ def get_basic_config_for(task):
             "task": "fho_hands"
         }
 
+    elif task == "lta":
+
+        cfg = {
+            "ANN_DIR": "/mnt/shuang/Data/ego4d/data/v1/annotations",
+            "FRAME_DIR_PATH": "/mnt/shuang/Data/ego4d/preprocessed_data/egoclip",
+            "NUM_FRAMES": 16,
+
+            "MEAN":[0.485, 0.456, 0.406],
+            "STD": [0.229, 0.224, 0.225],
+
+            "FRAME_FORMAT": "{:010d}.jpg",  # image frame format
+
+            "repeat_sample": 1, 
+            "input_clip_num": 1,
+            "num_action_predict": 20,
+            "short_side_size": 256,
+            "input_size": 224,
+
+            "test_spatial_crop_num": 3,
+            "test_temporal_crop_num": 1,
+
+            "load_flow": "local",
+        }
     return Namespace(**cfg)
 
 

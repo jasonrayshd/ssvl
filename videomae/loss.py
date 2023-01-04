@@ -1,9 +1,9 @@
 import torch
 from torch import nn
+from timm.utils import accuracy
 
 
-
-class Ego4dTwoHead_Criterion(nn.Module):
+class OsccPNRCriterion(nn.Module):
 
     def __init__(self, criterion:nn.Module, lamb_cls=1, lamb_loc=1):
         super().__init__()
@@ -25,6 +25,31 @@ class Ego4dTwoHead_Criterion(nn.Module):
             cls_loss = self.criterion(cls, state)
 
             return self.lamb_cls*cls_loss + self.lamb_loc*loc_loss
+
+
+# class OsccCriterion(nn.Module):
+
+#     def __init__(self, criterion:nn.Module):
+#         super().__init__()
+#         self.criterion = criterion
+
+#     def forward(self, x: torch.Tensor, target, **kwargs) -> torch.Tensor:
+
+#         state = target[1]
+
+#         return self.criterion(x, state.long())
+
+
+# class PNRCriterion(nn.Module):
+
+#     def __init__(self, criterion:nn.Module):
+#         super().__init__()
+#         self.criterion = criterion
+
+#     def forward(self, x: torch.Tensor, target, **kwargs) -> torch.Tensor:
+
+#         label = target[0]
+#         return self.criterion(x, label.long())
 
 
 class ActionAnticipationLoss(nn.Module):

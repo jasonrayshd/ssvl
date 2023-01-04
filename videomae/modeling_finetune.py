@@ -1628,30 +1628,18 @@ class VarAnt(nn.Module):
         self.phi_next_act = nn.Sequential(nn.Linear(self.h_dim, self.h_dim),
                                        nn.ReLU(),
                                        nn.Linear(self.h_dim, self.z_dim))
-        
+
 
         # # # Linear layer for next latent goal - inputs are next and observed action
         self.phi_enc_next = nn.Sequential(nn.Linear(2*self.z_dim, self.z_dim), nn.ReLU())
 
+        self.phi_act = nn.Sequential(nn.Linear(self.h_dim, self.h_dim),
+                                       nn.ReLU(),)
 
-        self.phi_get_future_act_lst = nn.ModuleList([
-            nn.Sequential(nn.Linear(self.z_dim + self.h_dim, self.h_dim),
-                            nn.ReLU())
-            for i in range(self.next_num-1)
-        ])
-        self.phi_future_act_lst = nn.ModuleList([
-            # next action
-            nn.Sequential(nn.Linear(self.h_dim, self.h_dim),
-                                       nn.ReLU(),
-                                       nn.Linear(self.h_dim, self.z_dim))
-            for i in range(self.next_num-1)
-        ])
-
-        self.phi_enc_future_lst = nn.ModuleList([
-            # next action
-            nn.Sequential(nn.Linear(2*self.z_dim, self.z_dim), nn.ReLU())
-            for i in range(self.next_num-1)
-        ])
+        # rnn for action anticipation
+        # hidden state: h_dim
+        # input: action prior(h_dim) and current action()
+        self.action_rnn = nn.GRU(2*self.h_dim, self.h_dim, 1)
 
         # # # For generating std of distributions
         self.softplus = nn.Softplus()
@@ -1660,14 +1648,13 @@ class VarAnt(nn.Module):
         self.cur_act_classifier = nn.Linear(self.h_dim, self.num_classes)
         self.next_act_classifier = nn.Linear(self.h_dim, self.num_classes)
 
-        self.act_classifier_lst = nn.ModuleList([
-            nn.Linear(self.h_dim, self.num_classes)
-            for i in range(self.next_num-1)
-        ])
-
+        # self.act_classifier_lst = nn.ModuleList([
+        #     nn.Linear(self.h_dim, self.num_classes)
+        #     for i in range(self.next_num-1)
+        # ])
 
     def init_hidden(self, x):
-        return torch.randn(self.n_layers, x.size(1), self.h_dim).to(x.device)    
+        return torch.randn(self.n_layers, x.size(1), self.h_dim).to(x.device)
 
     def reparameterized_sample(self, mean, std, device):
         """using std to sample"""
@@ -1726,7 +1713,7 @@ class VarAnt(nn.Module):
             z_t = self.reparameterized_sample(enc_mean_t, enc_std_t, device = feat_seq.device)
 
             _, h = self.rnn(torch.cat([self.phi_x(x_t).unsqueeze(0), self.phi_z(z_t).unsqueeze(0)], -1), h)
-            
+
             # # #  applying layernorm on hidden state
             # h = self.layernorm(h)
         # # # Distribution for latent goal for observed sequence
@@ -1787,17 +1774,24 @@ class VarAnt(nn.Module):
                     next_act_final = next_act
                     obs_act_final = obs_act
 
-
         # found best observed action and next action pair
         # keep predicting future actions
-        
         kld_future_lat_goal = [0. for i in range(self.next_num-1)]
         future_act_final = [0. for i in range(self.next_num-1)]
         future_goal_dis = [1e9 for i in range(self.next_num-1)]
 
-        pre_act = next_act_final
+        pre_act = obs_act_final # previous action
+        cur_act = next_act_final # current action
+        # init hidden state for action anticipation
+        h_action = h.clone() # initialize first action hidden state with h_T
+
         for i in range(self.next_num-1):
-            future_act_dummy = self.phi_get_future_act_lst[i](torch.cat([self.phi_prior_new(h[-1]).unsqueeze(0), pre_act], -1))
+
+            _, h_action = self.action_rnn(torch.cat([self.phi_act(pre_act), self.phi_act(cur_act)], -1), h_action)
+
+            pre_act = cur_act
+
+            future_act_dummy = self.phi_get_act(torch.cat([self.phi_prior_new(h_action[-1]).unsqueeze(0), pre_act], -1))
             future_act_mean = future_act_dummy
             future_act_std = self.softplus(future_act_dummy)
 
@@ -1805,12 +1799,12 @@ class VarAnt(nn.Module):
                 # # # Next action sample
                 future_act = self.reparameterized_sample(future_act_mean, future_act_std, device = feat_seq.device)
 
-                prior_future_lat_goal_mean = self.phi_future_act_lst[i](future_act)
-                prior_future_lat_goal_std = self.softplus(self.phi_future_act_lst[i](future_act))
+                prior_future_lat_goal_mean = self.phi_next_act(future_act)
+                prior_future_lat_goal_std = self.softplus(self.phi_next_act(future_act))
                 # print('prior_next_lat_goal_std:', prior_next_lat_goal_std.shape)
 
                 # # # Encoder distribution for nexticted latent goal conditioned on observed action
-                enc_future_lat_goal = self.phi_enc_future_lst[i](torch.cat([self.phi_future_act_lst[i](future_act), self.phi_next_act(pre_act) if i == 0 else self.phi_future_act_lst[i-1](pre_act)], -1))
+                enc_future_lat_goal = self.phi_enc_next(torch.cat([self.phi_next_act(future_act), self.phi_next_act(pre_act)], -1))
                 enc_future_lat_goal_mean = enc_future_lat_goal
                 enc_future_lat_goal_std = self.softplus(enc_future_lat_goal)
                 # print('enc_next_lat_goal_std:', enc_next_lat_goal_std.shape)
@@ -1827,17 +1821,19 @@ class VarAnt(nn.Module):
                     # # # Predicted action
                     future_act_final[i] = future_act
 
-            pre_act = future_act_final[i]
+            cur_act = future_act_final[i]
 
         # # # Embedding both next and current action to number of action classes
         try:
             out_next = self.next_act_classifier(next_act_final)
-            out_future = [self.act_classifier_lst[i](future_act_final[i]) for i in range(self.next_num-1)]  
+            out_future = [self.next_act_classifier(future_act_final[i]).squeeze(0) for i in range(self.next_num-1)]  
+            out_future = [out_next, *out_future]
         except:
             print('next_act_final:', next_act_final.shape)
+
         out_cur = self.cur_act_classifier(obs_act_final)
 
-        return out_next.squeeze(0), out_cur.squeeze(0), out_future, kld_lat_goal, kld_next_lat_goal, lat_goal_dis, \
+        return out_cur.squeeze(0), out_future, kld_lat_goal, kld_next_lat_goal, lat_goal_dis, \
              sum(kld_future_lat_goal), sum(future_goal_dis)
 
 
@@ -1949,14 +1945,13 @@ class LongTermActionAnticipationModel(nn.Module):
         # x: B, C, T, H, W,
         B, C, T, H, W = x.shape
         x = self.forward_features(x)
-        # x: B, (H//p0)*(W//p1)*(T//t), p0*p1*t*c
-
-        feat_seq = einops.rearrange(x, "b (h w t) c -> t b (h w) c", h=H//self.patch_size, w=W//self.patch_size,t=T//self.tubelet_size,)
+        # x: B, (T//t)*(H//p0)*(W//p1), p0*p1*t*c
+        feat_seq = einops.rearrange(x, "b (t h w) c -> t b (h w) c", h=H//self.patch_size, w=W//self.patch_size,t=T//self.tubelet_size,)
         feat_seq = feat_seq.mean(2).squeeze(2) # T B C
 
-        out_next, out_cur, out_future, kld_lat_goal, kld_next_lat_goal, lat_goal_dis, kld_future_lat_goal, future_goal_dis = self.anticipation_model(feat_seq)
-
-        return out_next, out_cur, out_future, kld_lat_goal, kld_next_lat_goal, lat_goal_dis, kld_future_lat_goal, future_goal_dis
+        out = self.anticipation_model(feat_seq)
+        # out = out_cur, out_future, kld_lat_goal, kld_next_lat_goal, lat_goal_dis, kld_future_lat_goal, future_goal_dis
+        return out
 
 
 @register_model
