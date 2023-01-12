@@ -1,7 +1,7 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 4
+batch_size: 2
 epochs: 300
 save_ckpt_freq: 10
 

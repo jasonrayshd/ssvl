@@ -26,7 +26,8 @@ import modeling_finetune
 import utils
 from utils import NativeScalerWithGradNormCount as NativeScaler
 from utils import filter_checkpoint_fho
-from utils import  multiple_samples_collate_fho
+from utils import  multiple_samples_collate_fho, samples_collate_fho
+from utils import LTAMixup
 
 from datasets import build_dataset
 from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, validation_one_epoch, final_test, merge
@@ -264,11 +265,12 @@ def main(args, ds_init):
     else:
         flow_extractor = None
 
-    dataset_train = build_dataset(mode="train", args=args, flow_extractor=flow_extractor)
+    # num_classes is for mixup
+    dataset_train, num_classes = build_dataset(mode="train", args=args, flow_extractor=flow_extractor)
     if args.disable_eval_during_finetuning:
         dataset_val = None
     else:
-        dataset_val = build_dataset(mode="val", args=args, flow_extractor=flow_extractor)
+        dataset_val, _ = build_dataset(mode="val", args=args, flow_extractor=flow_extractor)
 
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
@@ -298,7 +300,7 @@ def main(args, ds_init):
     if args.cfg.repeat_sample > 1:
         collate_func = multiple_samples_collate_fho
     else:
-        collate_func = None
+        collate_func = samples_collate_fho
 
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
@@ -312,7 +314,7 @@ def main(args, ds_init):
     if dataset_val is not None:
         data_loader_val = torch.utils.data.DataLoader(
             dataset_val, sampler=sampler_val,
-            batch_size=int(1.5 * args.batch_size),
+            batch_size=int(args.batch_size),
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
             drop_last=False,
@@ -325,15 +327,29 @@ def main(args, ds_init):
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
         print("Mixup is activated!")
-        mixup_fn = Mixup(mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
-            prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
-            label_smoothing=args.smoothing)
+
+        if "lta" in args.cfg.task:
+            mixup_fn = LTAMixup(mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
+                prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
+                label_smoothing=args.smoothing, num_classes=num_classes)
+        else:
+
+            mixup_fn = Mixup(mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
+                prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
+                label_smoothing=args.smoothing, num_classes=num_classes)
+
+    if "lta" in args.cfg.task:
+        # account for multiple input clips
+        all_frames = args.cfg.NUM_FRAMES * args.cfg.input_clip_num
+    else:
+        all_frames = args.cfg.NUM_FRAMES
 
     model = create_model(
         args.model,
         pretrained=False,
-        # num_classes=args.nb_classes, # when equals to 1, perform ego4d state classification and localization tasks at the same time
-        all_frames=args.cfg.num_frames,
+
+        num_classes=num_classes,
+        all_frames=all_frames,
         tubelet_size=args.tubelet_size,
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
@@ -348,7 +364,7 @@ def main(args, ds_init):
         patch_size = model.patch_size
 
     print("Patch size = %s" % str(patch_size))
-    args.window_size = (args.cfg.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+    args.window_size = (all_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
     args.patch_size = patch_size
 
     if args.finetune: # if provided pretrained weights
@@ -486,13 +502,9 @@ def main(args, ds_init):
             criterion = torch.nn.CrossEntropyLoss()
 
         train_fn = osccpnr_train_one_epoch
-    # elif args.cfg.task == "oscc":
-    #     criterion = OsccCriterion(criterion)
-    # elif args.cfg.task == "pnr":
-    #     criterion = PNRCriterion(criterion)
     elif "lta" in args.cfg.task:
-        criterion = ActionAnticipationLoss(task=args.cfg.task) # lta_verb or lta_noun
-        train_fn = lta_train_one_epoch
+        criterion = ActionAnticipationLoss(celoss="focal" if mixup_fn is None else "soft", head_type=args.head_type) # lta_verb or lta_noun
+        train_fn = partial(lta_train_one_epoch, head_type=args.head_type)
 
     print("criterion = %s" % str(criterion))
 
@@ -504,7 +516,7 @@ def main(args, ds_init):
     start_time = time.time()
 
 
-    max_accuracy = 0.0
+    max_score = 0.0
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -529,40 +541,23 @@ def main(args, ds_init):
         if data_loader_val is not None:
 
             if "lta" in args.cfg.task:
-                val_criterion = ActionAnticipationLoss(task=args.cfg.task) # lta_verb or lta_noun
+                val_criterion = ActionAnticipationLoss(celoss="", head_type=args.head_type) # lta_verb or lta_noun
             else:
                 val_criterion = torch.nn.CrossEntropyLoss()
 
-            test_stats = validation_one_epoch(data_loader_val, model, device, val_criterion)
+            test_stats = validation_one_epoch(data_loader_val, model, device, val_criterion, task=args.cfg.task)
 
             print(f"Accuracy of the network on the {len(dataset_val)} val videos: ")
             for k, v in test_stats.items():
                 print(f"{k}:{v:.3f}%")
 
-            # strategy for saving model
-            # if args.cfg.task == "oscc-pnr":
-            #     if max_accuracy[0] < test_stats["loc_acc1"]:
-            #         max_accuracy[0] = test_stats["loc_acc1"]
-            #         if args.output_dir and args.save_ckpt:
-            #             utils.save_model(
-            #                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-            #                 loss_scaler=loss_scaler, epoch="best_state_loc")
-            #     elif max_accuracy[1] < test_stats["cls_acc1"]:
-            #         max_accuracy[1] = test_stats["cls_acc1"]
-            #         if args.output_dir and args.save_ckpt:
-            #             utils.save_model(
-            #                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-            #                 loss_scaler=loss_scaler, epoch="best_state_cls")
-
-            #     print(f'Max localization accuracy: {max_accuracy[0]:.2f}% Max classification accuracy: {max_accuracy[1]:.2f}')
-
-            if max_accuracy < test_stats["acc"]:
-                max_accuracy = test_stats["acc"]
+            if max_score < test_stats["score"]:
+                max_score = test_stats["score"]
                 if args.output_dir and args.save_ckpt:
                     utils.save_model(
                         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                         loss_scaler=loss_scaler, epoch="best")
-                print(f"Max accuracy: {max_accuracy[0]:.2f}%")
+                print(f"Max score(Accuracy or Edit distance): {max_score:.2f}%")
 
             if log_writer is not None:
                 for k,v in test_stats.items():
@@ -590,7 +585,6 @@ def main(args, ds_init):
                 log_writer.flush()
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
-
 
     torch.distributed.barrier()
 

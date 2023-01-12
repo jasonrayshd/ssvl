@@ -15,7 +15,8 @@ from pathlib import Path
 from flow_extractor import flowExtractor
 from timm.models import create_model
 from optim_factory import create_optimizer
-from datasets import build_pretraining_dataset
+from datasets import build_pretraining_dataset, create_mask_generator
+
 from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch, train_multimodal_one_epoch, train_multicae_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
@@ -291,6 +292,7 @@ def main(args):
     #     flow_extractor = None
 
     dataset_train = build_pretraining_dataset(args)
+    mask_generators = create_mask_generator(args)
 
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
@@ -449,6 +451,7 @@ def main(args):
                 patch_size=patch_size[0],
                 normlize_target=args.normlize_target,
 
+                mask_generators = mask_generators,
                 lamb = args.lamb,
             )
         elif args.pretrain == "multicae":

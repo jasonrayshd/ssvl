@@ -1,6 +1,9 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
+
 from timm.utils import accuracy
+from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 
 
 class OsccPNRCriterion(nn.Module):
@@ -27,76 +30,89 @@ class OsccPNRCriterion(nn.Module):
             return self.lamb_cls*cls_loss + self.lamb_loc*loc_loss
 
 
-# class OsccCriterion(nn.Module):
+class FocalLoss(nn.Module):
+    r"""
+        This criterion is a implemenation of Focal Loss, which is proposed in 
+        Focal Loss for Dense Object Detection.
 
-#     def __init__(self, criterion:nn.Module):
-#         super().__init__()
-#         self.criterion = criterion
+            Loss(x, class) = - \alpha (1-softmax(x)[class])^gamma \log(softmax(x)[class])
 
-#     def forward(self, x: torch.Tensor, target, **kwargs) -> torch.Tensor:
+        The losses are averaged across observations for each minibatch.
 
-#         state = target[1]
+        Args:
+            alpha(1D Tensor, Variable) : the scalar factor for this criterion
+            gamma(float, double) : gamma > 0; reduces the relative loss for well-classiﬁed examples (p > .5), 
+                                   putting more focus on hard, misclassiﬁed examples
+            size_average(bool): By default, the losses are averaged over observations for each minibatch.
+                                However, if the field size_average is set to False, the losses are
+                                instead summed for each minibatch.
 
-#         return self.criterion(x, state.long())
 
+    """
+    def __init__(self,  gamma=2):
+        super(FocalLoss, self).__init__()
 
-# class PNRCriterion(nn.Module):
+        self.celoss = nn.CrossEntropyLoss(reduction="none")
+        self.gamma = gamma
 
-#     def __init__(self, criterion:nn.Module):
-#         super().__init__()
-#         self.criterion = criterion
+    def forward(self, outputs, targets):
+       
+        """
+            Args:
+                outputs: B, N
+                targets: B, N
+        """
 
-#     def forward(self, x: torch.Tensor, target, **kwargs) -> torch.Tensor:
+        B, *_ = targets.shape
+        p = F.softmax(outputs, dim=1)
+        p_class = [ p[i, targets[i]] for i in range(B) ]
+        p_class = torch.stack(p_class, dim=0)
 
-#         label = target[0]
-#         return self.criterion(x, label.long())
+        ce_value = self.celoss(outputs, targets)
+        loss = torch.pow((1-p_class), self.gamma)*ce_value
+
+        return loss.mean()
 
 
 class ActionAnticipationLoss(nn.Module):
 
-    def __init__(self, task=""):
+    def __init__(self, celoss="focal", head_type="varant"):
         super().__init__()
-        self.celoss = nn.CrossEntropyLoss()
+        self.head_type=head_type
+        if celoss == "focal":
+            self.celoss = FocalLoss(gamma=2)
+        elif celoss == "soft":
+            self.celoss = SoftTargetCrossEntropy()
+        else:
+            self.celoss = nn.CrossEntropyLoss()
+
         self.mseloss = nn.MSELoss()
         self.mmloss = nn.MarginRankingLoss()
         self.l1_crit = nn.L1Loss()
 
-        self.task = task
     
     def forward(self, output, target):
+        loss = 0.
+        if self.head_type == "varant":
+            out_cur, out_future, kld_obs_goal, kld_next_goal, kld_goal_diff, kld_future_goal, kld_future_goal_dis = output
+            loss += kld_obs_goal
+            loss += kld_next_goal  
+            loss += kld_goal_diff
+            loss += kld_future_goal
+            loss += kld_future_goal_dis
+        elif self.head_type == "baseline":
+            out_cur, out_future = output[0], output[1:]
 
-        verb, noun = target
-        correct_action = 0
-        device = output.device
-
-        if self.task == "lta_verb":
-            next_action = torch.LongTensor([ int(verb[1]) ]).to(device)
-            cur_action = torch.LongTensor([ int(verb[0]) ]).to(device)
-        elif self.task == "lta_noun":
-            next_action = torch.LongTensor([ int(noun[1]) ]).to(device)
-            cur_action = torch.LongTensor([ int(noun[0]) ]).to(device)
-
-        out_next, out_cur, kld_obs_goal, kld_next_goal, kld_goal_diff = output
-        # pred_next = torch.argmax(out_next,1)
-        # pred_cur = torch.argmax(out_cur,1)
-
-        # print('out_next:', out_next.shape)    
-        # print('out_cur:', out_cur.shape)    
-        # print('next_action:', next_action)
-        # Next action loss
-
-        if next_action.item() != -1:
-            next_act_loss = self.celoss(out_next, next_action)
-            loss = next_act_loss
-
-        loss += kld_obs_goal
-        loss += kld_next_goal  
-
-        if cur_action.item() != -1:
-            cur_act_loss = self.celoss(out_cur, cur_action)
-            loss += cur_act_loss
-
-        loss += kld_goal_diff
+        next_act_loss = 0.
+        for i, action in enumerate(target[1:]):
+            next_act_loss += self.celoss(out_future[i], action)
+        loss += next_act_loss
+        cur_act_loss = self.celoss(out_cur, target[0])
+        loss += cur_act_loss
  
         return loss
-    
+
+# if __name__ == "__main__":
+
+#     loss_fn = ActionAnticipationLoss()
+#     outputs = 

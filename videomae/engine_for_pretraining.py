@@ -750,6 +750,8 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
+
+                    mask_generators = None,
                     lamb = [1,1,1,1],
                     ):
     model.train()
@@ -772,15 +774,25 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
                 if wd_schedule_values is not None and param_group["weight_decay"] > 0:
                     param_group["weight_decay"] = wd_schedule_values[it]
 
-        videos, bool_masked_pos, flows = batch[0], batch[1], batch[2]
+        videos, flows = batch[0], batch[1]
 
-        if len(videos.shape) == 6: # repeated sampling is used
+        B, *_ = videos.shape
+        rgb_mask, flow_mask = mask_generators[0](batch_size=B), mask_generators[1](batch_size=B) # numpy.ndarray
+
+        if len(videos.shape) == 6: # repeated sampling is used, (B, Repeat, C, T, H, W)
+            _, repeat, *_ = videos.shape
             videos = videos.reshape(-1, *videos.shape[2:])
-            bool_masked_pos = bool_masked_pos.reshape(-1, *bool_masked_pos.shape[2:])
+            for i in range(repeat):
+                rgb_mask.extend(mask_generators[0](batch_size=B))
+                flow_mask.extend(mask_generators[1](batch_size=B))
+
             flows = flows.reshape(-1, *flows.shape[2:])
 
         videos = videos.to(device, non_blocking=True)
-        bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
+        flows = flows.to(device, non_blocking=True)
+
+        rgb_mask = torch.from_numpy(np.stack(rgb_mask, axis=0)).to(device, non_blocking=True).flatten(1).to(torch.bool)
+        flow_mask = torch.from_numpy(np.stack(flow_mask, axis=0)).to(device, non_blocking=True).flatten(1).to(torch.bool)
 
         # use given target or simply reconstruct input video
 
@@ -798,11 +810,11 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
 
                 videos_patch = rearrange(videos_norm, 'b n p c -> b n (p c)')
                 B, _, C = videos_patch.shape
-                rgb_target = videos_patch[bool_masked_pos].reshape(B, -1, C)
+                rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
             else:
                 videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=patch_size, p2=patch_size)
                 B, _, C = videos_patch.shape
-                rgb_target = videos_patch[bool_masked_pos].reshape(B, -1, C)
+                rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
 
         # target will be processed in dataset code
         # reconstruct entire given flow images
@@ -815,18 +827,18 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
 
         flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
 
-        tublet_size = 2
-        bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
-        bool_masked_pos_label = bool_masked_pos_label.repeat(1, N//(T//tublet_size), 1, 1)
-        bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
+        # tublet_size = 2
+        # bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
+        # bool_masked_pos_label = bool_masked_pos_label.repeat(1, N//(T//tublet_size), 1, 1)
+        # bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
 
-        flow_target = flow_target[bool_masked_pos_label]
+        flow_target = flow_target[flow_mask]
         flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
 
         flow_target = flow_target.to(device, non_blocking=True)
 
         with torch.cuda.amp.autocast():
-            outputs = model(videos, flows, bool_masked_pos)
+            outputs = model(videos, flows, rgb_mask, flow_mask)
  
             loss_dct = loss_func(outputs, rgb_target, flow_target)
             loss = loss_dct["sum"]

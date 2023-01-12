@@ -592,25 +592,21 @@ def multiple_samples_collate_fho(batch):
     return inputs, flows, target
 
 
-# def samples_collate_ego4d(batch):
+def samples_collate_fho(batch):
 
-#     inputs, target, flows, info = zip(*batch)
+    inputs, flows, target = zip(*batch)
 
-#     labels = [item[0] for item in target]
-#     states = [item[1] for item in target]
+    if flows[0] is not None:
+        flows =  default_collate(flows)
+    else:
+        flows = None
 
-#     if flows[0] is not None:
-#         flows =  default_collate(flows)
-#     else:
-#         flows = None
+    inputs, target = (
+        default_collate(inputs),
+        default_collate(target),
+    )
 
-#     inputs, labels, states = (
-#         default_collate(inputs),
-#         default_collate(labels),
-#         default_collate(states),
-#     )
-
-#     return inputs, [labels, states], flows, info
+    return inputs, flows, target
 
 
 def filter_checkpoint_fho(checkpoint_model):
@@ -635,26 +631,25 @@ def filter_checkpoint_fho(checkpoint_model):
 
     return new_dict
 
-# class OSCCPNRMixup(Mixup):
+class LTAMixup(Mixup):
 
-#     def __init__(self, **kwargs):
-#         super().__init__(**kwargs)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-#     def __call__(self, x, target, N):
-#         """
-#             Args:
-#                 N: number of classes
-#         """
-#         assert len(x) % 2 == 0, 'Batch size should be even when using this'
+    def __call__(self, x, targets):
+        """
+            Args:
+                N: number of classes
+        """
+        assert len(x) % 2 == 0, 'Batch size should be even when using this'
 
-#         if self.mode == 'elem':
-#             lam = self._mix_elem(x)
-#         elif self.mode == 'pair':
-#             lam = self._mix_pair(x)
-#         else:
-#             lam = self._mix_batch(x)
+        if self.mode == 'elem':
+            lam = self._mix_elem(x)
+        elif self.mode == 'pair':
+            lam = self._mix_pair(x)
+        else:
+            lam = self._mix_batch(x)
 
-#         # print(x.shape)
-#         target = mixup_target(target, N, lam, self.label_smoothing, device=x.device)
+        mixed_targets = [mixup_target(target, self.num_classes, lam, self.label_smoothing, device=x.device) for target in targets]
 
-#         return x, target
+        return x, mixed_targets

@@ -1,16 +1,21 @@
 import os
-import numpy as np
-import math
 import sys
-from typing import Iterable, Optional
+import math
+import numpy as np
+from functools import partial
+
 import torch
+from torch import nn
+
 from timm.data import Mixup
 from timm.utils import accuracy
-import utils
 
-from torch import nn
+import utils
+from typing import Iterable, Optional
+
 # from loss import Ego4dTwoHead_Criterion
 
+from pyxdameraulevenshtein import damerau_levenshtein_distance, normalized_damerau_levenshtein_distance
 
 def train_class_batch(model, samples, target, criterion):
     # print("train_class_batch")
@@ -27,7 +32,33 @@ def train_class_batch(model, samples, target, criterion):
 
 def lta_metric(out_actions, target_actions):
 
-    pass
+    """
+        Args:
+        out_actions: list[Tensor: B,num_class] of length Z
+        target_actions: list[Tensor: B] of length Z
+
+    """
+
+    out_actions = [torch.argmax(action, dim=1) for action in out_actions] # list[Tensor: B] of length Z
+    out_actions = torch.stack(out_actions, dim=0).transpose(0,1) # (B, Z)
+    out_actions_lst = out_actions.tolist()
+    target_actions = torch.stack(target_actions, dim=0).transpose(0,1) # (B, Z)
+    target_actions_lst = target_actions.tolist()
+
+    B, Z = out_actions.shape
+    unreduced_score = 0.
+    action_pred_accuracy = []
+    # compute action classfication accuracy
+    for i in range(Z):
+        class_acc = (out_actions[:, i] == target_actions[:, i]).float().mean()
+        action_pred_accuracy.append(class_acc)
+    
+    # compute edit distance
+    for i in range(B):
+        unreduced_score += normalized_damerau_levenshtein_distance(out_actions_lst[i], target_actions_lst[i])
+    score = unreduced_score / B
+
+    return score, action_pred_accuracy
 
 
 def get_loss_scale_for_deepspeed(model):
@@ -39,7 +70,10 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
                     mixup_fn: Optional[Mixup] = None, log_writer=None,
                     start_steps=None, lr_schedule_values=None, wd_schedule_values=None,
-                    num_training_steps_per_epoch=None, update_freq=None):
+                    num_training_steps_per_epoch=None, update_freq=None,
+                    head_type = "varant",
+                    ):
+
     model.train(True)
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -53,8 +87,7 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     else:
         optimizer.zero_grad()
 
-
-    for data_iter_step, (samples, targets, flows, _, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (samples, flows, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
             continue
@@ -76,12 +109,13 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         # nouns = nouns.to(device, non_blocking=False)
         # targets = [verbs, nouns]
 
-        targets = targets.to(device, non_blocking=False) # verb or noun, depends on dataset
-
-        # if mixup_fn is not None:
-        #     samples, targets = mixup_fn(samples, targets)
+        targets = [target.to(device, non_blocking=False) for target in targets] # verb or noun, depends on dataset
+ 
+        if mixup_fn is not None:
+            samples, targets = mixup_fn(samples, targets)
             # print(samples.shape, samples.device, targets[0].device, targets[1].device)
 
+        
         if loss_scaler is None:
             # print("loss scaler is None")
             samples = samples.half()
@@ -117,28 +151,48 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             loss_scale_value = loss_scaler.state_dict()["scale"]
 
         torch.cuda.synchronize()
-        out_next, out_cur, out_future, kld_obs_goal, kld_next_goal, kld_goal_diff, kld_future_goal, future_goal_diff = output
-
-        with torch.no_grad():
-            verb, noun = targets
-            if criterion.task == "lta_verb":
-                future_action = verb
-            elif criterion.task == "lta_noun":
-                future_action = noun
-
-        # compute metrics for action anticipation
-        out_action =[out_cur, out_next, *out_future]
-        result = lta_metric(out_action, future_action)
-        # correct_action += torch.sum(torch.argmax(out_next,1) == next_action).item()
 
         metric_logger.update(loss=loss_value)
-        metric_logger.update(kld_obs_goal=kld_obs_goal)
-        metric_logger.update(kld_next_goal=kld_next_goal)
-        metric_logger.update(kld_goal_diff=kld_goal_diff)
-        metric_logger.update(kld_future_goal=kld_future_goal)
-        metric_logger.update(future_goal_diff=future_goal_diff)
 
-        metric_logger.update(metric=result)
+        if head_type == "varant":
+            out_cur, out_future, kld_obs_goal, kld_next_goal, kld_goal_diff, kld_future_goal, kld_future_goal_dis = output
+            metric_logger.update(kld_obs_goal=kld_obs_goal)
+            metric_logger.update(kld_next_goal=kld_next_goal)
+            metric_logger.update(kld_goal_diff=kld_goal_diff)
+            metric_logger.update(kld_future_goal=kld_future_goal)
+            metric_logger.update(kld_future_goal_dis=kld_future_goal_dis)
+
+            out_action =[out_cur, *out_future]
+        elif head_type == "baseline":
+            out_action = output
+
+
+        if mixup_fn is None:
+            # compute metrics for action anticipation
+            
+            DL_edit_distance, action_pred_acc = lta_metric(out_action, targets)
+
+            metric_logger.update(DL_edit_distance=DL_edit_distance)
+            metric_logger.update(action_pred_acc_0=action_pred_acc[0])
+            metric_logger.update(action_pred_acc_1=action_pred_acc[1])
+            metric_logger.update(action_pred_acc_2=action_pred_acc[2])
+            metric_logger.update(action_pred_acc_3=action_pred_acc[3])
+            metric_logger.update(action_pred_acc_4=action_pred_acc[4])
+            metric_logger.update(action_pred_acc_5=action_pred_acc[5])
+            metric_logger.update(action_pred_acc_6=action_pred_acc[6])
+            metric_logger.update(action_pred_acc_7=action_pred_acc[7])
+            metric_logger.update(action_pred_acc_8=action_pred_acc[8])
+            metric_logger.update(action_pred_acc_9=action_pred_acc[9])
+            metric_logger.update(action_pred_acc_10=action_pred_acc[10])
+            metric_logger.update(action_pred_acc_11=action_pred_acc[11])
+            metric_logger.update(action_pred_acc_12=action_pred_acc[12])
+            metric_logger.update(action_pred_acc_13=action_pred_acc[13])
+            metric_logger.update(action_pred_acc_14=action_pred_acc[14])
+            metric_logger.update(action_pred_acc_15=action_pred_acc[15])
+            metric_logger.update(action_pred_acc_16=action_pred_acc[16])
+            metric_logger.update(action_pred_acc_17=action_pred_acc[17])
+            metric_logger.update(action_pred_acc_18=action_pred_acc[18])
+            metric_logger.update(action_pred_acc_19=action_pred_acc[19])
 
         metric_logger.update(loss_scale=loss_scale_value)
 
@@ -160,13 +214,15 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if log_writer is not None:
             log_writer.update(loss=loss_value, head="loss")
 
-            log_writer.update(kld_obs_goal=kld_obs_goal, head="loss")
-            log_writer.update(kld_next_goal=kld_next_goal, head="loss")
-            log_writer.update(kld_goal_diff=kld_goal_diff, head="loss")
-            log_writer.update(kld_future_goal=kld_future_goal, head="loss")
-            log_writer.update(future_goal_diff=future_goal_diff, head="loss")
-           
-            log_writer.update(metric=result, head="loss")
+            if head_type == "varant":
+                log_writer.update(kld_obs_goal=kld_obs_goal, head="loss")
+                log_writer.update(kld_next_goal=kld_next_goal, head="loss")
+                log_writer.update(kld_goal_diff=kld_goal_diff, head="loss")
+                log_writer.update(kld_future_goal=kld_future_goal, head="loss")
+                log_writer.update(kld_future_goal_dis=kld_future_goal_dis, head="loss")
+
+            if mixup_fn is None:
+                log_writer.update(DL_edit_distance=DL_edit_distance, head="loss")
 
             log_writer.update(loss_scale=loss_scale_value, head="opt")
             log_writer.update(lr=max_lr, head="opt")
@@ -192,7 +248,6 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('min_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    metric_logger.add_meter("metric", utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
@@ -303,7 +358,7 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def validation_one_epoch(data_loader, model, device, criterion):
+def validation_one_epoch(data_loader, model, device, criterion, task):
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Val:'
@@ -313,34 +368,86 @@ def validation_one_epoch(data_loader, model, device, criterion):
 
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
-        target = batch[1]
-        flows = batch[2]
+        flows = batch[1]
+        targets = batch[2]
 
         videos = videos.to(device, non_blocking=True)
         if flows is not None:
             flows = flows.to(device, non_blocking=True)
 
-        target = target.to(device, non_blocking=True)
+        if "lta" in task: # [lta_verb, lta_noun]
+            targets = [target.to(device, non_blocking=False) for target in targets] # verb or noun, depends on dataset
+        else:
+            targets = targets.to(device, non_blocking=True)
 
         # compute output
         with torch.cuda.amp.autocast():
             if flows is not None:
                 output = model(videos, flows)
-                loss = criterion(output, target)
+                loss = criterion(output, targets)
             else:
                 output = model(videos)
-                loss = criterion(output, target)
+                loss = criterion(output, targets)
 
         batch_size = videos.shape[0]
         metric_logger.update(loss=loss.item())
 
-        if output.shape[1] > 5:
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
-            metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-            metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
-        else:
-            acc1 = accuracy(output, target, topk=(1,))[0]
-            metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+        if "lta" in task: # [lta_verb, lta_noun]
+
+            if criterion.head_type == "varant":
+                out_cur, out_future, kld_obs_goal, kld_next_goal, kld_goal_diff, kld_future_goal, kld_future_goal_dis = output
+                out_action =[out_cur, *out_future]
+
+                metric_logger.update(kld_obs_goal=kld_obs_goal)
+                metric_logger.update(kld_next_goal=kld_next_goal)
+                metric_logger.update(kld_goal_diff=kld_goal_diff)
+                metric_logger.update(kld_future_goal=kld_future_goal)
+                metric_logger.update(kld_future_goal_dis=kld_future_goal_dis)
+
+            else:
+                out_action = output
+
+            # compute metrics for action anticipation
+            DL_edit_distance, action_pred_acc = lta_metric(out_action, targets)
+
+            metric_logger.update(DL_edit_distance=DL_edit_distance)
+
+            metric_logger.update(action_pred_acc_0=action_pred_acc[0])
+            metric_logger.update(action_pred_acc_1=action_pred_acc[1])
+            metric_logger.update(action_pred_acc_2=action_pred_acc[2])
+            metric_logger.update(action_pred_acc_3=action_pred_acc[3])
+            metric_logger.update(action_pred_acc_4=action_pred_acc[4])
+            metric_logger.update(action_pred_acc_5=action_pred_acc[5])
+            metric_logger.update(action_pred_acc_6=action_pred_acc[6])
+            metric_logger.update(action_pred_acc_7=action_pred_acc[7])
+            metric_logger.update(action_pred_acc_8=action_pred_acc[8])
+            metric_logger.update(action_pred_acc_9=action_pred_acc[9])
+
+            metric_logger.update(action_pred_acc_10=action_pred_acc[10])
+            metric_logger.update(action_pred_acc_11=action_pred_acc[11])
+            metric_logger.update(action_pred_acc_12=action_pred_acc[12])
+            metric_logger.update(action_pred_acc_13=action_pred_acc[13])
+            metric_logger.update(action_pred_acc_14=action_pred_acc[14])
+            metric_logger.update(action_pred_acc_15=action_pred_acc[15])
+            metric_logger.update(action_pred_acc_16=action_pred_acc[16])
+            metric_logger.update(action_pred_acc_17=action_pred_acc[17])
+            metric_logger.update(action_pred_acc_18=action_pred_acc[18])
+            metric_logger.update(action_pred_acc_19=action_pred_acc[19])
+
+            score = DL_edit_distance
+
+        elif task == "oscc" or task == "pnr":
+            if output.shape[1] > 5:
+                acc1, acc5 = accuracy(output, targets, topk=(1, 5))
+                metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+                metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+            else:
+                acc1 = accuracy(output, targets, topk=(1,))[0]
+                metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+            
+            score = acc1.item()
+
+        metric_logger.meters["score"].update(score, n=batch_size)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

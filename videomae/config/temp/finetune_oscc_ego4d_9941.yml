@@ -1,10 +1,10 @@
-batch_size: 8
+batch_size: 12
 epochs: 100
 update_freq: 1
 save_ckpt_freq: 10
 
 # Model parameters
-model: 'vit_twohead_ts_rgb_base_patch16_224'
+model: 'oscc_vit_base_patch16_224'
 tubelet_size: 2
 input_size: 224
 
@@ -95,7 +95,7 @@ cfg:
   SAVE_AS_ZIP: True                # save frames in zip file for efficient data loading
   CLIP_LEN_SEC: 8                  # Duration time in second of clip
   SAMPLING_FPS: 2                  # Sampled frames per second for training
-  num_frames: 16
+  NUM_FRAMES: 16
 
   MEAN: [0.485, 0.456, 0.406]
   STD: [0.229, 0.224, 0.225]
@@ -104,7 +104,7 @@ cfg:
   short_side_size: 256
   input_size: 224
   # train
-  repeat_sample: 3
+  repeat_sample: 1
   # train augmentation
   auto_augment: 'rand-m7-n4-mstd0.5-inc1'
   rand_erase_count: 1

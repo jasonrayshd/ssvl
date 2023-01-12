@@ -404,7 +404,7 @@ class Epickitchens(torch.utils.data.Dataset):
         )
 
         frames, *flows = data  # list of pil, [list of pil, list of pil]
-        frames, flows, mask = self.pretrain_transform((frames, flows)) # frames shape: C*T, H, W
+        frames, flows = self.pretrain_transform((frames, flows)) # frames shape: C*T, H, W
         try:
             frames = frames.view((self.cfg.DATA.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1) # 3, num_frames, H, W
         except Exception as e:
@@ -447,11 +447,9 @@ class Epickitchens(torch.utils.data.Dataset):
 
         if self.cfg.DATA.REPEATED_SAMPLING > 0:
             frames = [frames for i in range(int(self.cfg.DATA.REPEATED_SAMPLING))]
-            mask = [mask for i in range(int(self.cfg.DATA.REPEATED_SAMPLING))]
             flows = [flows for i in range(int(self.cfg.DATA.REPEATED_SAMPLING))]
 
             frames = torch.stack(frames, dim=0)
-            mask = np.stack(mask, axis=0)
             flows = torch.stack(flows, dim=0)
 
         # print(frames.shape, mask.shape, flows.shape)
@@ -460,7 +458,7 @@ class Epickitchens(torch.utils.data.Dataset):
         #     # if do not use flow images
         #     return frames, mask, label, index, metadata
         # else:
-        return frames, mask, flows, label, index, metadata
+        return frames, flows, label, index, metadata
 
     def __len__(self):
         return len(self._video_records)

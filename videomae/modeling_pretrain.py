@@ -565,7 +565,7 @@ class PretrainMultiModalEncoder(nn.Module):
         self.num_classes = num_classes
         self.head = nn.Linear(self.embed_dim, num_classes)
 
-    def forward_features(self, rgb, flow, mask):
+    def forward_features(self, rgb, flow, rgb_mask, flow_mask):
         """
             rgb:  torch.Tensor,  B, 3, T, H, W
             flow: torch.Tensor,  B, 2, T//2, H, W
@@ -584,8 +584,8 @@ class PretrainMultiModalEncoder(nn.Module):
 
         # x2 = torch.cat([x_rgb, x_flow], dim=1)
 
-        x_rgb_vis = x_rgb[~mask].reshape(B, -1, C) # ~mask means visible
-        x_flow_vis = x_flow[~mask].reshape(B, -1, C) # ~mask means visible
+        x_rgb_vis = x_rgb[~rgb_mask].reshape(B, -1, C) # ~mask means visible
+        x_flow_vis = x_flow[~flow_mask].reshape(B, -1, C) # ~mask means visible
 
         expand_global_embed1 = self.global_embed1.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device)
         expand_global_embed2 = self.global_embed2.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device)
@@ -606,8 +606,8 @@ class PretrainMultiModalEncoder(nn.Module):
 
         return token_dict
 
-    def forward(self, rgb, flow, mask):
-        token_dict = self.forward_features(rgb, flow, mask)
+    def forward(self, rgb, flow, rgb_mask, flow_mask):
+        token_dict = self.forward_features(rgb, flow, rgb_mask, flow_mask)
 
         return token_dict
 
@@ -976,9 +976,9 @@ class PretrainMultiModalTransformer(nn.Module):
         "global_embed1", "global_embed2",
         }
 
-    def forward(self, rgb, flow, mask, all_token=False):
+    def forward(self, rgb, flow, rgb_mask, flow_mask, all_token=False):
         # _, _, T, _, _ = x.shape
-        token_dict = self.encoder(rgb, flow, mask) 
+        token_dict = self.encoder(rgb, flow, rgb_mask, flow_mask) 
 
         N1 = token_dict["split_point"]
         x1, x2 = token_dict["tokens"] # [B, 2*N_vis, C_e]
@@ -998,8 +998,10 @@ class PretrainMultiModalTransformer(nn.Module):
         # but shuffle the pos embedding accorddingly.
         # expand_mask = torch.cat([mask, mask], dim=0)
         expand_pos_embed = self.pos_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device).clone().detach()
-        pos_emd_vis = expand_pos_embed[~mask].reshape(B//2, -1, C)
-        pos_emd_mask = expand_pos_embed[mask].reshape(B//2, -1, C)
+        rgb_pos_emd_vis = expand_pos_embed[~rgb_mask].reshape(B//2, -1, C)
+        rgb_pos_emd_mask = expand_pos_embed[rgb_mask].reshape(B//2, -1, C)
+        flow_pos_emd_vis = expand_pos_embed[~flow_mask].reshape(B//2, -1, C)
+        flow_pos_emd_mask = expand_pos_embed[flow_mask].reshape(B//2, -1, C)
 
         intra_rgb_vis, cross_flow_vis = rgb_vis[:B//2], rgb_vis[B//2:]
         intra_flow_vis, cross_rgb_vis = flow_vis[:B//2], flow_vis[B//2:]
@@ -1015,9 +1017,9 @@ class PretrainMultiModalTransformer(nn.Module):
 
         # cross_rgb_full = torch.cat([cross_rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
         # cross_flow_full = torch.cat([cross_flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
-        cross_full = torch.cat([cross_rgb_vis + pos_emd_vis, cross_flow_vis + pos_emd_vis], dim=1)
-        intra_rgb_full = torch.cat([intra_rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
-        intra_flow_full = torch.cat([intra_flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
+        cross_full = torch.cat([cross_rgb_vis + rgb_pos_emd_vis, cross_flow_vis + rgb_pos_emd_vis], dim=1)
+        intra_rgb_full = torch.cat([intra_rgb_vis + rgb_pos_emd_vis, self.rgb_mask_token + rgb_pos_emd_vis], dim=1)    # [2*B, N, C_d]
+        intra_flow_full = torch.cat([intra_flow_vis + flow_pos_emd_vis, self.flow_mask_token + flow_pos_emd_vis], dim=1) # [2*B, N, C_d]
 
         cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
         cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]

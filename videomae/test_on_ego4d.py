@@ -7,6 +7,7 @@ import torch
 import torch.backends.cudnn as cudnn
 import json
 import os
+import re
 from functools import partial
 from pathlib import Path
 from collections import OrderedDict
@@ -132,7 +133,7 @@ def main(args):
     else:
         flow_extractor = None
 
-    dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args, flow_extractor=flow_extractor)
+    dataset_test, num_classes = build_dataset(mode="test_unannotated", args=args, flow_extractor=flow_extractor)
     if args.dist_eval:
         sampler_test = torch.utils.data.DistributedSampler(
             dataset_test, num_replicas=num_tasks, rank=global_rank, shuffle=False)
@@ -145,7 +146,6 @@ def main(args):
     if global_rank == 0:
         os.makedirs(args.output_dir, exist_ok=True)
         os.makedirs(args.log_dir, exist_ok=True)  
-
 
     data_loader_test = torch.utils.data.DataLoader(
         dataset_test, sampler=sampler_test,
@@ -209,11 +209,10 @@ def main(args):
 
 
 @torch.no_grad()
-def test_on_ego4d(data_loader, model, device, file):
+def test_on_ego4d(data_loader, model, device, file, task=""):
 
     # switch to evaluation mode
     model.eval()
-    final_result = []
 
     if not os.path.exists(file):
         os.mknod(file)
@@ -221,12 +220,11 @@ def test_on_ego4d(data_loader, model, device, file):
     f =  open(file, 'a+')
 
     for batch in tqdm(data_loader):
-        # print(len(batch))
-
+  
         videos = batch[0]
         flows = batch[1]
-        info = batch[2]
-        frame_idx = batch[3]
+        info = batch[2]       # information of processed clip
+        frame_idx = batch[3]  # sampled frame index
 
         # print(videos.shape)
         batch_size = videos.shape[0]
@@ -240,24 +238,170 @@ def test_on_ego4d(data_loader, model, device, file):
                 output = model(videos)
 
         for i in range(batch_size):
+            
+            fileio_str = ""
+            if task == "oscc" or task == "pnr":
 
-            if isinstance(output, tuple):
-                string = "{} {} {} {} {}\n".format(info[i]["unique_id"],
-                                                    str(output[0].data[i].cpu().numpy().tolist()),
-                                                    str(output[1].data[i].cpu().numpy().tolist()),
-                                                    str(info[i]["crop"]),
+                id = info[i]["unique_id"]
+                idx = info[i]["crop"]
+
+                output_str = ""
+                if not isinstance(output, tuple):
+                    output_str = str(output.data[i].cpu().tolist())
+                else:
+                    for entry in output:
+                        output_str += str( entry.data[i].cpu().tolist() )              
+
+                fileio_str = "id:{},output:{},idx:{},frame_idx:{}\n".format(id,
+                                                    output_str,
+                                                    str(idx),
                                                     str(frame_idx[i].tolist()),
                                                     )
-            else:
-                string = "{} {} {} {}\n".format(info[i]["unique_id"],
-                                                    str(output.data[i].cpu().numpy().tolist()),
-                                                    str(info[i]["crop"]),
+
+            elif "lta" in task:
+
+                id = info[i]["unique_id"]
+                idx = info[i]["crop"]
+                
+
+                output_str = ""
+                if not isinstance(output, tuple):
+                    output_str = str(output.data[i].cpu().tolist())
+                else:
+                    for entry in output:
+                        output_str += str( entry.data[i].cpu().tolist() )              
+
+                fileio_str = "id:{},output:{},idx:{},frame_idx:{}\n".format(id,
+                                                    output_str,
+                                                    str(idx),
                                                     str(frame_idx[i].tolist()),
                                                     )
 
-            f.write(string)
+            
+            f.write(fileio_str)
 
     f.close()
+
+
+def merge_result_lta(path_lst, output_path, annotation_file):
+    """
+        Args:
+            path_lst: list[str: path to model prediction files] 
+            output_path: str, path to save final merged result
+            num_crop: int, number of spatial crops for each clip in test
+            annotation_file: str, path to annotation file
+    """
+    pattern = ""
+
+    for path in path_lst:
+        raw = open(path, "r").read()
+
+
+def merge_result_oscc_pnr(path_lst, output_path, num_crop, annotation_file):
+    """
+        Args:
+            path_lst: list[str: path to model prediction files] 
+            output_path: str, path to save final merged result
+            num_crop: int, number of spatial crops for each clip in test
+            annotation_file: str, path to annotation file
+    """
+    pattern_twohead = "(.*?) \[(.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?)\] \[(.*?), (.*?)\] (\d) \[(.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?), (.*?)\]"
+    pred_dict = {}
+
+    for path in path_lst:
+        # find all results
+        raw = open(path, "r").read()
+        results = re.findall(pattern_twohead, raw)
+
+        # wash results
+        for result in results:
+            id = result[0]
+
+            loc_preds = result[1:18]
+            cls_pred = result[18:20]
+            crop_num = result[20]
+            frame_index = result[21:]
+
+            if id not in pred_dict.keys():
+                pred_dict[id] = {
+                    0:{},
+                    1:{},
+                    2:{},
+                }
+            pred_dict[id][int(crop_num)] = {
+                "loc": [float(pred) for pred in loc_preds],
+                "cls": [float(pred) for pred in cls_pred],
+                "idx": [int(idx) for idx in frame_index]
+            }
+
+    # combine results
+    final_preds = {}
+    for k,v in pred_dict.items():
+        loc = []
+        idx = []
+        cls = 0
+        for i in range(num_crop):
+            try:
+                pos = np.argmax(v[i]["loc"])
+                loc.append(pos)
+                idx.append(v[i]["idx"][pos] if pos != 16 else -1)
+                cls += np.argmax(v[i]["cls"])
+            except:
+                # in case some predictions are missing
+                print(f"{i}th crop of {k} do not exist ")
+                continue
+
+        final_preds[k] = [loc, idx, cls/num_crop]
+
+
+    # save results to json file
+
+    cls_final = []
+    for k, v in final_preds.items():
+        cls_final.append({
+            "unique_id": k,
+            "state_change": True if v[2] > 0.5 else False,
+        })
+
+    clip_rawinfo = json.load(open(annotation_file))["clips"]
+    clip_dict = {}
+
+    for clip in clip_rawinfo:
+        id = clip["unique_id"]
+        clip_dict[id] = {
+            "sf": int(clip["parent_start_frame"]),
+            "ef": int(clip["parent_end_frame"])
+        }
+
+    loc_final = []
+    for k, v in final_preds.items():
+        loc_np = np.array(v[0])
+        idx = np.array(v[1])
+
+        pnr_idx = []
+        for i in range(num_crop):
+            if idx[i] == -1:
+                continue
+            pnr_idx.append(idx[i])
+
+        # print(pnr_idx)
+        if len(pnr_idx) == 0:
+            pnr = 0.41 * (clip_dict[k]["ef"] - clip_dict[k]["sf"])
+        else:
+            pnr = sum(pnr_idx)/len(pnr_idx) - clip_dict[k]["sf"]
+
+        loc_final.append({
+            "unique_id": k,
+            "pnr_frame":  pnr
+        })
+
+
+    cls_bar = open(os.path.join(output_path, "cls_final.json"), "w")
+    cls_bar.write(json.dumps(cls_final))
+
+    loc_bar = open(os.path.join(output_path, "loc_final.json"), "w")
+    loc_bar.write(json.dumps(loc_final))
+
 
 
 

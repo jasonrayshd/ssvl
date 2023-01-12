@@ -11,6 +11,7 @@ import os
 import json
 import time
 import csv
+import random
 
 import av
 import cv2
@@ -52,7 +53,8 @@ class Ego4dBase(torch.utils.data.Dataset):
         assert mode in [
             'train',
             'val',
-            'test'
+            'test',
+            'test_unannotated'
         ], "Split `{}` not supported.".format(mode)
 
         self.mode = mode
@@ -867,6 +869,7 @@ class Ego4dFhoOscc(Ego4dBase):
             self.cfg.SAMPLING_FPS * self.cfg.CLIP_LEN_SEC
         )
         pnr_frame = info['pnr_frame']
+
         if self.mode == 'train':
             # Random clipping
             # Randomly choosing the duration of clip (between 5-8 seconds)
@@ -1059,135 +1062,138 @@ class Ego4dFhoOscc(Ego4dBase):
         return clip, flows
 
 
-class Ego4dFhoScod(Ego4dBase):
+# class Ego4dFhoScod(Ego4dBase):
 
-    def init_dataset(self):
+#     def init_dataset(self):
 
-        self.rand_brightness = self.cfg.rand_brightness # by default (0.9, 1.1)
-        self.rand_flip_prob = self.cfg.rand_flip_prob # 0.5 by default 
-        self.input_size = self.cfg.input_size
-        self.short_side_size = self.cfg.short_side_size
-        self.anno_path = os.path.join(self.cfg.ANN_DIR, f"fho_scod_{self.mode}.json")
+#         self.rand_brightness = self.cfg.rand_brightness # by default (0.9, 1.1)
+#         self.rand_flip_prob = self.cfg.rand_flip_prob # 0.5 by default 
+#         self.input_size = self.cfg.input_size
+#         self.short_side_size = self.cfg.short_side_size
+#         self.anno_path = os.path.join(self.cfg.ANN_DIR, f"fho_scod_{self.mode}.json")
 
-        self.mean = torch.tensor(self.mean).view(3,1,1,1)
-        self.std = torch.tensor(self.std).view(3,1,1,1)
+#         self.mean = torch.tensor(self.mean).view(3,1,1,1)
+#         self.std = torch.tensor(self.std).view(3,1,1,1)
 
-    def build_dataset(self):
+#     def build_dataset(self):
 
-        clips = json.load(open(self.anno_path, "r"))["clips"]
-        self.lst_dict = []
-        image_id = 1
+#         clips = json.load(open(self.anno_path, "r"))["clips"]
+#         self.lst_dict = []
+#         image_id = 1
 
-        for clip in clips:
-            data_dict = {}
-            data_dict["file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pnr_frame"]["frame_number"])+".jpeg")
-            data_dict["pre_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pre_frame"]["frame_number"])+".jpeg")
-            data_dict["post_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["post_frame"]["frame_number"])+".jpeg")
-            data_dict["height"] = clip["pnr_frame"]["height"]
-            data_dict["width"] = clip["pnr_frame"]["width"]
-            data_dict["image_id"] = image_id
-            data_dict["annotations"] = []
+#         for clip in clips:
+#             data_dict = {}
+#             data_dict["file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pnr_frame"]["frame_number"])+".jpeg")
+#             data_dict["pre_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pre_frame"]["frame_number"])+".jpeg")
+#             data_dict["post_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["post_frame"]["frame_number"])+".jpeg")
+#             data_dict["height"] = clip["pnr_frame"]["height"]
+#             data_dict["width"] = clip["pnr_frame"]["width"]
+#             data_dict["image_id"] = image_id
+#             data_dict["annotations"] = []
 
-            if self.mode == "test":
-                image_id += 1
-                self.lst_dict.append(data_dict)
-                continue
+#             if self.mode == "test":
+#                 image_id += 1
+#                 self.lst_dict.append(data_dict)
+#                 continue
 
-            for bbox in clip["pnr_frame"]["bbox"]:
+#             for bbox in clip["pnr_frame"]["bbox"]:
 
-                if bbox["object_type"] == "object_of_change":
-                    data_dict["annotations"].append({
-                        "segmentation": [],
-                        "category_id": 1,
-                        "bbox": [bbox["bbox"]["x"], bbox["bbox"]["y"], bbox["bbox"]["width"], bbox["bbox"]["height"]],
-                        "bbox_mode": 1, # XYWH_ABS
-                        "iscrowd": 0,
-                    })
+#                 if bbox["object_type"] == "object_of_change":
+#                     data_dict["annotations"].append({
+#                         "segmentation": [],
+#                         "category_id": 1,
+#                         "bbox": [bbox["bbox"]["x"], bbox["bbox"]["y"], bbox["bbox"]["width"], bbox["bbox"]["height"]],
+#                         "bbox_mode": 1, # XYWH_ABS
+#                         "iscrowd": 0,
+#                     })
 
-            image_id += 1
-            self.lst_dict.append(data_dict)
+#             image_id += 1
+#             self.lst_dict.append(data_dict)
 
-    def init_transformation(self):
-        if self.mode == "train":
-            # See "Data Augmentation" tutorial for details usage
-            self.data_transform = detection_transform.AugmentationList([
-                        detection_transform.RandomBrightness(*self.rand_brightness),
-                        detection_transform.RandomFlip(prob=self.rand_flip_prob),
-                        detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
-                        # T.RandomCrop("absolute", (224, 224))
-                        detection_transform.Resize((self.input_size, self.input_size))
-                    ])
-        else:
-            self.data_transform = detection_transform.AugmentationList([
-                        detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
-                        # T.CenterCrop("absolute", (224, 224))
-                        detection_transform.Resize((self.input_size, self.input_size))
-                    ])
+#     def init_transformation(self):
+#         if self.mode == "train":
+#             # See "Data Augmentation" tutorial for details usage
+#             self.data_transform = detection_transform.AugmentationList([
+#                         detection_transform.RandomBrightness(*self.rand_brightness),
+#                         detection_transform.RandomFlip(prob=self.rand_flip_prob),
+#                         detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
+#                         # T.RandomCrop("absolute", (224, 224))
+#                         detection_transform.Resize((self.input_size, self.input_size))
+#                     ])
+#         else:
+#             self.data_transform = detection_transform.AugmentationList([
+#                         detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
+#                         # T.CenterCrop("absolute", (224, 224))
+#                         detection_transform.Resize((self.input_size, self.input_size))
+#                     ])
  
-    def __getitem__(self, index):
+#     def __getitem__(self, index):
 
-        dataset_dict = self.lst_dict[index]
-        dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
+#         dataset_dict = self.lst_dict[index]
+#         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
 
-        image = self._load_frame(dataset_dict["file_name"])
-        pre_image = self._load_frame(dataset_dict["pre_file_name"])
-        post_image = self._load_frame(dataset_dict["post_file_name"])
-
-
-        auginput = detection_transform.AugInput(image)
-        transform = self.data_transform(auginput)
-        image = torch.from_numpy(auginput.image.transpose(2, 0, 1).copy())
-        pre_image = torch.from_numpy(transform.apply_image(pre_image).transpose(2, 0, 1).copy())
-        post_image = torch.from_numpy(transform.apply_image(post_image).transpose(2, 0, 1).copy())
-
-        # random pick combination of pnr frame with pre/post frame
-        _p = random.random()
-        vit_input = torch.stack([pre_image, image.clone()], dim=0) if _p > 0.5 else torch.stack([image.clone(), post_image], dim=0)
-        vit_input = vit_input.permute(1, 0, 2, 3) / 255.0 # C, T, H, W
-
-        vit_input = (vit_input - self.mean) / self.std
-
-        annos = [
-            detection_utils.transform_instance_annotations(annotation, [transform], image.shape[1:])
-            for annotation in dataset_dict.pop("annotations")
-        ]
-        annos = detection_utils.annotations_to_instances(annos, image.shape[1:])
-
-        return image, vit_input, annos, dataset_dict
+#         image = self._load_frame(dataset_dict["file_name"])
+#         pre_image = self._load_frame(dataset_dict["pre_file_name"])
+#         post_image = self._load_frame(dataset_dict["post_file_name"])
 
 
-    def visualize(np_rgb_image, xyxy_abs_box, name="detection_vis.png"):
-        # For debugging  
+#         auginput = detection_transform.AugInput(image)
+#         transform = self.data_transform(auginput)
+#         image = torch.from_numpy(auginput.image.transpose(2, 0, 1).copy())
+#         pre_image = torch.from_numpy(transform.apply_image(pre_image).transpose(2, 0, 1).copy())
+#         post_image = torch.from_numpy(transform.apply_image(post_image).transpose(2, 0, 1).copy())
 
-        """
-            np_rgb_image: numpy.ndarray, in rgb format
-            xyxy_abs_box: list, length is 4
+#         # random pick combination of pnr frame with pre/post frame
+#         _p = random.random()
+#         vit_input = torch.stack([pre_image, image.clone()], dim=0) if _p > 0.5 else torch.stack([image.clone(), post_image], dim=0)
+#         vit_input = vit_input.permute(1, 0, 2, 3) / 255.0 # C, T, H, W
+
+#         vit_input = (vit_input - self.mean) / self.std
+
+#         annos = [
+#             detection_utils.transform_instance_annotations(annotation, [transform], image.shape[1:])
+#             for annotation in dataset_dict.pop("annotations")
+#         ]
+#         annos = detection_utils.annotations_to_instances(annos, image.shape[1:])
+
+#         return image, vit_input, annos, dataset_dict
+
+
+#     def visualize(np_rgb_image, xyxy_abs_box, name="detection_vis.png"):
+#         # For debugging  
+
+#         """
+#             np_rgb_image: numpy.ndarray, in rgb format
+#             xyxy_abs_box: list, length is 4
         
-        """
+#         """
 
-        from detectron2.utils.visualizer import Visualizer
-        from detectron2.structures import Instances
+#         from detectron2.utils.visualizer import Visualizer
+#         from detectron2.structures import Instances
 
-        H, W, C = np_rgb_image.shape
-        instance = Instances((H, W))
-        instance.pred_boxes = torch.tensor([xyxy_abs_box]) # the box should be XYXY_ABS
-        instance.scores = torch.tensor([1])
-        instance.pred_classes = torch.tensor([1])
+#         H, W, C = np_rgb_image.shape
+#         instance = Instances((H, W))
+#         instance.pred_boxes = torch.tensor([xyxy_abs_box]) # the box should be XYXY_ABS
+#         instance.scores = torch.tensor([1])
+#         instance.pred_classes = torch.tensor([1])
 
-        vis = Visualizer(np_rgb_image, instance_mode=1)
-        vis_result = vis.draw_instance_predictions(instance)
+#         vis = Visualizer(np_rgb_image, instance_mode=1)
+#         vis_result = vis.draw_instance_predictions(instance)
 
-        vis_result.save(name)
+#         vis_result.save(name)
 
 
 class Ego4dFhoLTA(Ego4dBase):
 
     def init_dataset(self):
+
         self.anno_path = os.path.join(
             self.cfg.ANN_DIR, "fho_lta_{}.json".format(self.mode)
         )
 
         self.source = self.cfg.FRAME_DIR_PATH
+        self.source = os.path.join(self.source , self.mode)
+
         # self.observation_time_second = self.cfg.observation_time_second
         # self.avail_frame_num = self.observation_time_second * 30
         self.short_side_size = self.cfg.short_side_size
@@ -1212,24 +1218,37 @@ class Ego4dFhoLTA(Ego4dBase):
         self.info = {}
         with open(self.anno_path, "r") as anno_fp:
             clips = json.load(anno_fp)["clips"] # list[dict]
-        
+
+        # NOTE not used for now
+        verb_freq = {} # compute frequency of each verb label
+        noun_freq = {} # compute frequency of each noun label
         for i, clip in enumerate(clips):
             clip_uid = clip["clip_uid"]
             if clip_uid not in self.info.keys():
                 self.info[clip_uid] = []
 
+            verb_label = clip.get("verb_label", -1)
+            noun_label = clip.get("noun_label", -1)
+            if verb_label not in verb_freq:
+                verb_freq[verb_label] = 0
+            if noun_label not in noun_freq:
+                noun_freq[noun_label] = 0
+
+            verb_freq[verb_label] += 1
+            noun_freq[noun_label] += 1
+
             self.info[clip_uid].append({
                 "video_uid": clip["video_uid"],
                 "clip_uid": clip["clip_uid"],
 
-                "parent_st_frame": clip["clip_parent_start_frame"],
-                "parent_end_frame": clip["clip_parent_end_frame"],
-                "clip_st_frame": clip["action_clip_start_frame"],
-                "clip_end_frame": clip["action_clip_end_frame"],
+                "clip_parent_start_frame": clip["clip_parent_start_frame"],
+                "clip_parent_end_frame": clip["clip_parent_end_frame"],
+                "action_clip_start_frame": clip["action_clip_start_frame"],
+                "action_clip_end_frame": clip["action_clip_end_frame"],
 
                 "action_idx": clip["action_idx"],
-                "verb_label": clip["verb_label"],
-                "noun_label": clip["noun_label"],
+                "verb_label": verb_label,
+                "noun_label": noun_label,
             })
 
         for clip_uid in self.info.keys():
@@ -1239,7 +1258,7 @@ class Ego4dFhoLTA(Ego4dBase):
                 self.package.append(
                     {
                         "input_clips": clips[i:i+self.input_clip_num],
-                        "forecast_clips": clips[i+self.input_clip_num, i+self.input_clip_num+self.num_action_predict ]
+                        "forecast_clips": clips[i+self.input_clip_num: i+self.input_clip_num+self.num_action_predict ]
                     }
                 )
 
@@ -1247,13 +1266,7 @@ class Ego4dFhoLTA(Ego4dBase):
 
         if self.mode == "train":
             # See "Data Augmentation" tutorial for details usage
-            self.data_transform = video_transforms.Compose([
-                video_transforms.ShorterSideResize(self.short_side_size),
-                video_transforms.CenterCrop(size=(self.input_size, self.input_size)),
-                video_transforms.RandomHorizontalFlip(),
-                volume_transforms.ClipToTensor(),
-                video_transforms.Normalize(mean=self.mean, std=self.std),
-            ])
+            self.data_transform = self.train_transformation
 
         elif self.mode == 'val':
             self.data_transform = video_transforms.Compose([
@@ -1263,12 +1276,65 @@ class Ego4dFhoLTA(Ego4dBase):
                 video_transforms.Normalize(mean=self.mean, std=self.std),
             ])
 
-        elif self.mode == 'test':
+        elif 'test' in self.mode:
             self.data_transform = video_transforms.Compose([
                 video_transforms.ShorterSideResize(self.short_side_size),
+                video_transforms.CenterCrop(size=(self.input_size, self.input_size)),
                 volume_transforms.ClipToTensor(),
                 video_transforms.Normalize(mean=self.mean, std=self.std),
             ])
+
+    def train_transformation(self, clip_np):
+
+        spatial_crop = video_transforms.Compose([
+                video_transforms.ShorterSideResize(self.short_side_size),
+                video_transforms.RandomCrop(size=(self.input_size, self.input_size)),
+                video_transforms.RandomHorizontalFlip(),
+        ])
+
+        rand_aug = video_transforms.create_random_augment(
+            input_size=(self.input_size, self.input_size),
+            auto_augment= "rand-m7-n4-mstd0.5-inc1",
+            interpolation= "bicubic",
+        )
+
+        to_tensor = video_transforms.Compose([
+            volume_transforms.ClipToTensor(),
+            video_transforms.Normalize(mean=self.mean, std=self.std),
+        ])
+
+        clip_np = spatial_crop(clip_np) # numpy
+        clip_pil = [Image.fromarray(_clip) for _clip in clip_np]
+        clip_pil = rand_aug(clip_pil)
+        clip_tensor = to_tensor(clip_pil)
+
+        return clip_tensor
+
+    def sample_frame(self, st_frame, end_frame, strategy="uniform"):
+
+        num_frame = self.num_frame
+
+        if strategy == "uniform":
+            frames = np.linspace(st_frame, end_frame, num_frame).astype(int)
+
+        elif strategy == "tsn":
+            segments = num_frame
+            intervals = np.linspace(st_frame, end_frame, segments+1).astype(int)
+            # print(intervals)
+            frames = []
+            for i in range(1, len(intervals)):
+
+                sampled_frame = random.randint(intervals[i-1], intervals[i])
+                frames.append(sampled_frame)
+
+        elif strategy == "limited_range":
+            pass
+
+        else:
+            raise NotImplementedError(f"unkown sampling strategy for lta dataset:{strategy}")
+
+        return frames
+
 
     def sample_frames_from_clip(self, clip_info):
         parent_st_frame = clip_info["clip_parent_start_frame"]
@@ -1278,17 +1344,17 @@ class Ego4dFhoLTA(Ego4dBase):
         st_frame = parent_st_frame + clip_st_frame
         end_frame = parent_st_frame + clip_end_frame
 
-        intervals = np.linspace(st_frame, end_frame, self.num_frame).astype(int)
+        intervals = self.sample_frame(st_frame, end_frame, strategy="tsn")
 
         frames = []
-        with zipfile.ZipFile(os.path.join(self.source, clip_info["clip_uid"], clip_info["clip_uid"]+"_%05d.zip".format(clip_info["action_idx"]) ) ,"r") as zipfp:
+        with zipfile.ZipFile(os.path.join(self.source, clip_info["clip_uid"], clip_info["clip_uid"]+"_{:05d}.zip".format(clip_info["action_idx"]) ) ,"r") as zipfp:
             for frame_idx in intervals:
-                frame_fp = zipfp.open("%010d.jpg".format(frame_idx))
+                frame_fp = zipfp.open("{:010d}.jpg".format(frame_idx))
                 pil = Image.open( frame_fp)
                 frame = np.array(pil)
                 frames.append(frame)
 
-        return frames
+        return frames, intervals
 
     def __getitem__(self, index):
 
@@ -1298,17 +1364,21 @@ class Ego4dFhoLTA(Ego4dBase):
         forecast_clips = info["forecast_clips"]
 
         frames = [] # list of numpy array
+        frame_idx_lst = []
         target = [] # list of int
-        for clip_info in input_clips:
-            frames.extend( self.sample_frames_from_clip(clip_info) )
 
+        for clip_info in input_clips:
+            sampled_frames, frame_index = self.sample_frames_from_clip(clip_info)
+            frames.extend(sampled_frames)
+            frame_idx_lst.extend(frame_index)
+
+        target = [input_clips[-1]["verb_label"]] if self.cfg.task == "lta_verb" else input_clips[-1]["noun_label"]
         for clip_info in forecast_clips:
-            target.append(clip_info["verb_label"])
-            target.append(clip_info["noun_label"])
+            target.append( clip_info["verb_label"] if self.cfg.task == "lta_verb" else clip_info["noun_label"])
 
         frames = self.data_transform(frames)
         flows = None
-
+ 
         return frames, flows, target
 
     def __len__(self):
@@ -1595,8 +1665,8 @@ def get_basic_config_for(task):
     elif task == "lta":
 
         cfg = {
-            "ANN_DIR": "/mnt/shuang/Data/ego4d/data/v1/annotations",
-            "FRAME_DIR_PATH": "/mnt/shuang/Data/ego4d/preprocessed_data/egoclip",
+            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
+            "FRAME_DIR_PATH": "/data/shared/ssvl/ego4d/v1/fho_lta/test",
             "NUM_FRAMES": 16,
 
             "MEAN":[0.485, 0.456, 0.406],
@@ -1614,6 +1684,7 @@ def get_basic_config_for(task):
             "test_temporal_crop_num": 1,
 
             "load_flow": "local",
+            "task": "lta"
         }
     return Namespace(**cfg)
 
@@ -1622,13 +1693,13 @@ if __name__ == "__main__":
     from argparse import Namespace
 
 
-    cfg = get_basic_config_for("egoclip")
+    cfg = get_basic_config_for("lta")
     kwargs = {
-        "mode": "train",
+        "mode": "test_unannotated",
         "cfg": cfg,
         "pretrain": True,
         "flow_extractor": None,
         "pretrain_transform": None,
     }
 
-    debug_functions(Egoclip, **kwargs)
+    debug_functions(Ego4dFhoLTA, **kwargs)
