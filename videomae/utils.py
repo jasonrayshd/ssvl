@@ -3,7 +3,7 @@ import os
 import math
 import time
 import json
-from collections import defaultdict, deque
+from collections import defaultdict, deque, OrderedDict
 import datetime
 import numpy as np
 from timm.utils import get_state_dict
@@ -14,6 +14,8 @@ import torch
 import torch.distributed as dist
 from torch._six import inf
 import random
+
+from timm.data.mixup import Mixup, mixup_target
 
 from tensorboardX import SummaryWriter
 
@@ -351,13 +353,30 @@ class NativeScalerWithGradNormCount:
         if update_grad:
             if clip_grad is not None:
                 assert parameters is not None
-                self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+
+                if not isinstance(optimizer, list):
+                    self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                else:
+                    for optim in optimizer:
+                        self._scaler.unscale_(optim)  # unscale the gradients of optimizer's assigned params in-place
+
                 norm = torch.nn.utils.clip_grad_norm_(parameters, clip_grad)
             else:
-                self._scaler.unscale_(optimizer)
+                if not isinstance(optimizer, list):
+                    self._scaler.unscale_(optimizer)
+                else:
+                    for optim in optimizer:
+                        self._scaler.unscale_(optim)
+
                 norm = get_grad_norm_(parameters)
-            self._scaler.step(optimizer)
+
+            if not isinstance(optimizer, list):
+                self._scaler.step(optimizer)
+            else:
+                for optim in optimizer:
+                    self._scaler.step(optim)
             self._scaler.update()
+
         else:
             norm = None
         return norm
@@ -385,14 +404,21 @@ def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:
 
 
 def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epochs=0,
-                     start_warmup_value=0, warmup_steps=-1):
+                     start_warmup_value=0, warmup_steps=-1, strategy=""):
     warmup_schedule = np.array([])
     warmup_iters = warmup_epochs * niter_per_ep
     if warmup_steps > 0:
         warmup_iters = warmup_steps
     print("Set warmup steps = %d" % warmup_iters)
     if warmup_epochs > 0:
-        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
+        if strategy == "fixed_in_epoch":
+            warmup_schedule = np.array( [start_warmup_value * (10**i)  for i in range(warmup_epochs//2)] )
+            print(warmup_schedule)
+            warmup_schedule = np.repeat(warmup_schedule, 2)
+            warmup_schedule = np.repeat(warmup_schedule, niter_per_ep)
+            print("[ATTENTION] Using fixed learning rate within each epoch")
+        else:
+            warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
 
     iters = np.arange(epochs * niter_per_ep - warmup_iters)
     schedule = np.array(
@@ -521,25 +547,23 @@ def multiple_samples_collate(batch, fold=False):
     Returns:
         (tuple): collated data batch.
     """
-    inputs, labels, video_idx, extra_data = zip(*batch)
+    inputs, labels= zip(*batch)
     inputs = [item for sublist in inputs for item in sublist]
     labels = [item for sublist in labels for item in sublist]
-    video_idx = [item for sublist in video_idx for item in sublist]
-    inputs, labels, video_idx, extra_data = (
+    # video_idx = [item for sublist in video_idx for item in sublist]
+    inputs, labels= (
         default_collate(inputs),
         default_collate(labels),
-        default_collate(video_idx),
-        default_collate(extra_data),
+        # default_collate(video_idx),
+        # default_collate(extra_data),
     )
     if fold:
-        return [inputs], labels, video_idx, extra_data
+        return [inputs], labels
     else:
-        return inputs, labels, video_idx, extra_data
+        return inputs, labels
 
 
-
-# Codes below were edited by Jiachen Lei
-def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
+def multiple_samples_collate_fho(batch):
     """
     Collate function for repeated augmentation. Each instance in the batch has
     more than one sample.
@@ -548,85 +572,84 @@ def multiple_samples_collate_ego4d(batch, fold=False, nb_classes=-1):
     Returns:
         (tuple): collated data batch.
     """
-    inputs, target, fps, info = zip(*batch)
+    inputs, flows, target = zip(*batch)
+    # print(target)
     # print(target)
     inputs = [item for sublist in inputs for item in sublist]
+    target = [item for sublist in target for item in sublist]
 
-    if nb_classes == -1:
-        labels = [label for sublist in target for label in sublist[0]]
-        states = [state for sublist in target for state in sublist[1]]
+    inputs, target = (
+        default_collate(inputs),
+        default_collate(target),
+    )
 
-        inputs, labels, states = (
-            default_collate(inputs),
-            default_collate(labels),
-            default_collate(states),
-        )
-        if fold:
-            return [inputs], [labels, states], fps, info
-        else:
-            return inputs, [labels, states], fps, info
-
-    elif nb_classes == 2:
-        states = [item for sublist in target for item in sublist]
-        inputs, states = (
-            default_collate(inputs),
-            default_collate(states),
-        )
-        if fold:
-            return [inputs], states, fps, info
-        else:
-            return inputs , states, fps, info
-
+    if flows[0][0] is not None:
+        flows = [item for sublist in flows for item in sublist]
+        flows = default_collate(flows)
     else:
-        labels = [item for sublist in target for item in sublist]
-        inputs, labels = (
-            default_collate(inputs),
-            default_collate(labels),
-        )
-        if fold:
-            return [inputs], labels, fps, info
+        flows = None
+
+    return inputs, flows, target
+
+
+def samples_collate_fho(batch):
+
+    inputs, flows, target = zip(*batch)
+
+    if flows[0] is not None:
+        flows =  default_collate(flows)
+    else:
+        flows = None
+
+    inputs, target = (
+        default_collate(inputs),
+        default_collate(target),
+    )
+
+    return inputs, flows, target
+
+
+def filter_checkpoint_fho(checkpoint_model):
+    all_keys = list(checkpoint_model.keys())
+    new_dict = OrderedDict()
+
+    for key in all_keys:
+        if key.startswith('backbone.'):
+            new_dict[key[9:]] = checkpoint_model[key]
+        elif key.startswith('encoder.'):
+            if "rgb_patch_embed" in key:
+                new_dict[key[12:]] = checkpoint_model[key]
+            elif "flow_patch_embed" not in key:
+                # other blocks except flow_path_embed
+                new_dict[key[8:]] = checkpoint_model[key]
+            # elif "regressor" in key:
+            #     new_dict[key[8:]] = checkpoint_model[key]
+            elif "encoder.norm" in key:
+                continue
         else:
-            return inputs, labels, fps, info
+            new_dict[key] = checkpoint_model[key]
 
+    return new_dict
 
-def samples_collate_ego4d(batch):
+class LTAMixup(Mixup):
 
-    inputs, target, fps, info = zip(*batch)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-    labels = [item[0] for item in target]
-    states = [item[1] for item in target]
+    def __call__(self, x, targets):
+        """
+            Args:
+                N: number of classes
+        """
+        assert len(x) % 2 == 0, 'Batch size should be even when using this'
 
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
+        if self.mode == 'elem':
+            lam = self._mix_elem(x)
+        elif self.mode == 'pair':
+            lam = self._mix_pair(x)
+        else:
+            lam = self._mix_batch(x)
 
-    return inputs, [labels, states], fps, info
+        mixed_targets = [mixup_target(target, self.num_classes, lam, self.label_smoothing, device=x.device) for target in targets]
 
-
-def collate_func_debug_val(batch):
-    inputs, target, fps, info = zip(*batch)
-
-    labels = []
-    states = []
-    for i, item in enumerate(target):
-        try:
-            labels.append(item[0])
-            states.append(item[1])
-            if item[0] is None or item[1] is None:
-                raise Exception(f"Error occurs: {info[i]}")
-                import sys
-                sys.exit(0)
-        except:
-            raise Exception(f"Error occurs: {info[i]}")
-            import sys
-            sys.exit(0)
-
-    inputs, labels, states = (
-        default_collate(inputs),
-        default_collate(labels),
-        default_collate(states),
-    )
-
-    return inputs, [labels, states], fps, info
+        return x, mixed_targets
