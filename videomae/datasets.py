@@ -78,21 +78,20 @@ def build_dataset(mode, args, flow_extractor=None):
     num_classes = -1
 
     if args.cfg.task == "oscc" or args.cfg.task == "pnr":
-
         dataset = Ego4dFhoOscc(mode, args.cfg, pretrain=False, flow_extractor=flow_extractor)
-        
         num_classes = 2 if args.cfg.task == "oscc" else 32
 
     elif "lta" in args.cfg.task: # [lta_verb, lta_noun]
-
         dataset = Ego4dFhoLTA(mode, args.cfg, pretrain=False, flow_extractor=flow_extractor)
-       
         # some verb or noun class does not exist in training set, e.g 29
         num_classes = 115 if args.cfg.task == "lta_verb" else 478
 
     elif args.cfg.task == "hands":
-
         dataset = Ego4dFhoHands(mode, args.cfg, pretrain=False, flow_extractor=flow_extractor)
+
+    elif "egoclip" in args.cfg.task:
+        dataset = Egoclip(mode, args.cfg, pretrain=False, flow_extractor=flow_extractor)        
+        num_classes = 118 if args.cfg.task == "egoclip_verb" else 582
 
     else:
         raise NotImplementedError()

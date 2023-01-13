@@ -333,7 +333,6 @@ def main(args, ds_init):
                 prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
                 label_smoothing=args.smoothing, num_classes=num_classes)
         else:
-
             mixup_fn = Mixup(mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
                 prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
                 label_smoothing=args.smoothing, num_classes=num_classes)
@@ -508,6 +507,9 @@ def main(args, ds_init):
     elif args.cfg.task == "hands":
         criterion = HandsPredictionLoss(beta=5)
         train_fn = hands_train_one_epoch
+    elif "egoclip" in args.cfg.task:
+        criterion = torch.nn.CrossEntropyLoss()
+        train_fn = egoclip_train_one_epoch
 
     print("criterion = %s" % str(criterion))
 
@@ -517,7 +519,6 @@ def main(args, ds_init):
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-
 
     max_score = 0.0
 

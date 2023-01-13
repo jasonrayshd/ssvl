@@ -8,6 +8,7 @@ https://github.com/EGO4D/hands-and-objects/tree/main/state-change-localization-c
 
 from builtins import NotImplemented, NotImplementedError, sorted
 import os
+import re
 import json
 import time
 import csv
@@ -318,13 +319,12 @@ class Egoclip(Ego4dBase):
         self.anno_path = os.path.join(self.cfg.ANN_DIR, "new_egoclip_0.csv")
 
         self.repeat_sample = self.cfg.repeat_sample
-
-        self.test_spatial_crop_num = self.cfg.test_spatial_crop_num
-        self.test_temporal_crop_num = self.cfg.test_temporal_crop_num
-        self.test_num_clips = self.test_spatial_crop_num * self.test_temporal_crop_num
+        self.input_size = self.cfg.input_size
+        self.short_side_size = self.cfg.short_side_size
 
         self.load_flow = self.cfg.load_flow # str, [online, local]
-        assert self.load_flow == "local", "Only support load flow locally while using egoclip"
+
+        assert self.load_flow != "online", "Only support load flow locally while using egoclip"
 
     def build_dataset(self):
         """
@@ -343,6 +343,14 @@ class Egoclip(Ego4dBase):
 
             meta = row[0].split("\t")
 
+            pattern = "#C C.*?\[(\d*)\].*?\[(\d*)"
+            verb, noun = re.findall(pattern, row[0])[0]
+            verb = -1 if verb == "" else int(verb)
+            noun = -1 if noun == "" else int(noun)
+
+            if ("verb" in self.cfg.task and verb == -1) or ("noun" in self.cfg.task and noun == -1):
+                continue # skip clip with missing label in egoclip action recognition
+
             if meta[0] not in video2clipidx:
                 video2clipidx[meta[0]] = 0
             else:
@@ -357,7 +365,8 @@ class Egoclip(Ego4dBase):
                     "clip_start": meta[5],
                     "clip_end": meta[6],
                     "arration_info": "\t".join(meta[7:]),
-
+                    "verb": verb,
+                    "noun": noun,
                     "start_frame": int( float(meta[5])*30 ),
                     # NOTE 2022.11.09: end frame might do not exist due to the accuracy of float number
                     "end_frame": int( float(meta[6])*30 ),
@@ -371,22 +380,21 @@ class Egoclip(Ego4dBase):
                 self.skip_lst.append(pack)
                 continue
 
-            if self.mode == "test":
-                for idx in range(self.test_num_clips):
-                    pack["spatial_temporal_idx"] = idx
-                    self.package.append(pack)
-            else:
-               self.package.append(pack)
+            self.package.append(pack)
 
 
     def init_transformation(self):
 
         if self.pretrain:
             self.data_transform = self.kwargs["pretrain_transform"]
-            return
         else:
-            raise NotImplementedError("Egoclip dataset only supports pretraining")
-
+            self.data_transform = video_transforms.Compose([
+                video_transforms.ShorterSideResize(self.short_side_size),
+                video_transforms.CenterCrop(size=(self.input_size, self.input_size)),
+                volume_transforms.ClipToTensor(),
+                video_transforms.Normalize(mean=self.mean,
+                                            std=self.std)
+            ])
 
     def prepare_clip_frames_flows(self, info):
         """
@@ -413,8 +421,13 @@ class Egoclip(Ego4dBase):
 
         # load frame content
         frame_lst = self.load_from_zip(frame_name_lst, frame_zf_fp)
-        uflow_lst = self.load_from_zip(uflow_name_lst, flow_zf_fp, isflow=True)
-        vflow_lst = self.load_from_zip(vflow_name_lst, flow_zf_fp, isflow=True)
+
+        if self.load_flow == "local": # only load flow when needed
+            uflow_lst = self.load_from_zip(uflow_name_lst, flow_zf_fp, isflow=True)
+            vflow_lst = self.load_from_zip(vflow_name_lst, flow_zf_fp, isflow=True)
+        else:
+            uflow_lst = []
+            vflow_lst = []
 
         # post process
         frame_zf_fp.close()
@@ -525,10 +538,15 @@ class Egoclip(Ego4dBase):
             raise ValueError(msg + "," + "frame is None")
  
         frames, flows = self.data_transform((frames, flows))
-        
         frames = frames.view((self.cfg.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1)
 
-        return frames, flows
+        if self.pretrain:
+            return frames, flows
+        else:
+            label = info["verb"] if "verb" in self.cfg.task else info["noun"]
+
+            return frames, flows, label
+
 
     def __len__(self):
         return len(self.package)
