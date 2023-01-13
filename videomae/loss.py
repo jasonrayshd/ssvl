@@ -112,7 +112,23 @@ class ActionAnticipationLoss(nn.Module):
  
         return loss
 
-# if __name__ == "__main__":
+class HandsPredictionLoss(nn.Module):
+    # smoother l1 loss
+    def __init__(self, beta=5):
+    
+        super().__init__()
+        self.l1_loss = nn.L1Loss(reduction="none")
+        self.beta = beta
 
-#     loss_fn = ActionAnticipationLoss()
-#     outputs = 
+    def forward(self, output, target, mask):
+        
+        dist = self.l1_loss(output, target).mean(1)
+        
+        idx = ( dist < self.beta ).bool()
+
+        loss1 = 0.5*mask*torch.pow(output-target, 2) / self.beta
+        loss2 = mask*(dist-0.5*self.beta)
+
+        loss = loss1[idx] + loss2[~idx]
+        
+        return loss

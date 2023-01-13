@@ -1,5 +1,5 @@
 OMP_NUM_THREADS=100 python -m torch.distributed.launch \
-    --nproc_per_node=4 \
+    --nproc_per_node=1 \
     --master_port 51225 --nnodes=1  --node_rank=$1 --master_addr=$2 \
     ../run_class_finetuning.py \
     --enable_deepspeed \
@@ -7,7 +7,8 @@ OMP_NUM_THREADS=100 python -m torch.distributed.launch \
     --config $3 \
     --overwrite command-line \
     --project finetune_lta \
-    --name prek400e1600vitb_improvedA7 \
-    --wandb_id 1ccsw325
+    --name temp \
+    --debug
+    # --wandb_id 1ccsw325
     # --debug
 

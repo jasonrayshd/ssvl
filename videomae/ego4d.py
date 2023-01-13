@@ -143,6 +143,30 @@ class Ego4dBase(torch.utils.data.Dataset):
 
         return flows
 
+    def sample_frame(self, st_frame, end_frame, strategy="uniform"):
+
+        num_frame = self.num_frame
+
+        if strategy == "uniform":
+            frames = np.linspace(st_frame, end_frame, num_frame).astype(int)
+
+        elif strategy == "tsn":
+            segments = num_frame
+            intervals = np.linspace(st_frame, end_frame, segments+1).astype(int)
+            # print(intervals)
+            frames = []
+            for i in range(1, len(intervals)):
+
+                sampled_frame = random.randint(intervals[i-1], intervals[i])
+                frames.append(sampled_frame)
+
+        elif strategy == "limited_range":
+            pass
+        else:
+            raise NotImplementedError(f"unkown sampling strategy for lta dataset:{strategy}")
+
+        return frames
+
     def normalize_tensor(self, tensor, mean, std):
         """
         Normalize a given tensor by subtracting the mean and dividing the std.
@@ -1312,32 +1336,6 @@ class Ego4dFhoLTA(Ego4dBase):
 
         return clip_tensor
 
-    def sample_frame(self, st_frame, end_frame, strategy="uniform"):
-
-        num_frame = self.num_frame
-
-        if strategy == "uniform":
-            frames = np.linspace(st_frame, end_frame, num_frame).astype(int)
-
-        elif strategy == "tsn":
-            segments = num_frame
-            intervals = np.linspace(st_frame, end_frame, segments+1).astype(int)
-            # print(intervals)
-            frames = []
-            for i in range(1, len(intervals)):
-
-                sampled_frame = random.randint(intervals[i-1], intervals[i])
-                frames.append(sampled_frame)
-
-        elif strategy == "limited_range":
-            pass
-
-        else:
-            raise NotImplementedError(f"unkown sampling strategy for lta dataset:{strategy}")
-
-        return frames
-
-
     def sample_frames_from_clip(self, clip_info):
         parent_st_frame = clip_info["clip_parent_start_frame"]
         clip_st_frame = clip_info["action_clip_start_frame"]
@@ -1398,14 +1396,18 @@ class Ego4dFhoHands(Ego4dBase):
             self.cfg.ANN_DIR, "fho_hands_{}.json".format(self.mode)
         )
 
-        self.observation_time_second = self.cfg.observation_time_second
-        self.avail_frame_num = self.observation_time_second * 30
+        self.source = self.cfg.FRAME_DIR_PATH
+        self.source = os.path.join(self.source , self.mode)
 
         # train
         self.repeat_sample = self.cfg.repeat_sample
         # test
         self.test_num_clips = self.cfg.test_spatial_crop_num * self.cfg.test_temporal_crop_num
 
+        self.short_side_size = self.cfg.short_side_size
+        self.input_size = self.cfg.input_size
+        # train
+        self.num_frame = self.cfg.NUM_FRAMES
 
     def build_dataset(self):
 
@@ -1427,24 +1429,36 @@ class Ego4dFhoHands(Ego4dBase):
         with open(self.anno_path, "r") as anno_fp:
             clips = json.load(anno_fp)["clips"] # list[dict]
 
-        for i, clip in enumerate(clips):
+        for clip in clips:
 
             clip_meta = {
                 "clip_id": clip['clip_id'],
                 "clip_uid": clip['clip_uid'],
                 "video_uid": clip['video_uid'],
 
-                "idx": i,
                 "spatial_temporal_index": 0,
             }
 
-            for annot in clip['frames']:
+            for i, annot in enumerate(clip['frames']):
+                
+                if self.mode == "test":
+                    
+                    pre_45_frame = annot["pre_45"]["frame"]
+                    pre_frame = annot["pre_frame"]["frame"] if "pre_frame" in annot else -1
+                    st = max(0, pre_45_frame - max_observation_frame_num)
+                    end = pre_frame + 30 if pre_frame == -1 else pre_45_frame + 45 + 30
+                else:
+                    st = annot["action_start_frame"]
+                    end = annot["action_end_frame"]
 
+                clip_name = str(clip['clip_uid']) + "_{:05d}.zip".format(i)
                 clip_meta.update({
                     # distinguish segments in clip by index of frame pre_45
-                    "clip_name": str(clip['clip_id']) + '_' + str(annot['pre_45']['frame']-1),
-                    "action_start_frame": annot["action_start_frame"],
-                    "action_end_frame": annot["action_end_frame"],
+                    "idx": i,
+                    "clip_name": clip_name,
+                    "clip_path": os.path.join(self.source, clip["clip_uid"], clip_name),
+                    "action_start_frame": st,
+                    "action_end_frame": end,
                 })
 
                 # placeholder for the 1x20 hand gt vector (padd zero when GT is not available)
@@ -1453,7 +1467,6 @@ class Ego4dFhoHands(Ego4dBase):
                 label= [0.0]*20
                 label_mask = [0.0]*20
                 for frame_type, frame_annot in annot.items():
-    
 
                     if frame_type in frame_types2index.keys():
                         # if len(frame_annot)==2:
@@ -1492,7 +1505,7 @@ class Ego4dFhoHands(Ego4dBase):
 
         if self.mode == "train":
             # See "Data Augmentation" tutorial for details usage
-            self.data_transform = self.train_transformation
+            self.data_transform = self.train_transform
         elif self.mode == 'val':
             self.data_transform = video_transforms.Compose([
                 video_transforms.ShorterSideResize(self.short_side_size),
@@ -1506,31 +1519,52 @@ class Ego4dFhoHands(Ego4dBase):
                 volume_transforms.ClipToTensor(),
             ])
 
+
+    def sample_frames_from_clip(self, clip_info):
+
+        clip_path = clip_info["clip_path"]
+        st_frame = clip_info["action_start_frame"]
+        end_frame = clip_info["action_end_frame"]
+
+        intervals = self.sample_frame(st_frame, end_frame, strategy="tsn")
+
+        frames = []
+        with zipfile.ZipFile(clip_path ,"r") as zipfp:
+            for frame_idx in intervals:
+                try:
+                    frame_fp = zipfp.open("{:010d}.jpg".format(frame_idx))
+                except:
+                    print(clip_path, clip_info, "{:010d}.jpg".format(frame_idx))
+
+                pil = Image.open(frame_fp)
+                frame = np.array(pil)
+                frames.append(frame)
+
+        return frames, intervals
+
     def __getitem__(self, index):
 
-        info = self.package[index]
+        clip_info = self.package[index]
+    
+        label = clip_info["label"]
+        mask = clip_info["label_mask"]
 
-        print(info)
+        frames, flows = self.sample_frames_from_clip(clip_info) # list[PIL]
 
-        clip_frame_path = os.path.join( self.cfg.FRAME_DIR_PATH, info["clip_name"] )
+        frames = self.data_transform(frames) # C, T, H, W
+ 
+        if self.repeat_sample > 1:
+            frames = [frames for i in range(self.repeat_sample)]
+            flow = [flow for i in range(self.repeat_sample)]
+            label = [label for i in range(self.repeat_sample)]
+            mask = [mask for i in range(self.repeat_sample)]
 
-        # if len( os.listdir(clip_frame_path) ) < 
-
-        # frames = self.normalize_tensor(
-        #     frames, self.mean, self.std
-        # )
-
-        self._load_frame()
-
-        label = info["label"]
-        mask = info["label_mask"]
-
-        # return frames, label, mask, index, self._path_to_ant_videos[index]
+        return frames, flow, label, mask
 
     def __len__(self):
         return len(self.package)
 
-    def train_trainsformation(self, clip, info, frame_idx):
+    def train_transform(self, clip, info, frame_idx):
         """
             Args:
                 clip: list[PIL.Image, numpy.ndarray]
@@ -1634,7 +1668,7 @@ def get_basic_config_for(task):
             "STD": [0.229, 0.224, 0.225],
             "FRAME_FORMAT": "{:010d}.jpg",  # image frame format
 
-            "observation_time_second": 2,  # observation time of baseline method is 2s
+            "observation_time_second": 4,  # observation time of baseline method is 2s
 
             "repeat_sample": 1, 
             "test_spatial_crop_num": 3,

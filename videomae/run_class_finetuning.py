@@ -30,10 +30,10 @@ from utils import  multiple_samples_collate_fho, samples_collate_fho
 from utils import LTAMixup
 
 from datasets import build_dataset
-from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, validation_one_epoch, final_test, merge
+from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, hands_train_one_epoch, validation_one_epoch, final_test, merge
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, CustomLayerDecayValueAssigner
 
-from loss import ActionAnticipationLoss
+from loss import ActionAnticipationLoss, HandsPredictionLoss
 from config_utils import parse_yml, combine
 from flow_extractor import flowExtractor
 
@@ -502,9 +502,12 @@ def main(args, ds_init):
             criterion = torch.nn.CrossEntropyLoss()
 
         train_fn = osccpnr_train_one_epoch
-    elif "lta" in args.cfg.task:
+    elif "lta" in args.cfg.task: # [lta_verb, lta_noun]
         criterion = ActionAnticipationLoss(celoss="focal" if mixup_fn is None else "soft", head_type=args.head_type) # lta_verb or lta_noun
         train_fn = partial(lta_train_one_epoch, head_type=args.head_type)
+    elif args.cfg.task == "hands":
+        criterion = HandsPredictionLoss(beta=5)
+        train_fn = hands_train_one_epoch
 
     print("criterion = %s" % str(criterion))
 
