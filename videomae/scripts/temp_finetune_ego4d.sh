@@ -6,7 +6,7 @@ OMP_NUM_THREADS=100 python -m torch.distributed.launch \
     --dist_eval \
     --config $3 \
     --overwrite command-line \
-    --project finetune_lta \
+    --project temp \
     --name temp \
     --debug
     # --wandb_id 1ccsw325

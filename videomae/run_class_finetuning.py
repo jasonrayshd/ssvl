@@ -30,7 +30,7 @@ from utils import  multiple_samples_collate_fho, samples_collate_fho
 from utils import LTAMixup
 
 from datasets import build_dataset
-from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, hands_train_one_epoch, validation_one_epoch, final_test, merge
+from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, hands_train_one_epoch, egoclip_train_one_epoch, validation_one_epoch, final_test, merge
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, CustomLayerDecayValueAssigner
 
 from loss import ActionAnticipationLoss, HandsPredictionLoss
@@ -276,16 +276,6 @@ def main(args, ds_init):
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
     )
     print("Sampler_train = %s" % str(sampler_train))
-    if args.dist_eval:
-        if len(dataset_val) % num_tasks != 0:
-            print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
-                    'This will slightly alter validation results as extra duplicate entries are added to achieve '
-                    'equal num of samples per-process.')
-        sampler_val = torch.utils.data.DistributedSampler(
-            dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False)
-    else:
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
 
     assert args.log_dir is not None and args.output_dir is not None, "log_dir and output_dir should not be empty"
     args.log_dir = os.path.join(args.log_dir, args.name)
@@ -312,6 +302,16 @@ def main(args, ds_init):
     )
 
     if dataset_val is not None:
+        if args.dist_eval:
+            if len(dataset_val) % num_tasks != 0:
+                print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
+                        'This will slightly alter validation results as extra duplicate entries are added to achieve '
+                        'equal num of samples per-process.')
+            sampler_val = torch.utils.data.DistributedSampler(
+                dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False)
+        else:
+            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+
         data_loader_val = torch.utils.data.DataLoader(
             dataset_val, sampler=sampler_val,
             batch_size=int(args.batch_size),

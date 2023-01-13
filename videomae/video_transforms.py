@@ -1285,13 +1285,13 @@ class Normalize(object):
 class ShorterSideResize(object):
     """
         Args:
-            clip (List): list of frames, frame shape (H W C) in RGB mode
+            clip (List): list of numpy.ndarray, frame shape (H W C) in RGB mode
     """
     def __init__(self,desired_shorter_side):
         self.desired_shorter_side = desired_shorter_side
     
     def __call__(self, clip):
-        
+
         frame = clip[0]
         original_height, original_width, _ = frame.shape
         if original_height < original_width:

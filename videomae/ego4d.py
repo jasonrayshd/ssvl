@@ -339,22 +339,35 @@ class Egoclip(Ego4dBase):
         self.package = []  # clips that are used for pretraining
         self.skip_lst = [] # clips that are ignored
         video2clipidx = {}
+        skipped = 0
         for row in tqdm(rows):
 
             meta = row[0].split("\t")
-
-            pattern = "#C C.*?\[(\d*)\].*?\[(\d*)"
-            verb, noun = re.findall(pattern, row[0])[0]
-            verb = -1 if verb == "" else int(verb)
-            noun = -1 if noun == "" else int(noun)
-
-            if ("verb" in self.cfg.task and verb == -1) or ("noun" in self.cfg.task and noun == -1):
-                continue # skip clip with missing label in egoclip action recognition
-
+            
             if meta[0] not in video2clipidx:
                 video2clipidx[meta[0]] = 0
             else:
                 video2clipidx[meta[0]] += 1
+            
+            # match verb and noun
+            pattern1 = "\[(\d*)\].*?\[(\d*)"
+            pattern2 = "\[(\d*).*?"
+            result = re.findall(pattern1, row[0])
+            if len(result) == 0:
+                result = re.findall(pattern2, row[0])
+                if len(result) == 0:
+                    skipped += 1
+                    continue # if still cannot match, then abadon
+                verb = result[0]
+                verb = -1 if verb == "" else int(verb)
+                noun = -1
+            else:
+                verb, noun = result[0]
+                verb = -1 if verb == "" else int(verb)
+                noun = -1 if noun == "" else int(noun)
+
+            if ("verb" in self.cfg.task and verb == -1) or ("noun" in self.cfg.task and noun == -1):
+                continue # skip clip with missing label in egoclip action recognition
 
             pack = {
                     "video_uid": meta[0],
@@ -381,7 +394,7 @@ class Egoclip(Ego4dBase):
                 continue
 
             self.package.append(pack)
-
+        print(f"Skipped {skipped} clips in total")
 
     def init_transformation(self):
 
@@ -426,8 +439,8 @@ class Egoclip(Ego4dBase):
             uflow_lst = self.load_from_zip(uflow_name_lst, flow_zf_fp, isflow=True)
             vflow_lst = self.load_from_zip(vflow_name_lst, flow_zf_fp, isflow=True)
         else:
-            uflow_lst = []
-            vflow_lst = []
+            uflow_lst = None
+            vflow_lst = None
 
         # post process
         frame_zf_fp.close()
@@ -461,12 +474,12 @@ class Egoclip(Ego4dBase):
             # mismatch frame number between annotation and zip file
             frame_name = exist_frame_lst[-1]
             end_frame  = int( frame_name.split(".")[0].split("_")[-1] )
-
+        
         length = end_frame - start_frame + 1
         if length < self.cfg.NUM_FRAMES:
             # clip length is smaller than required number of frames
             # resample
-            print(length, info)
+            print(exist_frame_lst[20:], exist_frame_lst[:20], end_frame, length, info)
             return None
 
         frame_name_lst = []
@@ -530,22 +543,24 @@ class Egoclip(Ego4dBase):
 
         msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']}"
         # load frames and label
-        frames, uflows, vflows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
+        # frames, uflows, vflows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
         # flows = [flow[0],flow[1] for flow in zip(uflows, vflows)]
+        frames, uflows, vflows = self.prepare_clip_frames_flows(info=info)
 
-        flows = [uflows, vflows]
+        flows = [uflows, vflows] if uflows is not None else None
+        
         if frames is None:
             raise ValueError(msg + "," + "frame is None")
- 
-        frames, flows = self.data_transform((frames, flows))
-        frames = frames.view((self.cfg.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1)
 
-        if self.pretrain:
-            return frames, flows
-        else:
+        if not self.pretrain:
+            frames = [ np.array(frame) for frame in frames ]
+            frames = self.data_transform(frames)
             label = info["verb"] if "verb" in self.cfg.task else info["noun"]
-
             return frames, flows, label
+        else:
+            frames, flows = self.data_transform((frames, flows))
+            frames = frames.view((self.cfg.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1)
+            return frames, flows
 
 
     def __len__(self):
