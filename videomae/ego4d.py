@@ -386,13 +386,11 @@ class Egoclip(Ego4dBase):
             return None
 
         frame_name_lst, uflow_name_lst, vflow_name_lst = ret
-        print(frame_name_lst)
-        print(uflow_name_lst)
-        print(vflow_name_lst)
+
         # load frame content
         frame_lst = self.load_from_zip(frame_name_lst, frame_zf_fp)
-        uflow_lst = self.load_from_zip(uflow_name_lst, flow_zf_fp)
-        vflow_lst = self.load_from_zip(vflow_name_lst, flow_zf_fp)
+        uflow_lst = self.load_from_zip(uflow_name_lst, flow_zf_fp, isflow=True)
+        vflow_lst = self.load_from_zip(vflow_name_lst, flow_zf_fp, isflow=True)
 
         # post process
         frame_zf_fp.close()
@@ -475,7 +473,7 @@ class Egoclip(Ego4dBase):
         return frame_idx_lst
 
 
-    def load_from_zip(self, frame_name_lst, zf_fp):
+    def load_from_zip(self, frame_name_lst, zf_fp, isflow=False):
         """
             load frames (rgb or flow) from zip given frame list      
         """
@@ -484,7 +482,7 @@ class Egoclip(Ego4dBase):
         for frame_name in frame_name_lst:
             img_fp = zf_fp.open(frame_name)
             buffer = io.BytesIO(img_fp.read())
-            img = Image.open(buffer)
+            img = Image.open(buffer) if not isflow else Image.open(buffer).split()[0]
             frame_lst.append(img)
 
         return frame_lst
@@ -497,15 +495,19 @@ class Egoclip(Ego4dBase):
         # load frames and label
         frames, uflows, vflows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
         # flows = [flow[0],flow[1] for flow in zip(uflows, vflows)]
+
+        flows = [uflows, vflows]
         if frames is None:
             raise ValueError(msg + "," + "frame is None")
-        frames, flows, mask = self.data_transform([frames, flows])
-        # flows = self.prepare_flow(None, info, frame_idx) # only support load flows locally 
+ 
+        frames, flows = self.data_transform((frames, flows))
+        
+        frames = frames.view((self.cfg.NUM_FRAMES, 3) + frames.size()[-2:]).transpose(0,1)
 
-        return frames, flows, mask
+        return frames, flows
 
     def __len__(self):
-        pass
+        return len(self.package)
 
 
 class Ego4dFhoOscc(Ego4dBase):

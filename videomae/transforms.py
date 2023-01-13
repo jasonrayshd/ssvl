@@ -176,7 +176,7 @@ class GroupMultiScaleCrop(object):
 
 class Stack(object):
 
-    def __init__(self, roll=False, flow_mode=""):
+    def __init__(self, roll=False):
         self.roll = roll
 
     def __call__(self, img_tuple):

@@ -703,7 +703,6 @@ def train_tsvit_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimiz
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
-
 class MultiModalLoss(nn.Module):
 
     def __init__(self, lamb):
@@ -822,7 +821,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
 
         B, _, N, H, W = flows.shape
         _, _, T, H, W = videos.shape
-        assert T%N == 0, f"Number of flows:{T} to be predicted should be divisible by number of frames:{N}"
+        assert T%N == 0, f"Number of flows:{N} to be predicted should be divisible by number of frames:{T}"
         # print(flows.shape)
 
         flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)

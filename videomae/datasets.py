@@ -2,7 +2,7 @@ from torchvision import transforms
 from transforms import *
 from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 
-from ego4d import Ego4dFhoOscc, Ego4dFhoLTA, Ego4dFhoHands
+from ego4d import Ego4dFhoOscc, Ego4dFhoLTA, Ego4dFhoHands, Egoclip
 from epickitchens import Epickitchens
 
 
@@ -61,8 +61,7 @@ def build_pretraining_dataset(args, **kwargs):
     mode = "train"
 
     if args.cfg.task == "egoclip":
-        pass
-        # dataset = StateChangeDetectionAndKeyframeLocalisation(args.cfg, mode, args=args, pretrain=True, pretrain_transform=transform)
+        dataset = Egoclip(mode, args.cfg, pretrain=True, pretrain_transform=transform)
 
     elif args.cfg.task == "epic-kitchens":
         dataset = Epickitchens(args.cfg, mode, pretrain_transform=transform)
