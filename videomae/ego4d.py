@@ -1259,7 +1259,7 @@ class Ego4dFhoLTA(Ego4dBase):
         self.input_size = self.cfg.input_size
         # train
         self.num_frame = self.cfg.NUM_FRAMES
-    
+
         self.repeat_sample = self.cfg.repeat_sample
         self.input_clip_num = self.cfg.input_clip_num
         self.num_action_predict = self.cfg.num_action_predict
@@ -1567,6 +1567,7 @@ class Ego4dFhoHands(Ego4dBase):
                 try:
                     frame_fp = zipfp.open("{:010d}.jpg".format(frame_idx))
                 except:
+                    print(zipfp.namelist())
                     print(clip_path, clip_info, "{:010d}.jpg".format(frame_idx))
 
                 pil = Image.open(frame_fp)
@@ -1580,24 +1581,26 @@ class Ego4dFhoHands(Ego4dBase):
         clip_info = self.package[index]
     
         label = clip_info["label"]
+        label = torch.tensor(label)
         mask = clip_info["label_mask"]
+        mask = torch.tensor(mask)
 
-        frames, flows = self.sample_frames_from_clip(clip_info) # list[PIL]
-
+        frames, intervals = self.sample_frames_from_clip(clip_info) # list[PIL]
         frames = self.data_transform(frames) # C, T, H, W
- 
+
+        flows = None
         if self.repeat_sample > 1:
             frames = [frames for i in range(self.repeat_sample)]
-            flow = [flow for i in range(self.repeat_sample)]
+            flows = [flows for i in range(self.repeat_sample)]
             label = [label for i in range(self.repeat_sample)]
             mask = [mask for i in range(self.repeat_sample)]
 
-        return frames, flow, label, mask
+        return frames, flows, label, mask
 
     def __len__(self):
         return len(self.package)
 
-    def train_transform(self, clip, info, frame_idx):
+    def train_transform(self, clip):
         """
             Args:
                 clip: list[PIL.Image, numpy.ndarray]
@@ -1626,14 +1629,14 @@ class Ego4dFhoHands(Ego4dBase):
             motion_shift=False
         ) # T C H W, range in [0, 1]
 
-        flows =  self.prepare_flow(clip, info, frame_idx)
+        # flows =  self.prepare_flow(clip, info, frame_idx)
 
-        clip = torch.stack(clip).permute(0, 2, 3, 1) # T C H W -> T H W C
+        clip = clip.permute(0, 2, 3, 1) # T C H W -> T H W C
         clip = self.normalize_tensor(
             clip, self.mean, self.std
         ).permute(3, 0, 1, 2) # C T H W 
 
-        return clip, flows
+        return clip
 
 
 def get_basic_config_for(task):

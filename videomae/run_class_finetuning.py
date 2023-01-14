@@ -505,7 +505,7 @@ def main(args, ds_init):
         criterion = ActionAnticipationLoss(celoss="focal" if mixup_fn is None else "soft", head_type=args.head_type) # lta_verb or lta_noun
         train_fn = partial(lta_train_one_epoch, head_type=args.head_type)
     elif args.cfg.task == "hands":
-        criterion = HandsPredictionLoss(beta=5)
+        criterion = torch.nn.SmoothL1Loss(reduction="mean",beta=5.0)
         train_fn = hands_train_one_epoch
     elif "egoclip" in args.cfg.task:
         criterion = torch.nn.CrossEntropyLoss()

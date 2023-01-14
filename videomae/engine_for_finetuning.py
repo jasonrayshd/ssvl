@@ -6,6 +6,7 @@ from functools import partial
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from timm.data import Mixup
 from timm.utils import accuracy
@@ -61,27 +62,27 @@ def lta_metric(out_actions, target_actions):
     return score, action_pred_accuracy
 
 
-def hands_metric(output, target, mask):
+def hands_metric(output, target_lst):
     """
         Args:
             output: (B, 20)
             Target: (B, 20)
 
     """
-
+    target, masks = target_lst
     key_frame_L_mean_dist = 0.0
     key_frame_R_mean_dist = 0.0
-    contact_frame_L_mean_dist = ( F.l2_loss(output[:, 16:18], target[:, 16:18], reduction="none") * masks[:, 16:18] ).mean()
-    contact_frame_R_mean_dist = ( F.l2_loss(output[:, 18:20], target[:, 18:20], reduction="none") * masks[:, 18:20] ).mean()
+    contact_frame_L_mean_dist = ( F.mse_loss(output[:, 16:18], target[:, 16:18], reduction="none") * masks[:, 16:18] ).mean()
+    contact_frame_R_mean_dist = ( F.mse_loss(output[:, 18:20], target[:, 18:20], reduction="none") * masks[:, 18:20] ).mean()
 
     for i in range(4):
-        key_frame_L_mean_dist += ( F.l2_loss(output[:, 4*i : 4*i+2], target[:, 4*i : 4*i+2], reduction="none") * masks[:, 4*i : 4*i+2] ).mean()
-        key_frame_R_mean_dist += ( F.l2_loss(output[:, 4*i+2 : 4*i+4], target[:, 4*i+2 : 4*i+4], reduction="none") * masks[:, 4*i+2 : 4*i+4] ).mean()
+        key_frame_L_mean_dist += ( F.mse_loss(output[:, 4*i : 4*i+2], target[:, 4*i : 4*i+2], reduction="none") * masks[:, 4*i : 4*i+2] ).mean()
+        key_frame_R_mean_dist += ( F.mse_loss(output[:, 4*i+2 : 4*i+4], target[:, 4*i+2 : 4*i+4], reduction="none") * masks[:, 4*i+2 : 4*i+4] ).mean()
 
     key_frame_L_mean_dist /= 4
     key_frame_R_mean_dist /= 4
 
-    return key_frame_L_mean_dist, key_frame_R_mean_dist, contact_frame_L_dist, contact_frame_R_dist
+    return key_frame_L_mean_dist, key_frame_R_mean_dist, contact_frame_L_mean_dist, contact_frame_R_mean_dist
 
 
 def get_loss_scale_for_deepspeed(model):
@@ -111,7 +112,7 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     else:
         optimizer.zero_grad()
 
-    for data_iter_step, (samples, flows, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (samples, flows, target_lst) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
             continue
@@ -132,7 +133,7 @@ def lta_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         # verbs = verbs.to(device, non_blocking=False)
         # nouns = nouns.to(device, non_blocking=False)
         # targets = [verbs, nouns]
-
+        targets = target_lst[0]
         targets = [target.to(device, non_blocking=False) for target in targets] # verb or noun, depends on dataset
  
         if mixup_fn is not None:
@@ -282,7 +283,7 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     else:
         optimizer.zero_grad()
 
-    for data_iter_step, (samples, flows, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (samples, flows, target_lst) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
             continue
@@ -298,6 +299,8 @@ def osccpnr_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         samples = samples.to(device, non_blocking=False)
         if flows is not None:
             flows = flows.to(device, non_blocking=False)
+
+        targets = target_lst[0]
         targets = targets.to(device, non_blocking=False)
 
         if mixup_fn is not None:
@@ -401,7 +404,7 @@ def hands_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     else:
         optimizer.zero_grad()
 
-    for data_iter_step, (samples, flows, targets, masks) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (samples, flows, target_lst) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
             continue
@@ -414,27 +417,36 @@ def hands_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 if wd_schedule_values is not None and param_group["weight_decay"] > 0:
                     param_group["weight_decay"] = wd_schedule_values[it]
 
-        samples = samples.to(device, non_blocking=False)
+        samples = samples.to(device, non_blocking=True)
         if flows is not None:
-            flows = flows.to(device, non_blocking=False)
-        targets = targets.to(device, non_blocking=False)
-        masks = masks.to(device, non_blocking=False)
+            flows = flows.to(device, non_blocking=True)
+
+        targets, mask = target_lst
+        targets = targets.to(device, non_blocking=True)
+        mask = mask.to(device, non_blocking=True)
+        target_lst = [targets, mask]
         # if mixup_fn is not None:
         #     samples, targets = mixup_fn(samples, targets)
 
         if loss_scaler is None:
             # print("loss scaler is None")
             samples = samples.half()
-            if flows is not None:
+
+            if flows is None:
+                output = model(samples)
+            else:
                 flows = flows.half()
-            loss, output = train_class_batch(
-                model, [samples, flows], targets, criterion)
+                output = model(samples, flows)
 
         else:
             with torch.cuda.amp.autocast():
-                loss, output = train_class_batch(
-                    model, [samples, flows], targets, criterion)
-        
+                if flows is None:
+                    output = model(samples)
+                else:
+                    flows = flows.half()
+                    output = model(samples, flows)
+
+        loss = criterion(output*mask, targets)
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -459,7 +471,7 @@ def hands_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         torch.cuda.synchronize()
 
-        key_frame_L_mean_dist, key_frame_R_mean_dist, contact_frame_L_mean_dist, contact_frame_R_mean_dist = hands_metric(output, targets, masks)
+        key_frame_L_mean_dist, key_frame_R_mean_dist, contact_frame_L_mean_dist, contact_frame_R_mean_dist = hands_metric(output, target_lst)
 
         metric_logger.update(loss=loss_value)
         metric_logger.update(loss_scale=loss_scale_value)
@@ -524,7 +536,7 @@ def egoclip_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     else:
         optimizer.zero_grad()
 
-    for data_iter_step, (samples, flows, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (samples, flows, target_lst) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         step = data_iter_step // update_freq
         if step >= num_training_steps_per_epoch:
             continue
@@ -540,6 +552,8 @@ def egoclip_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         samples = samples.to(device, non_blocking=False)
         if flows is not None:
             flows = flows.to(device, non_blocking=False)
+
+        targets = target_lst[0]
         targets = targets.to(device, non_blocking=False)
 
         # if mixup_fn is not None:
@@ -634,16 +648,20 @@ def validation_one_epoch(data_loader, model, device, criterion, task):
     for batch in metric_logger.log_every(data_loader, 10, header):
         videos = batch[0]
         flows = batch[1]
-        targets = batch[2]
+        target_lst = batch[2]
 
         videos = videos.to(device, non_blocking=True)
         if flows is not None:
             flows = flows.to(device, non_blocking=True)
 
         if "lta" in task: # [lta_verb, lta_noun]
-            targets = [target.to(device, non_blocking=False) for target in targets] # verb or noun, depends on dataset
+            targets = target_lst[0]
+            targets = [target.to(device, non_blocking=False) for target in targets] # tensor, verb or noun, depends on dataset
+        elif "hands" in task:
+            targets = [target.to(device, non_blocking=True) for target in target_lst] # list
         else:
-            targets = targets.to(device, non_blocking=True)
+            targets = target_lst[0]
+            targets = targets.to(device, non_blocking=True) # tensor
 
         # compute output
         with torch.cuda.amp.autocast():
@@ -702,6 +720,7 @@ def validation_one_epoch(data_loader, model, device, criterion, task):
             score = DL_edit_distance
 
         elif task == "oscc" or task == "pnr":
+
             if output.shape[1] > 5:
                 acc1, acc5 = accuracy(output, targets, topk=(1, 5))
                 metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
@@ -711,6 +730,9 @@ def validation_one_epoch(data_loader, model, device, criterion, task):
                 metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
             
             score = acc1.item()
+
+        elif task == "hands":
+            targets, mask = target_lst
 
         metric_logger.meters["score"].update(score, n=batch_size)
 

@@ -120,15 +120,16 @@ class HandsPredictionLoss(nn.Module):
         self.l1_loss = nn.L1Loss(reduction="none")
         self.beta = beta
 
-    def forward(self, output, target, mask):
-        
-        dist = self.l1_loss(output, target).mean(1)
-        
+    def forward(self, output, target_lst):
+        target, mask = target_lst
+        B, *_ = target.shape
+        dist = self.l1_loss(output, target)
+
         idx = ( dist < self.beta ).bool()
 
         loss1 = 0.5*mask*torch.pow(output-target, 2) / self.beta
-        loss2 = mask*(dist-0.5*self.beta)
+        loss2 = mask*(dist - 0.5*self.beta)
 
-        loss = loss1[idx] + loss2[~idx]
-        
+        loss = ( loss1[idx].sum() + loss2[~idx].sum() ) / B
+
         return loss

@@ -565,23 +565,27 @@ def multiple_samples_collate(batch, fold=False):
 
 def multiple_samples_collate_fho(batch):
     """
-    Collate function for repeated augmentation. Each instance in the batch has
-    more than one sample.
-    Args:
-        batch (tuple or list): data batch to collate.
-    Returns:
-        (tuple): collated data batch.
+        Collate function for repeated augmentation. Each instance in the batch has
+        more than one sample.
+        Args:
+            batch (tuple or list): data batch to collate.
+        Returns:
+            (tuple): collated data batch.
     """
-    inputs, flows, target = zip(*batch)
-    # print(target)
-    # print(target)
-    inputs = [item for sublist in inputs for item in sublist]
-    target = [item for sublist in target for item in sublist]
+    # target_lst might contains labels, masks, etc.
+    inputs, flows, *target_lst = zip(*batch)
 
-    inputs, target = (
-        default_collate(inputs),
-        default_collate(target),
-    )
+    inputs = [item for sublist in inputs for item in sublist]
+
+    _target_lst = []
+    for target in target_lst:
+        target = [item for sublist in target for item in sublist]
+        _target_lst.append(target)
+
+    target_lst = _target_lst
+
+    inputs = default_collate(inputs)
+    target_lst = [default_collate(target) for target in target_lst]
 
     if flows[0][0] is not None:
         flows = [item for sublist in flows for item in sublist]
@@ -589,24 +593,25 @@ def multiple_samples_collate_fho(batch):
     else:
         flows = None
 
-    return inputs, flows, target
+    return inputs, flows, target_lst
 
 
 def samples_collate_fho(batch):
 
-    inputs, flows, target = zip(*batch)
+    inputs, flows, *target_lst = zip(*batch)
+    # print(len(target_lst))
+    # for target in target_lst:
+    #     print(type(default_collate(target)), type(target))
 
     if flows[0] is not None:
         flows =  default_collate(flows)
     else:
         flows = None
 
-    inputs, target = (
-        default_collate(inputs),
-        default_collate(target),
-    )
+    inputs = default_collate(inputs)    
+    target_lst = [ default_collate(target) for target in target_lst]
 
-    return inputs, flows, target
+    return inputs, flows, target_lst
 
 
 def filter_checkpoint_fho(checkpoint_model):
