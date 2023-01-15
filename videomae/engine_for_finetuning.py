@@ -571,7 +571,7 @@ def egoclip_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             with torch.cuda.amp.autocast():
                 loss, output = train_class_batch(
                     model, [samples, flows], targets, criterion)
-        
+
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):

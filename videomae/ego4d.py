@@ -425,10 +425,12 @@ class Egoclip(Ego4dBase):
         exist_flow_list = flow_zf_fp.namelist() # [u/frame_%010d_%010d.jpg, v/frame_%010d_%010d.jpg, ...]
 
         # sample rgb and flows
+        
+       
         ret = self.sample_frames(info, exist_frame_list, exist_flow_list)
-
         if ret is None:
-            return None
+            # actual frames number is less than required frame number
+            return
 
         frame_name_lst, uflow_name_lst, vflow_name_lst = ret
 
@@ -477,9 +479,6 @@ class Egoclip(Ego4dBase):
         
         length = end_frame - start_frame + 1
         if length < self.cfg.NUM_FRAMES:
-            # clip length is smaller than required number of frames
-            # resample
-            print(exist_frame_lst[20:], exist_frame_lst[:20], end_frame, length, info)
             return None
 
         frame_name_lst = []
@@ -542,11 +541,19 @@ class Egoclip(Ego4dBase):
         info = self.package[index]
 
         msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']}"
-        # load frames and label
-        # frames, uflows, vflows =  self.exec_wtolerance(self.prepare_clip_frames_flows, retry=5, msg=msg, info=info)
-        # flows = [flow[0],flow[1] for flow in zip(uflows, vflows)]
-        frames, uflows, vflows = self.prepare_clip_frames_flows(info=info)
 
+        # load frames and label
+        # load until succeed
+        # some zip files may contain frames less than required number of frames
+        ret = None
+        while ret is None:
+            ret = self.prepare_clip_frames_flows(info=info)
+            if ret is not None:
+                break
+            random_idx = random.randint(0, len(self.package)-1)
+            info = self.package[random_idx]
+
+        frames, uflows, vflows = ret
         flows = [uflows, vflows] if uflows is not None else None
         
         if frames is None:
@@ -1431,7 +1438,8 @@ class Ego4dFhoHands(Ego4dBase):
 
         self.source = self.cfg.FRAME_DIR_PATH
         self.source = os.path.join(self.source , self.mode)
-
+        self.max_observation_time = 4
+        self.max_observation_frame_num = 30 * self.max_observation_time
         # train
         self.repeat_sample = self.cfg.repeat_sample
         # test
@@ -1478,7 +1486,7 @@ class Ego4dFhoHands(Ego4dBase):
                     
                     pre_45_frame = annot["pre_45"]["frame"]
                     pre_frame = annot["pre_frame"]["frame"] if "pre_frame" in annot else -1
-                    st = max(0, pre_45_frame - max_observation_frame_num)
+                    st = max(0, pre_45_frame - self.max_observation_frame_num)
                     end = pre_frame + 30 if pre_frame == -1 else pre_45_frame + 45 + 30
                 else:
                     st = annot["action_start_frame"]
@@ -1567,6 +1575,7 @@ class Ego4dFhoHands(Ego4dBase):
                 try:
                     frame_fp = zipfp.open("{:010d}.jpg".format(frame_idx))
                 except:
+                    print("error when reading image from zipfile")
                     print(zipfp.namelist())
                     print(clip_path, clip_info, "{:010d}.jpg".format(frame_idx))
 
