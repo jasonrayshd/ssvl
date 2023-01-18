@@ -499,7 +499,6 @@ def write2log(pack, log_table):
 
     wandb.log({
         "video": len(log_table["clip_name"]),
-        "log_table":wandb.Table(columns=["clip_name", "state"], data=list( zip( *list(log_table.values()) ) ) )
     })
     # print(wdb_tbl)
 

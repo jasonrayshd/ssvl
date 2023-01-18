@@ -201,11 +201,11 @@ def td_worker(source, dest, data_dict, tmp_dir, td_queue, desired_shorter_side):
     # create temporal directory locally
     os.makedirs(tmp_dir, exist_ok=True)
 
+    uid, clip_list = data_dict[0], data_dict[1:]
+
     # make video directory on destination
     frame_save_path = os.path.join(dest, uid)
     os.makedirs(frame_save_path, exist_ok=True)
-
-    uid, clip_list = data_dict[0], data_dict[1:]
 
     frame_to_clip = {}  
     frames_list = []
