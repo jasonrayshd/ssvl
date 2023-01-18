@@ -977,55 +977,47 @@ class PretrainMultiModalTransformer(nn.Module):
         }
 
     def forward(self, rgb, flow, rgb_mask, flow_mask, all_token=False):
-        # _, _, T, _, _ = x.shape
+
         token_dict = self.encoder(rgb, flow, rgb_mask, flow_mask) 
 
         N1 = token_dict["split_point"]
         x1, x2 = token_dict["tokens"] # [B, 2*N_vis, C_e]
+        # x1 is within-modality set that self-attention will only be computed within each modality
+        # x2 is cross-modality set that self-attention will be computed across modality
 
-        # rgb_vis = torch.cat([x1[:, :N1, :], x2[:, N1:, :]], dim=0)  # [2*B, N_vis, C_e]
-        # flow_vis = torch.cat([x1[:, N1:, :], x2[:, :N1, :]], dim=0) # [2*B, N_vis, C_e]
-
-        x1 = self.encoder_to_decoder(x1)   # [4*B, N_vis, C_d]
+        # project feature dimension to decoder dimension
+        x1 = self.encoder_to_decoder(x1)
         x2 = self.encoder_to_decoder(x2)
 
-        rgb_vis = torch.cat([x1[:, 1:N1, :], x2[:, N1:, :]], dim=0)
-        flow_vis = torch.cat([x1[:, N1+1:, :], x2[:, 1:N1, :]], dim=0)
+        # split features in each set and skip global embedding of each set
+        # Since we got 2 sets where each contains 2 modalities
+        # finally, we obtain four features
+        intra_rgb_vis, cross_flow_vis = x1[:, 1:N1, :], x2[:, N1:, :]
+        intra_flow_vis, cross_rgb_vis = x1[:, N1+1:, :], x2[:, 1:N1, :]
+        B, N, C = intra_rgb_vis.shape
 
-        B, N, C = rgb_vis.shape
+        # prepare sinusoidal(unlearnable) position embedding
+        expand_pos_embed = self.pos_embed.expand(B, -1, -1).type_as(x1).to(x1.device).clone().detach()
+        rgb_pos_emd_vis = expand_pos_embed[~rgb_mask].reshape(B, -1, C)
+        rgb_pos_emd_mask = expand_pos_embed[rgb_mask].reshape(B, -1, C)
+        flow_pos_emd_vis = expand_pos_embed[~flow_mask].reshape(B, -1, C)
+        flow_pos_emd_mask = expand_pos_embed[flow_mask].reshape(B, -1, C)
 
-        # we don't unshuffle the correct visible token order, 
-        # but shuffle the pos embedding accorddingly.
-        # expand_mask = torch.cat([mask, mask], dim=0)
-        expand_pos_embed = self.pos_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device).clone().detach()
-        rgb_pos_emd_vis = expand_pos_embed[~rgb_mask].reshape(B//2, -1, C)
-        rgb_pos_emd_mask = expand_pos_embed[rgb_mask].reshape(B//2, -1, C)
-        flow_pos_emd_vis = expand_pos_embed[~flow_mask].reshape(B//2, -1, C)
-        flow_pos_emd_mask = expand_pos_embed[flow_mask].reshape(B//2, -1, C)
+        _, N_mask, _ = flow_pos_emd_mask.shape
+        # print(N_mask)
+        # add learnable type embedding to featurs from cross-modality set
+        cross_rgb_vis += self.rgb_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
+        cross_flow_vis += self.flow_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
 
-        intra_rgb_vis, cross_flow_vis = rgb_vis[:B//2], rgb_vis[B//2:]
-        intra_flow_vis, cross_rgb_vis = flow_vis[:B//2], flow_vis[B//2:]
+        cross_full = torch.cat([cross_rgb_vis + rgb_pos_emd_vis, cross_flow_vis + flow_pos_emd_vis], dim=1)
+        intra_rgb_full = torch.cat([intra_rgb_vis + rgb_pos_emd_vis, self.rgb_mask_token + rgb_pos_emd_mask], dim=1)    # [2*B, N, C_d]
+        intra_flow_full = torch.cat([intra_flow_vis + flow_pos_emd_vis, self.flow_mask_token + flow_pos_emd_mask], dim=1) # [2*B, N, C_d]
 
-        # intra_rgb_vis += self.rgb_type_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device)
-        # intra_flow_vis += self.flow_type_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device)
+        cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+        cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
 
-        cross_rgb_vis += self.rgb_type_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device)
-        cross_flow_vis += self.flow_type_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device)
-
-        # intra_rgb_full = torch.cat([intra_rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
-        # intra_flow_full = torch.cat([intra_flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
-
-        # cross_rgb_full = torch.cat([cross_rgb_vis + pos_emd_vis, self.rgb_mask_token + pos_emd_mask], dim=1)    # [2*B, N, C_d]
-        # cross_flow_full = torch.cat([cross_flow_vis + pos_emd_vis, self.flow_mask_token + pos_emd_mask], dim=1) # [2*B, N, C_d]
-        cross_full = torch.cat([cross_rgb_vis + rgb_pos_emd_vis, cross_flow_vis + rgb_pos_emd_vis], dim=1)
-        intra_rgb_full = torch.cat([intra_rgb_vis + rgb_pos_emd_vis, self.rgb_mask_token + rgb_pos_emd_vis], dim=1)    # [2*B, N, C_d]
-        intra_flow_full = torch.cat([intra_flow_vis + flow_pos_emd_vis, self.flow_mask_token + flow_pos_emd_vis], dim=1) # [2*B, N, C_d]
-
-        cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
-        cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
-
-        intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
-        intra_flow_hat = self.flow_decoder(intra_flow_full, cross_full, pos_emd_mask.shape[1] if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+        intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_full,  N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+        intra_flow_hat = self.flow_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
 
         rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
         flow_hat = torch.cat([intra_flow_hat, cross_flow_hat], dim=0)
