@@ -13,7 +13,7 @@ mask_ratio: 0.9
 input_size: 224           # videos input size for backbone
 drop_path: 0.0            # help='Drop path rate (default: 0.1)    
 normlize_target: False     #help='normalized the target patch pixels
- 
+
 # Optimizer parameters
 opt: "adamw"               # help='Optimizer, default: "adamw"
 opt_eps: 1.0e-8             # help='Optimizer Epsilon (default: 1e-8)

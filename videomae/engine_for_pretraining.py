@@ -720,7 +720,7 @@ class MultiModalLoss(nn.Module):
 
         # print(output[0].shape)
         rgb_recons, flow_recons = output
-
+        # print(rgb_recons.shape)
 
         unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, torch.cat([rgb_target, rgb_target], dim=0))
         unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))

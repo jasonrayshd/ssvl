@@ -378,49 +378,19 @@ class MultiModalBlock(nn.Module):
         N1 = token_dict["split_point"]
         B, *_ = x1.shape          # Bn=B*2, N=N1+N2
 
-        # layer normalization on all tokens
-        # x = self.norm1(x)
-        # slice tensor
-        # x1 = x[:B, :, :]
-        # x1_rgb = x1[:, :N1, :] # rgb token set for within-modality learning
-        # x1_flow = x1[:, N1:, :] # flow token set for within-modality learning
-        # x2 = x[B:, :, :] # rgb and flow token set for cross-modality learning
-
         x1_rgb = x1[:, :N1, :]
         x1_flow = x1[:, N1:, :]
-        x1_rgb = self.norm1_intra_rgb(x1_rgb)
-        x1_flow = self.norm1_intra_flow(x1_flow)
-        x2 = self.norm1_cross(x2)
 
-        x1_rgb = self.attn(x1_rgb)   # compute self-attention within rgb tokens
-        x1_flow = self.attn(x1_flow) # compute self-attention within flow tokens
-        x2 = self.attn(x2)           # compute self-attention among rgb and flow tokens
+        x1_rgb = x1_rgb + self.drop_path( self.attn(self.norm1_intra_rgb(x1_rgb)) )
+        x1_rgb = x1_rgb + self.drop_path( self.mlp(self.norm2_intra_rgb(x1_rgb)) )
 
-        # x1 = torch.cat([x1_rgb, x1_flow], dim=1) # concat rgb and flow token along spatio-temporal dimension
-        # x = torch.cat([x1, x2], dim=0)  # concat all sets of tokens along batch dimension
+        x1_flow = x1_flow + self.drop_path( self.attn(self.norm1_intra_flow(x1_flow)) )
+        x1_flow = x1_flow + self.drop_path( self.mlp(self.norm2_intra_flow(x1_flow)) )
 
-        # if self.gamma_1 is not None:
-        #     x1_rgb =  self.gamma_1 * x1_rgb
+        x2 = x2 + self.drop_path( self.attn(self.norm1_cross(x2)) )
+        x2 = x2 + self.drop_path( self.mlp(self.norm2_cross(x2)) )
 
-        x1_rgb = self.norm2_intra_rgb( x1_rgb + self.drop_path(x1_rgb) )
-        x1_flow = self.norm2_intra_flow( x1_flow + self.drop_path(x1_flow) )
-        x2 = self.norm2_cross( x2 + self.drop_path(x2) )
-
-        # mlp layer
-        x1_rgb = self.mlp(x1_rgb)
-        x1_flow = self.mlp(x1_flow)
-        x2 = self.mlp(x2)
-        # if self.gamma_2 is not None:
-        #     x =  self.gamma_2 * x
-
-        x1_rgb = x1_rgb + self.drop_path(x1_rgb)
-        x1_flow = x1_flow + self.drop_path(x1_flow)
-        x2 = x2 + self.drop_path(x2)
-        # x = x + self.drop_path(x)            
-        x1 = torch.cat([x1_rgb,x1_flow], dim=1)
-        # 
-        # x1 = x[:B, :, :]
-        # x2 = x[B:, :, :]
+        x1 = torch.cat([x1_rgb, x1_flow], dim=1)
         token_dict["tokens"] = [x1, x2]
 
         return token_dict
