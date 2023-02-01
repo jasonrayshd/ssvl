@@ -570,6 +570,8 @@ class PretrainMultiModalEncoder(nn.Module):
             rgb:  torch.Tensor,  B, 3, T, H, W
             flow: torch.Tensor,  B, 2, T//2, H, W
         """
+        import pdb
+        pdb.set_trace()
         x_rgb = self.rgb_patch_embed(rgb)
         x_flow = self.flow_patch_embed(flow)
         B, _, C = x_rgb.size()
@@ -987,7 +989,7 @@ class PretrainMultiModalTransformer(nn.Module):
 
         # project feature dimension to decoder dimension
         x1 = self.encoder_to_decoder(x1)
-        x2 = self.encoder_to_decoder(x2)
+        x2 = self.encoder_to_decoder(x2) 
 
         # split features in each set and skip global embedding of each set
         # Since we got 2 sets where each contains 2 modalities
