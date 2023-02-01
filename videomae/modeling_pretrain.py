@@ -332,17 +332,17 @@ class MultiModalBlock(nn.Module):
                  drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=nn.LayerNorm,
                  attn_head_dim=None):
         super().__init__()
-        self.norm1_intra_rgb = norm_layer(dim)
-        self.norm1_intra_flow = norm_layer(dim)
-        self.norm1_cross = norm_layer(dim)
+        self.norm1 = norm_layer(dim)
+        # self.norm1_intra_flow = norm_layer(dim)
+        # self.norm1_cross = norm_layer(dim)
         self.attn = Attention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
             attn_drop=attn_drop, proj_drop=drop, attn_head_dim=attn_head_dim)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2_intra_rgb = norm_layer(dim)
-        self.norm2_intra_flow = norm_layer(dim)
-        self.norm2_cross = norm_layer(dim)
+        self.norm2 = norm_layer(dim)
+        # self.norm2_intra_flow = norm_layer(dim)
+        # self.norm2_cross = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
@@ -381,14 +381,14 @@ class MultiModalBlock(nn.Module):
         x1_rgb = x1[:, :N1, :]
         x1_flow = x1[:, N1:, :]
 
-        x1_rgb = x1_rgb + self.drop_path( self.attn(self.norm1_intra_rgb(x1_rgb)) )
-        x1_rgb = x1_rgb + self.drop_path( self.mlp(self.norm2_intra_rgb(x1_rgb)) )
+        x1_rgb = x1_rgb + self.drop_path( self.attn(self.norm1(x1_rgb)) )
+        x1_rgb = x1_rgb + self.drop_path( self.mlp(self.norm2(x1_rgb)) )
 
-        x1_flow = x1_flow + self.drop_path( self.attn(self.norm1_intra_flow(x1_flow)) )
-        x1_flow = x1_flow + self.drop_path( self.mlp(self.norm2_intra_flow(x1_flow)) )
+        x1_flow = x1_flow + self.drop_path( self.attn(self.norm1(x1_flow)) )
+        x1_flow = x1_flow + self.drop_path( self.mlp(self.norm2(x1_flow)) )
 
-        x2 = x2 + self.drop_path( self.attn(self.norm1_cross(x2)) )
-        x2 = x2 + self.drop_path( self.mlp(self.norm2_cross(x2)) )
+        x2 = x2 + self.drop_path( self.attn(self.norm1(x2)) )
+        x2 = x2 + self.drop_path( self.mlp(self.norm2(x2)) )
 
         x1 = torch.cat([x1_rgb, x1_flow], dim=1)
         token_dict["tokens"] = [x1, x2]

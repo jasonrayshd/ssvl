@@ -1,6 +1,6 @@
 # import matplotlib.pyplot as plt
 
-from datasets import build_pretraining_dataset
+from datasets import build_pretraining_dataset, create_mask_generator
 import torch
 import torch.nn.functional as F
 
@@ -67,10 +67,13 @@ def main(args):
     model = get_model(args)
 
     checkpoints = []
+    # print(args.ckpt)
 
     for ckpt in args.ckpt.split(","):
+        # print(ckpt)
         if ckpt == "": continue
         checkpoints.append(torch.load(ckpt, map_location='cpu'))
+    # print(checkpoints)
     patch_size = model.encoder.rgb_patch_embed.patch_size
 
     # import sys
@@ -83,7 +86,7 @@ def main(args):
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train,
         batch_size=1,
-        num_workers=4,
+        num_workers=10,
         # pin_memory=False,
         # shuffle=False,
         # worker_init_fn=utils.seed_worker
@@ -91,6 +94,7 @@ def main(args):
 
     mean = torch.tensor([0.485, 0.456, 0.406]).reshape(3, 1, 1, 1).repeat(1, 1, 224, 224).to(device)
     std = torch.tensor([0.229, 0.224, 0.225]).reshape(3, 1, 1, 1).repeat(1, 1, 224, 224).to(device)
+    rgb_mask_gen, flow_mask_gen = create_mask_generator(args)
 
     model.to(device)
     model.eval()
@@ -98,19 +102,24 @@ def main(args):
         for j, weights in enumerate(checkpoints):
             model.load_state_dict(weights['model'], strict=True)
 
-            frame, mask, flows = batch[0].to(device), batch[1].to(device), batch[2].to(device)
+            frame, flows = batch[0].to(device), batch[1].to(device)
+
             B,*_ = frame.shape
-            mask = mask.flatten(1).to(torch.bool).cpu()
+            rgb_mask = rgb_mask_gen(B)
+            flow_mask = flow_mask_gen(B)
+
+            rgb_mask = torch.from_numpy(np.stack(rgb_mask, axis=0)).to(device, non_blocking=True).flatten(1).to(torch.bool)
+            flow_mask = torch.from_numpy(np.stack(flow_mask, axis=0)).to(device, non_blocking=True).flatten(1).to(torch.bool)
 
             if args.pretrain == "multicae":
                 p = random.random()
                 if p > 0.5:
-                    output = model(frame, None, mask, all_token=True)
+                    output = model(frame, None, rgb_mask, all_token=True)
                     print(f"batch:{i} flows is None")
                 else:
-                    output = model(frame, flows, mask, all_token=True)
+                    output = model(frame, flows, rgb_mask, flow_mask, all_token=True)
             else:
-                output = model(frame, flows, mask, all_token=True)
+                output = model(frame, flows, rgb_mask, flow_mask, all_token=True)
 
             # de-normalize input frames
             unnormed_frame = frame.squeeze() * std + mean
@@ -128,10 +137,10 @@ def main(args):
 
                 unnormed_frame = frame.squeeze() * std + mean
                 # print(torch.cat([mask,mask],dim=0).shape)
-                rgb_hat_reshape = unpatchify_rgb(rgb_hat, mask, num_masked_tokens)
+                rgb_hat_reshape = unpatchify_rgb(rgb_hat, rgb_mask, num_masked_tokens)
                 print((rgb_hat_reshape-unnormed_frame).pow(2).mean())
 
-                flow_hat_reshape = unpatchify_flow(flow_hat, mask, num_masked_tokens)
+                flow_hat_reshape = unpatchify_flow(flow_hat, flow_mask, num_masked_tokens)
 
                 unnormed_frame = unnormed_frame.transpose(0, 1)
                 flows_rgb = []
@@ -158,12 +167,12 @@ def main(args):
 
                 unnormed_frame = frame.squeeze() * std + mean
                 # print(torch.cat([mask,mask],dim=0).shape)
-                rgb_rgb_hat_reshape = unpatchify_rgb(rgb_rgb_hat, mask, masked_tokens)
+                rgb_rgb_hat_reshape = unpatchify_rgb(rgb_rgb_hat, rgb_mask, masked_tokens)
                 print((rgb_rgb_hat_reshape-unnormed_frame).pow(2).mean())
 
-                flow_rgb_hat_reshape = unpatchify_rgb(flow_rgb_hat, mask, masked_tokens)
-                flow_flow_hat_reshape = unpatchify_flow(flow_flow_hat, mask, masked_tokens)
-                rgb_flow_hat_reshape = unpatchify_flow(rgb_flow_hat, mask, masked_tokens)
+                flow_rgb_hat_reshape = unpatchify_rgb(flow_rgb_hat, rgb_mask, masked_tokens)
+                flow_flow_hat_reshape = unpatchify_flow(flow_flow_hat, flow_mask, masked_tokens)
+                rgb_flow_hat_reshape = unpatchify_flow(rgb_flow_hat, flow_mask, masked_tokens)
 
                 unnormed_frame = unnormed_frame.transpose(0, 1)
                 flows_rgb = []
@@ -179,7 +188,7 @@ def main(args):
                 rgb_flow_hat_rgb = torch.from_numpy(np.stack(rgb_flow_hat_rgb, axis=0).transpose(0, 3, 1, 2))
 
                 all_cat = torch.cat((flows_rgb/255, flow_flow_hat_rgb/255, rgb_flow_hat_rgb/255, unnormed_frame.cpu(), rgb_rgb_hat_reshape.cpu().transpose(0, 1), flow_rgb_hat_reshape.cpu().transpose(0, 1)), dim=0)
-                save_image(all_cat, f"./log/flow_vis_{i}.png")
+                save_image(all_cat, f"./vis_{i}.png")
 
            
 

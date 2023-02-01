@@ -58,7 +58,7 @@ pretrain: "multimodal"
 
 lamb: [1, 1, 1, 1]
 
-ckpt: ""
+# ckpt: ""
 
 # configurations for epic-kitchens dataset
 cfg:
