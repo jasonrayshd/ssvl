@@ -1,13 +1,13 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 8
+batch_size: 6
 epochs: 300
 save_ckpt_freq: 10
 
 # Model parameters
 model: "pretrain_videomae_multimodal_base_patch16_224"
-decoder_depth: 4
+decoder_depth: 6
 mask_type: "agnostic"         # choices=['tube']
 mask_ratio: 0.9
 input_size: 224           # videos input size for backbone
@@ -47,7 +47,7 @@ log_dir: "/data/shared/output"                              # help='path where t
 # device: 'cuda'                              # help='device to use for training / testing
 # seed: 0
 resume: ""                                  # help='resume from checkpoint
-auto_resume: true                           # 
+auto_resume: false                           # 
 
 start_epoch: 0                              # help='start epoch
 num_workers: 30
@@ -57,7 +57,7 @@ pretrain: "multimodal"
 # predict_preprocessed_flow: true               # whether use preprocessed flow images as target at pretraining
 flow_mode: "local"                                # mode of sampling flow images  [A]
 
-lamb: [20, 20, 1, 1]
+lamb: [1, 1, 1, 1]
 
 # configuration file
 # config: ""                                  # help='path to configuration file

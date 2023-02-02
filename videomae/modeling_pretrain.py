@@ -991,10 +991,10 @@ class PretrainMultiModalTransformer(nn.Module):
 
         rgb_vis = torch.cat([x1[:, 1:N1, :], x2[:, N1:, :]], dim=0)
         flow_vis = torch.cat([x1[:, N1+1:, :], x2[:, 1:N1, :]], dim=0)
-
+ 
         B, N, C = rgb_vis.shape
 
-        # we don't unshuffle the correct visible token order, 
+       # we don't unshuffle the correct visible token order, 
         # but shuffle the pos embedding accorddingly.
         # expand_mask = torch.cat([mask, mask], dim=0)
         expand_pos_embed = self.pos_embed.expand(B//2, -1, -1).type_as(x1).to(x1.device).clone().detach()
