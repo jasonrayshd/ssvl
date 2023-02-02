@@ -250,10 +250,12 @@ def thread_worker(path, clip_packs, tmp_dir, queue):
 
         if os.path.exists(rgb_dest) and os.path.exists(flow_dest):
             # if exist, check if we could skip this clip
-            rgb_zf_handle = zipfile.ZipFile(rgb_dest, "r")
-            flow_zf_handle = zipfile.ZipFile(flow_dest, "r")
             try:
-                # if has been processed, skip this clip
+                # zip file might be corrupted
+                rgb_zf_handle = zipfile.ZipFile(rgb_dest, "r")
+                flow_zf_handle = zipfile.ZipFile(flow_dest, "r")
+                
+                # or has been processed, skip this clip
                 if len(rgb_zf_handle.namelist()) == end_f - st_f + 1:
                     # check if the flow zip is corrupted
                     # but did not check the number of flows in it

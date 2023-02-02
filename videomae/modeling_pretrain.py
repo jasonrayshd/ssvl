@@ -540,8 +540,6 @@ class PretrainMultiModalEncoder(nn.Module):
             rgb:  torch.Tensor,  B, 3, T, H, W
             flow: torch.Tensor,  B, 2, T//2, H, W
         """
-        import pdb
-        pdb.set_trace()
         x_rgb = self.rgb_patch_embed(rgb)
         x_flow = self.flow_patch_embed(flow)
         B, _, C = x_rgb.size()

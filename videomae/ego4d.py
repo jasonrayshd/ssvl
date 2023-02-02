@@ -316,7 +316,7 @@ class Ego4dBase(torch.utils.data.Dataset):
 class Egoclip(Ego4dBase):
 
     def init_dataset(self):
-        self.anno_path = os.path.join(self.cfg.ANN_DIR, "new_egoclip_0.csv")
+        self.anno_path = os.path.join(self.cfg.ANN_DIR, "egoclip.csv")
 
         self.repeat_sample = self.cfg.repeat_sample
         self.input_size = self.cfg.input_size
