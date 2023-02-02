@@ -14,14 +14,26 @@ class TubeMaskingGenerator:
         )
         return repr_str
 
-    def __call__(self):
+    def __call__(self, batch_size):
+        """
+            Args:
+                batch_size: int
+
+            Return:
+                batch_mask: list[numpy.ndarray]
+        """
         mask_per_frame = np.hstack([
             np.zeros(self.num_patches_per_frame - self.num_masks_per_frame),
             np.ones(self.num_masks_per_frame),
         ])
-        np.random.shuffle(mask_per_frame)
-        mask = np.tile(mask_per_frame, (self.frames,1)).flatten()
-        return mask
+
+        batch_mask = []
+        for i in range(batch_size):
+            np.random.shuffle(mask_per_frame)
+            mask = np.tile(mask_per_frame.copy(), (self.frames,1)).flatten()
+            batch_mask.append(mask)
+
+        return batch_mask
 
 class AgnosticMaskingGenerator:
     def __init__(self, input_size, mask_ratio):
@@ -36,24 +48,31 @@ class AgnosticMaskingGenerator:
         )
         return repr_str
 
-    def __call__(self):
+    def __call__(self, batch_size):
+        """
+            Args:
+                batch_size: int
+
+            Return:
+                batch_mask: list[numpy.ndarray]
+        """
         mask = np.hstack([
             np.zeros(self.total_patches - self.total_masks),
             np.ones(self.total_masks),
         ]) # (1568, )
 
-        np.random.shuffle(mask)
+        batch_mask = []
+        for i in range(batch_size):
+            np.random.shuffle(mask)
 
-        return mask
+            batch_mask.append(mask.copy())
+
+        return batch_mask
 
 
 
 if __name__ == "__main__":
 
-    g = AgnosticMaskingGenerator((8, 14, 14), 0.9)
-    print(g)
-    print(g().sum())
-
-    g = TubeMaskingGenerator((8, 14, 14), 0.9)
-    print(g)
-    print(g().shape)
+    g = TubeMaskingGenerator((1, 14, 14), 0.9)
+    g(2)
+    print(g(2))

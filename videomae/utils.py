@@ -3,7 +3,7 @@ import os
 import math
 import time
 import json
-from collections import defaultdict, deque
+from collections import defaultdict, deque, OrderedDict
 import datetime
 import numpy as np
 from timm.utils import get_state_dict
@@ -14,6 +14,8 @@ import torch
 import torch.distributed as dist
 from torch._six import inf
 import random
+
+from timm.data.mixup import Mixup, mixup_target
 
 from tensorboardX import SummaryWriter
 
@@ -545,30 +547,121 @@ def multiple_samples_collate(batch, fold=False):
     Returns:
         (tuple): collated data batch.
     """
-    inputs, labels, video_idx, extra_data = zip(*batch)
+    inputs, labels= zip(*batch)
     inputs = [item for sublist in inputs for item in sublist]
     labels = [item for sublist in labels for item in sublist]
-    video_idx = [item for sublist in video_idx for item in sublist]
-    inputs, labels, video_idx, extra_data = (
+    # video_idx = [item for sublist in video_idx for item in sublist]
+    inputs, labels= (
         default_collate(inputs),
         default_collate(labels),
-        default_collate(video_idx),
-        default_collate(extra_data),
+        # default_collate(video_idx),
+        # default_collate(extra_data),
     )
     if fold:
-        return [inputs], labels, video_idx, extra_data
+        return [inputs], labels
     else:
-        return inputs, labels, video_idx, extra_data
+        return inputs, labels
 
 
-def samples_collate_ego4d_test(batch):
-    inputs, flows, info, frame_index = zip(*batch)
-    # print(f"worker: inputs[0] shape:{inputs[0].shape}")
-    inputs = torch.stack(inputs, dim=0)
-    frame_index = torch.tensor(frame_index)
+def multiple_samples_collate_fho(batch):
+    """
+        Collate function for repeated augmentation. Each instance in the batch has
+        more than one sample.
+        Args:
+            batch (tuple or list): data batch to collate.
+        Returns:
+            (tuple): collated data batch.
+    """
+    # target_lst might contains labels, masks, etc.
+    inputs, flows, *target_lst = zip(*batch)
 
-    if flows[0] is not None:
-        flows = torch.stack(flows, dim=0)
+    inputs = [item for sublist in inputs for item in sublist]
+
+    _target_lst = []
+    for target in target_lst:
+        target = [item for sublist in target for item in sublist]
+        _target_lst.append(target)
+
+    target_lst = _target_lst
+
+    inputs = default_collate(inputs)
+    target_lst = [default_collate(target) for target in target_lst]
+
+    if flows[0][0] is not None:
+        flows = [item for sublist in flows for item in sublist]
+        flows = default_collate(flows)
     else:
         flows = None
-    return inputs, flows, info, frame_index
+
+    return inputs, flows, target_lst
+
+
+def samples_collate_fho(batch):
+
+    inputs, flows, *target_lst = zip(*batch)
+    # print(len(target_lst))
+    # for target in target_lst:
+    #     print(type(default_collate(target)), type(target))
+
+    if flows[0] is not None:
+        flows =  default_collate(flows)
+    else:
+        flows = None
+
+    inputs = default_collate(inputs)    
+    target_lst = [ default_collate(target) for target in target_lst]
+
+    return inputs, flows, target_lst
+
+
+def filter_checkpoint_fho(checkpoint_model):
+    all_keys = list(checkpoint_model.keys())
+    new_dict = OrderedDict()
+    for key in all_keys:
+        if key.startswith('backbone.'):
+            new_dict[key[9:]] = checkpoint_model[key]
+        elif key.startswith('encoder.'):
+            if "rgb_patch_embed" in key:
+                new_dict[key[12:]] = checkpoint_model[key]
+            elif "flow_patch_embed" not in key:
+                # other blocks except flow_path_embed
+                if "intra_rgb" in key:
+                    # multimodal
+                    raw_key = key
+                    key = key.split(".")[1:] # remove "encoder."
+                    key[2] = key[2].split("_")[0] # might be norm1 or norm2
+                    key = ".".join(key)
+                    new_dict[key] = checkpoint_model[raw_key]
+                else:
+                    new_dict[key[8:]] = checkpoint_model[key]
+            # elif "regressor" in key:
+            #     new_dict[key[8:]] = checkpoint_model[key]
+            elif "encoder.norm" in key:
+                continue
+        else:
+            new_dict[key] = checkpoint_model[key]
+
+    return new_dict
+
+class LTAMixup(Mixup):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __call__(self, x, targets):
+        """
+            Args:
+                N: number of classes
+        """
+        assert len(x) % 2 == 0, 'Batch size should be even when using this'
+
+        if self.mode == 'elem':
+            lam = self._mix_elem(x)
+        elif self.mode == 'pair':
+            lam = self._mix_pair(x)
+        else:
+            lam = self._mix_batch(x)
+
+        mixed_targets = [mixup_target(target, self.num_classes, lam, self.label_smoothing, device=x.device) for target in targets]
+
+        return x, mixed_targets

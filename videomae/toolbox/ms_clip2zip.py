@@ -21,8 +21,8 @@ import signal
 import tarfile
 import zipfile
 
-# import wandb
-# wandb.init(project="preprocess_egoclip")
+import wandb
+wandb.init(project="preprocess_egoclip")
 
 
 class VideoRecord(object):
@@ -129,7 +129,7 @@ def parse_terminal_args():
 
     parser = argparse.ArgumentParser()
 
-    # parser.add_argument("--logfile", type=str, default="clip2zip.data", help="Path to log file")
+    parser.add_argument("--logfile", type=str, default="clip2zip.data", help="Path to log file")
 
     parser.add_argument("--nprocess", type=int, default=1, help="Total number of processes used")
     parser.add_argument("--max_num_threads", type=int, default=1, help="Number of threads used by each process")
@@ -218,19 +218,17 @@ def thread_worker(path, clip_packs, tmp_dir, queue):
 
     video = clip_packs[0]["video"]
     person = clip_packs[0]["person"]
-
+    print(video)
     print( len(clip_packs) )
 
     # read video tar file from remote server
     rgb_frame_path = os.path.join(path, "rgb", "train", person, video)
     flow_frame_path = os.path.join(path, "flow", "train", person, video)
 
-
-    exist_rgb_tar_files = [file.split(".")[0] for file in os.listdir(rgb_frame_path) if file.endswith(".tar")]
-    exist_flow_tar_files = [file.split(".")[0] for file in os.listdir(flow_frame_path) if file.endswith(".tar")]
+    # exist_rgb_tar_files = [file.split(".")[0] for file in os.listdir(rgb_frame_path) if file.endswith(".tar")]
+    # exist_flow_tar_files = [file.split(".")[0] for file in os.listdir(flow_frame_path) if file.endswith(".tar")]
     # exist_rgb_zip_files = [file.split(".")[0] for file in os.listdir(rgb_frame_path) if file.endswith(".zip")]
     # exist_flow_zip_files = [file.split(".")[0] for file in os.listdir(flow_frame_path) if file.endswith(".zip")]
-
 
     rgb_video_tf = tarfile.open(rgb_frame_path+".tar", "r")
     flow_video_tf = tarfile.open(flow_frame_path+".tar", "r")
@@ -242,11 +240,35 @@ def thread_worker(path, clip_packs, tmp_dir, queue):
     for pack in clip_packs:
 
         name = pack["name"]
-        # person = pack["person"]
-        # video = pack["video"]
-
         st_f = pack["st_f"]
         end_f = pack["end_f"]
+        person = pack["person"]
+        video = pack["video"]
+
+        rgb_dest = os.path.join(path, "rgb", "train", person, video, name+".zip")
+        flow_dest = os.path.join(path, "flow", "train", person, video, name+".zip")
+
+        if os.path.exists(rgb_dest) and os.path.exists(flow_dest):
+            # if exist, check if we could skip this clip
+            try:
+                # zip file might be corrupted
+                rgb_zf_handle = zipfile.ZipFile(rgb_dest, "r")
+                flow_zf_handle = zipfile.ZipFile(flow_dest, "r")
+                
+                # or has been processed, skip this clip
+                if len(rgb_zf_handle.namelist()) == end_f - st_f + 1:
+                    # check if the flow zip is corrupted
+                    # but did not check the number of flows in it
+                    flow_name_lst = flow_zf_handle.namelist()
+                    print(f"{name} has been processed")
+                    continue
+            except:
+                pass
+
+            finally:
+                rgb_zf_handle.close()
+                flow_zf_handle.close()
+
 
         for i in range(st_f, end_f+1):
             if i not in frame_idx_to_clip.keys():
@@ -274,18 +296,16 @@ def thread_worker(path, clip_packs, tmp_dir, queue):
         clip_list = frame_idx_to_clip[frame_idx]
 
         for clip_name in clip_list:
+            
             # targeted clip tar file
             with zipfile.ZipFile(os.path.join(tmp_dir, "rgb", clip_name+".zip"), "a") as zf_handle:
-                # io_buf = io.BytesIO(frame_bytes)
-                print( len(zf_handle.namelist()) )
+                # io_buf = io.BytesIO(frame_bytes)       
                 zf_handle.writestr(frame_name, frame_bytes)
                 current_frame_num = len(zf_handle.namelist())
-                print( len(zf_handle.namelist()) )
-
             # rgb_tf = tarfile.open(os.path.join(tmp_dir, "rgb", clip_name+".tar"), "a" )
 
             # rgb_tf.addfile(tarfile.TarInfo(frame_name), frame_bytes)
-            current_frame_num += 1
+            # current_frame_num += 1
             # rgb_tf.close()
 
             if rgb_idx % 2 == 1:
@@ -315,15 +335,17 @@ def thread_worker(path, clip_packs, tmp_dir, queue):
 
                 shutil.move(os.path.join(tmp_dir, "rgb", clip_name+".zip"), rgb_dest)
                 shutil.move(os.path.join(tmp_dir, "flow", clip_name+".zip"), flow_dest)
-                to_transfer_clip.pop(clip_name)
+                to_transfer_clip.remove(clip_name)
 
     # move remaining clips
-    for clip_name in to_transfer_clip:
-        rgb_dest = os.path.join(path, "rgb", "train", person, video, clip_name+".zip")
-        flow_dest = os.path.join(path, "flow", "train", person, video, clip_name+".zip")
+    print("to_transfer_clip", len(to_transfer_clip))
+    assert len(to_transfer_clip) == 0
+    # for clip_name in to_transfer_clip:
+    #     rgb_dest = os.path.join(path, "rgb", "train", person, video, clip_name+".zip")
+    #     flow_dest = os.path.join(path, "flow", "train", person, video, clip_name+".zip")
 
-        shutil.move(os.path.join(tmp_dir, "rgb", clip_name+".zip"), rgb_dest)
-        shutil.move(os.path.join(tmp_dir, "flow", clip_name+".zip"), flow_dest)
+    #     shutil.move(os.path.join(tmp_dir, "rgb", clip_name+".zip"), rgb_dest)
+    #     shutil.move(os.path.join(tmp_dir, "flow", clip_name+".zip"), flow_dest)
 
     # for pack in clip_packs:
     #     clip_name = pack["name"]
@@ -344,7 +366,7 @@ def thread_worker(path, clip_packs, tmp_dir, queue):
 
     queue.put({
         "video_name": video,
-        "thread_name": threading.current_thread().name,
+        "process_name": mlp.current_process().name,
         "state": "success",
     })
 
@@ -421,13 +443,14 @@ def write2log(pack, logger):
 
 
 def main(args):
-    # root = "/mnt/shuang/Data/epic-kitchen/3h91syskeag572hl6tvuovwv4d"
-    # dest = "/mnt/shuang/Data/ego4d/preprocessed_data/"
+    root = "/mnt/shuang/Data/epic-kitchen/3h91syskeag572hl6tvuovwv4d"
+    dest = "/mnt/shuang/Data/ego4d/preprocessed_data/"
 
-    root = "/data/shared/ssvl/epic-kitchens55/3h91syskeag572hl6tvuovwv4d"
-    dest = "./"
+    # root = "/data/shared/ssvl/epic-kitchens55/3h91syskeag572hl6tvuovwv4d"
+    # dest = "./"
 
-    logfile = os.path.join(dest, "clip2zip.data")
+    # logfile = os.path.join(dest, "epic55_rank0.data")
+    logfile = args.logfile
     open(logfile, "a+").close()
 
     anno_path = os.path.join(root, "annotations/EPIC_train_action_labels.pkl")
@@ -455,64 +478,84 @@ def main(args):
     print("Skipping processed/excluded videos...")
 
     # exclude by video
-    for video_uid in exclude_videos:
-        data_dict.pop(video_uid)
-        filtered_num += 1
+    # print(data_dict.keys())
+    # print(exclude_videos)
+    for k, v in data_dict.items():
+        if k in exclude_videos:
+            filtered_num += 1
+        else:
+            filtered_data_dict[k] = v
+        # for clip in v:
+        #     if clip["name"] in exclude_videos:
+        #         filtered_num += 1
+        #         continue
+        #     filtered_data_dict[k].append(clip)
 
-    filtered_data_dict = data_dict
-
+    total_clips = 0
     for k,v in filtered_data_dict.items():
-        total_clip_num += len(v)
-
-    print(f"Clips to be processed:{total_clip_num}")
+        total_clips += len(v)
+    print(f"Clips to be processed:{total_clips}")
     print(f"{filtered_num}/[{len(exclude_videos)}] videos have been ignored.")
     # return
 
     nprocess = args.nprocess
-    max_num_threads = args.max_num_threads
-    chunked_data_dict = split_data(filtered_data_dict, nprocess) # list[ list[str, dict, dict, ...], list[], ... ]
+    # max_num_threads = args.max_num_threads
+    # chunked_data_dict = split_data(filtered_data_dict, nprocess) # list[ list[str, dict, dict, ...], list[], ... ]
 
     process_pool = {}
-    queue = mlp.Queue(nprocess*max_num_threads*2)
-    for i in range(nprocess):
-        process_name = f"Process-{i}"
-        process = mlp.Process(target=process_worker, args=(chunked_data_dict[i], source, max_num_threads, queue), name=process_name)
-        process.start()
-        process_pool[process_name] = process
+    queue = mlp.Queue(nprocess*2)
+    # for i in range(nprocess):
+    #     process_name = f"Process-{i}"
+    #     process = mlp.Process(target=process_worker, args=(chunked_data_dict[i], source, max_num_threads, queue), name=process_name)
+    #     process.start()
+    #     process_pool[process_name] = process
 
-    iter = 0
-    done_process = 0
+    idx = 0
+    active_process_num = 0
+    video_names = list(filtered_data_dict.keys())
     progress_bar = tqdm(total=len(filtered_data_dict))
 
     logger = open(logfile, "a+")
     logger.write("\n")
 
     tqdm.write(f"recording logs to file: {logfile}")
-    while iter < len(filtered_data_dict) and done_process < nprocess :
+    while idx < len(video_names):
 
-        pack = queue.get()
+        if active_process_num < nprocess:
+            # start a process
+            video_name = video_names[idx]
+            process_name = f"Process-{idx}"
+            tmp_dir = "./" + process_name
+            os.makedirs(tmp_dir, exist_ok=True)
+            process = mlp.Process(target=thread_worker, args=(source, filtered_data_dict[video_name], tmp_dir, queue), name=process_name)
+            process.start()
+            process_pool[process_name] = process
 
-        if not pack["process_end"]:
-            # if process not end
+            active_process_num += 1
+            idx +=1 
+        else:
+            pack = queue.get()
+            process_name = pack["process_name"]
+            process_pool[process_name].join()
+
+            active_process_num -= 1
 
             write2log(pack, logger)
-            iter += 1
-
             progress_bar.update(1)
-            progress_bar.set_postfix_str(f"current process number:{nprocess-done_process}")
-            # wandb.log({"video": iter})
-        else:
-            print(f"Process: {pack['process_name']} finished")
-            done_process += 1
 
-        # tqdm.set_postfixstr
+            wandb.log({"video": idx})
+
+    for name, process in process_pool.items():
+        process.join()
 
     print("emptying main process queue...")
     while not queue.empty():
         pack = queue.get()
-        if pack["process_end"]:
-            continue
+        process_name = pack["process_name"]
+        process_pool[process_name].join()
+
         write2log(pack, logger)
+        progress_bar.update(1)
     print("done")
     
 

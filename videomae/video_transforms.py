@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import cv2
 import math
 import numpy as np
 import random
@@ -1279,3 +1280,54 @@ class Normalize(object):
 
     def __repr__(self):
         return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
+
+
+class ShorterSideResize(object):
+    """
+        Args:
+            clip (List): list of numpy.ndarray, frame shape (H W C) in RGB mode
+    """
+    def __init__(self,desired_shorter_side):
+        self.desired_shorter_side = desired_shorter_side
+    
+    def __call__(self, clip):
+
+        frame = clip[0]
+        original_height, original_width, _ = frame.shape
+        if original_height < original_width:
+            # Height is the shorter side
+            new_height = self.desired_shorter_side
+            new_width = np.round(
+                original_width*(self.desired_shorter_side/original_height)
+            ).astype(np.int32)
+        elif original_height > original_width:
+            # Width is the shorter side
+            new_width = self.desired_shorter_side
+            new_height = np.round(
+                original_height*(self.desired_shorter_side/original_width)
+            ).astype(np.int32)
+        else:
+            # Both are the same
+            new_height = self.desired_shorter_side
+            new_width = self.desired_shorter_side
+        
+        assert np.isclose(
+            new_width/new_height,
+            original_width/original_height,
+            0.01
+        )
+    
+        for i,frame in enumerate(clip):
+
+            frame = cv2.resize(
+                frame,
+                (new_width, new_height),
+                interpolation=cv2.INTER_AREA
+            )
+            clip[i] = frame
+
+        return clip
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(short side size={0})'.format(self.desired_shorter_side)
+

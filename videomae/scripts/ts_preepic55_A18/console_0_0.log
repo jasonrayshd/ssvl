@@ -1,7 +1,0 @@
-INFO:root:Added key: store_based_barrier_key:1 to store for rank: 0
-DEBUG:git.cmd:Popen(['git', 'rev-parse', '--show-toplevel'], cwd=/data/shared/ssvl, universal_newlines=False, shell=None, istream=None)
-DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.wandb.ai:443
-DEBUG:urllib3.connectionpool:https://api.wandb.ai:443 "POST /graphql HTTP/1.1" 200 None
-DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.wandb.ai:443
-DEBUG:urllib3.connectionpool:https://api.wandb.ai:443 "POST /graphql HTTP/1.1" 200 None
-DEBUG:git.cmd:Popen(['git', 'cat-file', '--batch-check'], cwd=/data/shared/ssvl, universal_newlines=False, shell=None, istream=<valid stream>)

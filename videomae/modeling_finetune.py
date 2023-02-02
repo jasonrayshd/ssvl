@@ -304,7 +304,7 @@ class VisionTransformer(nn.Module):
 
         return x
 
-class Ego4dTwoHead_VisionTransformer(nn.Module):
+class OSCCModel(nn.Module):
 
     def __init__(self, 
                 img_size=224, 
@@ -366,15 +366,12 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
         self.apply(self._init_weights)
 
         self.cls_head = nn.Linear(embed_dim, 2)
-        self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
+        # self.loc_head = nn.Linear(self.num_frames // self.tubelet_size * embed_dim, self.num_frames+1) # state change localization has num_frames+1
 
         trunc_normal_(self.cls_head.weight, std=.02)
         self.cls_head.weight.data.mul_(init_scale)
         self.cls_head.bias.data.mul_(init_scale)
 
-        trunc_normal_(self.loc_head.weight, std=.02)
-        self.loc_head.weight.data.mul_(init_scale)
-        self.loc_head.bias.data.mul_(init_scale)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -432,16 +429,16 @@ class Ego4dTwoHead_VisionTransformer(nn.Module):
         else:
             cls = self.cls_head( self.norm(x)[:, 0] )
 
-        num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
-        tubelet_size = self.patch_embed.tubelet_size
-        x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
-        x = x.mean(dim=2).squeeze(dim=2)
-        x = self.temporal_norm(x)
-        x = x.flatten(1)
-        loc = self.loc_head(x) # shape: bs, frame num
-        # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
+        # num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
+        # tubelet_size = self.patch_embed.tubelet_size
+        # x = einops.rearrange(x, "b (t n) d -> b t n d", t=T//tubelet_size, n=num_patches)
+        # x = x.mean(dim=2).squeeze(dim=2)
+        # x = self.temporal_norm(x)
+        # x = x.flatten(1)
+        # loc = self.loc_head(x) # shape: bs, frame num
+        # # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
 
-        return loc, cls
+        return cls
 
 
 class FintuneVisionTransformerEncoder(nn.Module):
@@ -1557,6 +1554,652 @@ class MultiCAERegressor(nn.Module):
         return x_masked
 
 
+class VarAnt(nn.Module):
+    def __init__(self, 
+            hidden_dim = 256,     # hidden dimension for RNNs
+            latent_dim = 128,    # latent dimension for goal
+            num_act_cand = 10,   # number of action candidates used for nextiction
+            n_layers = 1,        # number of layers in sampler RNN for generating next action latent goal
+            num_goal_cand = 3,   # number of samples drawn from observed goal distribution
+            next_num = 3,        # number of anticipated actions defined in Ego4d long-term anticipation
+            num_classes = 1000,  # number of output classes 
+            feat_dim = 256,        # dimension of input sequential feature
+            drop_rate = 0.2,
+        ):
+
+        super(VarAnt, self).__init__()
+
+        self.feat_dim = feat_dim
+        self.h_dim = hidden_dim 
+        self.z_dim = latent_dim 
+        self.num_act_cand = num_act_cand
+        self.n_layers = n_layers
+        self.num_goal_cand = num_goal_cand
+        self.next_num = next_num
+        self.num_classes = num_classes
+
+        # # # Linear layer for observed feature x_t
+        self.phi_x = nn.Sequential(nn.Linear(self.feat_dim, self.h_dim),
+                                   nn.ReLU())
+        # # # Linear layer for encoder - observed feature x_t and hidden state from t-1
+        self.phi_enc = nn.Sequential(nn.Linear(self.h_dim + self.h_dim, self.h_dim),
+                                     nn.ReLU(),
+                                     nn.Linear(self.h_dim, self.z_dim))
+        # # #  MLP for prior - input is hidden state from t-1
+        self.phi_prior = nn.Sequential(nn.Linear(self.h_dim, self.h_dim),
+                                       nn.ReLU(),
+                                       nn.Linear(self.h_dim, self.z_dim))
+        # # #  Linear layer for latent goal z_t at time t
+        self.phi_z = nn.Sequential(nn.Linear(self.z_dim, self.h_dim),
+                                   nn.ReLU())
+
+        # # # RNN to generate prior and encoder distributions for observed features
+        self.rnn = nn.GRU(2*self.h_dim, self.h_dim, 1)
+        
+        # # # After getting the last latent goal change phi_z for sample
+        self.phi_z_new = nn.Sequential(nn.Linear(self.z_dim, self.h_dim),
+                                   nn.ReLU())
+        # # # After getting the last layer change phi_prior 
+        self.phi_prior_new = nn.Sequential(nn.Linear(self.h_dim, self.h_dim),
+                                       nn.ReLU(),
+                                       nn.Linear(self.h_dim, self.z_dim))
+        # # # Layer normalization on rnn output
+        # self.layernorm = nn.LayerNorm(self.h_dim)
+        
+        # # # Linear layer for Observed action based on latent goal and final hidden state 
+        # # # OR
+        # # # Linear layer for nexticted action candidate based on observed action and final hidden state 
+        self.phi_get_act = nn.Sequential(nn.Linear(self.z_dim + self.h_dim, self.h_dim),
+                                   nn.ReLU())
+
+        # # #  RNN to generate nexticted visual feature for nexticted latent goal
+        # self.sampler_rnn = nn.GRU(h_dim, h_dim, self.n_layers)
+        
+        # # # Linear layer for nexticted latent goal 
+        # self.phi_prior_next = nn.Sequential(nn.Linear(h_dim, z_dim), nn.ReLU())
+
+        # # # Linear layer to transform observed action to z_dim each
+        self.phi_obs_act = nn.Sequential(nn.Linear(self.h_dim, self.h_dim),
+                                       nn.ReLU(),
+                                       nn.Linear(self.h_dim, self.z_dim))
+                                       
+        # # # Linear layer to transform next action to z_dim
+        self.phi_next_act = nn.Sequential(nn.Linear(self.h_dim, self.h_dim),
+                                       nn.ReLU(),
+                                       nn.Linear(self.h_dim, self.z_dim))
+
+
+        # # # Linear layer for next latent goal - inputs are next and observed action
+        self.phi_enc_next = nn.Sequential(nn.Linear(2*self.z_dim, self.z_dim), nn.ReLU())
+
+        self.phi_act = nn.Sequential(nn.Linear(self.h_dim, self.h_dim),
+                                       nn.ReLU(),)
+
+        # rnn for action anticipation
+        # hidden state: h_dim
+        # input: action prior(h_dim) and current action()
+        self.action_rnn = nn.GRU(2*self.h_dim, self.h_dim, 1)
+
+        # # # For generating std of distributions
+        self.softplus = nn.Softplus()
+        self.softmax = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(drop_rate)
+
+        self.cur_act_classifier = nn.Linear(self.h_dim, self.num_classes)
+        self.next_act_classifier = nn.Linear(self.h_dim, self.num_classes)
+
+        # self.act_classifier_lst = nn.ModuleList([
+        #     nn.Linear(self.h_dim, self.num_classes)
+        #     for i in range(self.next_num-1)
+        # ])
+
+    def init_hidden(self, x):
+        return torch.randn(self.n_layers, x.size(1), self.h_dim).to(x)
+
+    def reparameterized_sample(self, mean, std, device):
+        """using std to sample"""
+        eps = torch.randn(std.shape, requires_grad=True).to(device)
+        return eps.mul(std).add_(mean)
+
+    def kld_gauss(self, mean_1, std_1, mean_2, std_2):
+        """Using std to compute KLD"""
+        kld_element = (2 * torch.log(std_2) - 2 * torch.log(std_1) +
+                       (std_1.pow(2) + (mean_1 - mean_2).pow(2)) /
+                       std_2.pow(2) - 1)
+        return .5 * torch.sum(kld_element)
+    
+    def sym_kld_gauss(self, mean_1, std_1, mean_2, std_2):
+        """Using std to compute KLD"""
+        kld_element_1 = (2 * torch.log(std_2) - 2 * torch.log(std_1) +
+                       (std_1.pow(2) + (mean_1 - mean_2).pow(2)) /
+                       std_2.pow(2) - 1)
+                       
+        kld_element_2 = (2 * torch.log(std_1) - 2 * torch.log(std_2) +
+                       (std_2.pow(2) + (mean_2 - mean_1).pow(2)) /
+                       std_1.pow(2) - 1)
+        return .5 * (torch.sum(kld_element_1) + torch.sum(kld_element_2))
+
+    def forward(self, feat_seq, batch_size=None):
+
+        self.rnn.flatten_parameters()
+        self.action_rnn.flatten_parameters()
+
+        kld_lat_goal = 0 
+        if len(feat_seq.shape) == 2:
+            feat_seq = feat_seq.unsqueeze(0)
+        h = self.init_hidden(feat_seq)
+        # # # conditional VRNN for generating latent goal based on observed features
+
+        for t in range(feat_seq.shape[0]):
+            # print('feat dim:',self.feat_dim)
+            x_t = feat_seq[t,:]
+            # print('x_t:',x_t.shape)
+            # # # Encoder distribution that combines observed feature at time t and hidden state from t-1
+            enc_t = self.phi_enc(torch.cat([h[-1], self.phi_x(x_t)], -1))
+
+            enc_mean_t = enc_t
+            enc_std_t = self.softplus(enc_t)
+
+            # # # Prior distribution based on hidden state from t-1
+            prior_t = self.phi_prior(h[-1])
+            prior_mean_t = prior_t
+            prior_std_t = self.softplus(prior_t)
+
+            # # # Comparing KLDiv between encoder and prior distributions
+            kld_lat_goal += self.kld_gauss(enc_mean_t, enc_std_t, prior_mean_t, prior_std_t)
+
+            # # # Latent goal at time t
+            z_t = self.reparameterized_sample(enc_mean_t, enc_std_t, device = feat_seq.device).type_as(feat_seq)
+
+            _, h = self.rnn(torch.cat([self.phi_x(x_t).unsqueeze(0), self.phi_z(z_t).unsqueeze(0)], -1), h)
+
+            # # #  applying layernorm on hidden state
+            # h = self.layernorm(h)
+        # # # Distribution for latent goal for observed sequence
+        obs_lat_goal_mean = self.phi_prior(h[-1])
+        obs_lat_goal_std = self.softplus(self.phi_prior(h[-1]))
+
+        lat_goal_dis = 1e9
+        next_act_final = 0.
+        obs_act_final = 0.
+        kld_next_lat_goal = 0.
+        for _ in range(self.num_goal_cand):
+            # # # Sample latent goal for observed sequence
+            obs_lat_goal = self.reparameterized_sample(obs_lat_goal_mean, obs_lat_goal_std, device = feat_seq.device).type_as(feat_seq)
+            # # # Observed action based on latent goal and final hidden state 
+            obs_act = self.phi_get_act(torch.cat([self.phi_z_new(obs_lat_goal).unsqueeze(0), self.phi_prior_new(h[-1]).unsqueeze(0)], -1))
+
+            # # # Predicted(next) action using observed action and final hidden state
+            next_act_dummy = self.phi_get_act(torch.cat([self.phi_prior_new(h[-1]).unsqueeze(0), obs_act], -1))
+            next_act_mean = next_act_dummy
+            next_act_std = self.softplus(next_act_dummy)
+
+            for i in range(self.num_act_cand): 
+                # # # Next action sample
+                next_act = self.reparameterized_sample(next_act_mean, next_act_std, device = feat_seq.device).type_as(feat_seq)
+                # print('next_act:', next_act.shape)
+                # print('obs_act:', obs_act.shape)
+
+                # CVAE for next action 
+                # # # Prior distribution for next latent goal
+                prior_next_lat_goal_mean = self.phi_next_act(next_act)
+                prior_next_lat_goal_std = self.softplus(self.phi_next_act(next_act))
+                # print('prior_next_lat_goal_std:', prior_next_lat_goal_std.shape)
+
+                # # # Encoder distribution for nexticted latent goal conditioned on observed action
+                enc_next_lat_goal = self.phi_enc_next(torch.cat([self.phi_next_act(next_act), self.phi_obs_act(obs_act)], -1))
+                enc_next_lat_goal_mean = enc_next_lat_goal
+                enc_next_lat_goal_std = self.softplus(enc_next_lat_goal)
+                # print('enc_next_lat_goal_std:', enc_next_lat_goal_std.shape)
+
+                # # # Symmetric KLDiv between latent goal distribution for observed action and nexticted action
+                new_lat_dis = self.sym_kld_gauss( obs_lat_goal_mean, obs_lat_goal_std, \
+                                                enc_next_lat_goal_mean, enc_next_lat_goal_std)
+
+                # if i == 0:
+                #     lat_goal_dis = new_lat_dis
+                #     next_act_final = next_act
+                #     obs_act_final = obs_act
+                #     kld_next_lat_goal = self.kld_gauss( enc_next_lat_goal_mean, enc_next_lat_goal_std,\
+                #                                prior_next_lat_goal_mean, prior_next_lat_goal_std)
+                # # # The action candidate with minimal Symmetric KLD is chosen
+                if i == 0 or new_lat_dis < lat_goal_dis:
+                    
+                    lat_goal_dis = new_lat_dis
+                    # # # Comparing KLDiv between encoder and prior distributions of nexticted latent goal
+                    kld_next_lat_goal = self.kld_gauss( enc_next_lat_goal_mean, enc_next_lat_goal_std,\
+                                            prior_next_lat_goal_mean, prior_next_lat_goal_std)
+                    # # # Predicted action
+                    next_act_final = next_act
+                    obs_act_final = obs_act
+
+        # found best observed action and next action pair
+        # keep predicting future actions
+        kld_future_lat_goal = [0. for i in range(self.next_num-1)]
+        future_act_final = [0. for i in range(self.next_num-1)]
+        future_goal_dis = [1e9 for i in range(self.next_num-1)]
+
+        pre_act = obs_act_final # previous action
+        cur_act = next_act_final # current action
+        # init hidden state for action anticipation
+        h_action = h.clone() # initialize first action hidden state with h_T
+
+        for i in range(self.next_num-1):
+
+            _, h_action = self.action_rnn(torch.cat([self.phi_act(pre_act), self.phi_act(cur_act)], -1), h_action)
+
+            pre_act = cur_act
+
+            future_act_dummy = self.phi_get_act(torch.cat([self.phi_prior_new(h_action[-1]).unsqueeze(0), pre_act], -1))
+            future_act_mean = future_act_dummy
+            future_act_std = self.softplus(future_act_dummy)
+
+            for j in range(self.num_act_cand): 
+                # # # Next action sample
+                future_act = self.reparameterized_sample(future_act_mean, future_act_std, device = feat_seq.device).type_as(feat_seq)
+
+                prior_future_lat_goal_mean = self.phi_next_act(future_act)
+                prior_future_lat_goal_std = self.softplus(self.phi_next_act(future_act))
+                # print('prior_next_lat_goal_std:', prior_next_lat_goal_std.shape)
+
+                # # # Encoder distribution for nexticted latent goal conditioned on observed action
+                enc_future_lat_goal = self.phi_enc_next(torch.cat([self.phi_next_act(future_act), self.phi_next_act(pre_act)], -1))
+                enc_future_lat_goal_mean = enc_future_lat_goal
+                enc_future_lat_goal_std = self.softplus(enc_future_lat_goal)
+                # print('enc_next_lat_goal_std:', enc_next_lat_goal_std.shape)
+
+                # # # Symmetric KLDiv between latent goal distribution for observed action and nexticted action
+                new_lat_dis = self.sym_kld_gauss( obs_lat_goal_mean, obs_lat_goal_std, \
+                                                enc_future_lat_goal_mean, enc_future_lat_goal_std)
+
+                if j == 0 or new_lat_dis < future_goal_dis[i]:
+                    future_goal_dis[i] = new_lat_dis
+
+                    kld_future_lat_goal[i] = self.kld_gauss( enc_future_lat_goal_mean, enc_future_lat_goal_std,\
+                                            prior_future_lat_goal_mean, prior_future_lat_goal_std)
+                    # # # Predicted action
+                    future_act_final[i] = future_act
+
+            cur_act = future_act_final[i]
+
+        # # # Embedding both next and current action to number of action classes
+        try:
+            out_next = self.next_act_classifier(next_act_final).squeeze(0)
+            out_future = [self.next_act_classifier(future_act_final[i]).squeeze(0) for i in range(self.next_num-1)]  
+            out_future = [out_next, *out_future]
+        except:
+            print('next_act_final:', next_act_final.shape)
+
+        out_cur = self.cur_act_classifier(obs_act_final)
+
+        return out_cur.squeeze(0), out_future, kld_lat_goal, kld_next_lat_goal, lat_goal_dis, \
+             sum(kld_future_lat_goal), sum(future_goal_dis)
+
+
+class MultiTaskHead(nn.Module):
+    def __init__(
+        self,
+        dim_in,
+        num_classes,
+        dropout_rate=0.0,
+        act_func="softmax",
+    ):
+        super(MultiTaskHead, self).__init__()
+
+        if dropout_rate > 0.0:
+            self.dropout = nn.Dropout(dropout_rate)
+        # Perform FC in a fully convolutional manner. The FC layer will be
+        # initialized with a different std comparing to convolutional layers.
+
+        self.projection = nn.Linear(dim_in, num_classes, bias=True)
+        # Softmax for evaluation and testing.
+        if act_func == "softmax":
+            self.act = nn.Softmax(dim=4)
+        elif act_func == "sigmoid":
+            self.act = nn.Sigmoid()
+        else:
+            raise NotImplementedError(
+                "{} is not supported as an activation" "function.".format(act_func)
+            )
+
+    def forward(self, feat):
+        """
+            Args:
+                feat : (B, T, H, W, C)
+        """
+
+        if hasattr(self, "dropout"):
+            feat = self.dropout(feat)
+        B,*_, C = feat.shape
+        feat = feat.reshape(B, -1, C).mean(1)
+
+        feat = self.projection(feat)
+
+        return feat
+
+
+class LongTermActionAnticipationModel(nn.Module):
+    """ 
+        Vision Transformer with support for patch or hybrid CNN input stage
+    """
+    def __init__(self, 
+                img_size=224, 
+                patch_size=16, 
+                in_chans=3, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
+                keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
+                ):
+        super().__init__()
+
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
+        self.keep_dim = keep_dim
+        self.patch_size = patch_size
+        self.patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
+        num_patches = self.patch_embed.num_patches
+
+        if use_learnable_pos_emb:
+            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+        else:
+            # sine-cosine positional embeddings is on the way
+            self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
+
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.head_type = "baseline"
+
+        if self.head_type == "varant":
+            self.anticipation_model = VarAnt(
+
+                num_classes = num_classes,
+                next_num = 20,
+                drop_rate = 0.2,
+                feat_dim=embed_dim,  # dimension of input sequential feature
+                hidden_dim = 512,     # hidden dimension for RNNs
+                latent_dim = 256,    # latent dimension for goal
+                num_act_cand = 10,   # number of action candidates used for nextiction
+                n_layers = 1,        # number of layers in sampler RNN for generating next action latent goal
+                num_goal_cand = 3,   # number of samples drawn from observed goal distribution
+            )
+        elif self.head_type == "baseline":
+             self.anticipation_model = nn.ModuleList([
+                    MultiTaskHead(
+                    dim_in=embed_dim,
+                    num_classes = num_classes,
+                    dropout_rate=0.1,
+                    act_func="softmax",
+                ) for i in range(21)
+             ])
+
+        self.apply(self._init_weights)
+        # self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        # self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        # self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token'}
+
+    def get_classifier(self):
+        return self.head
+
+    def reset_classifier(self, num_classes, global_pool=''):
+        self.num_classes = num_classes
+        self.head = nn.Linear(self.embed_dim, num_classes)
+
+    def forward_features(self, x):
+        B, C, T, H, W = x.shape
+        x = self.patch_embed(x)
+        B, _, _ = x.size()
+
+        if self.pos_embed is not None:
+            x = x + self.pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
+        x = self.pos_drop(x)
+
+        for blk in self.blocks:
+            x = blk(x)
+
+        return x
+
+    def forward(self, x):
+        # x: B, C, T, H, W,
+        B, C, T, H, W = x.shape
+
+        x = self.forward_features(x)
+        # x: B, (T//t)*(H//p0)*(W//p1), p0*p1*t*c
+        if self.head_type == "varant":
+            feat_seq = einops.rearrange(x, "b (t h w) c -> t b (h w) c", h=H//self.patch_size, w=W//self.patch_size,t=T//self.tubelet_size,)
+            feat_seq = feat_seq.mean(2).squeeze(2) # T B C
+            out = self.anticipation_model(feat_seq)
+        elif self.head_type == "baseline":
+            feat_seq = einops.rearrange(x, "b (t h w) c -> b t h w c", h=H//self.patch_size, w=W//self.patch_size,t=T//self.tubelet_size,)
+            out = [self.anticipation_model[i](feat_seq) for i in range(21)]
+
+        # out = out_cur, out_future, kld_lat_goal, kld_next_lat_goal, lat_goal_dis, kld_future_lat_goal, future_goal_dis
+        return out
+
+
+class HandsPredictionHead(nn.Module):
+
+    def __init__(self, 
+        embed_dim = 256,  # model hidden dimension
+        feat_dim = 768,    # input feature dimension
+
+        drop_rate = 0.3,
+        method = "baseline"):
+
+        super().__init__()
+
+        self.method = method
+        self.embed_dim = embed_dim
+
+        if method == "baseline":
+            norm_layer = partial(nn.LayerNorm, eps=1e-6)
+            self.norm = norm_layer(feat_dim)
+            # self.dropout = nn.Dropout(drop_rate)
+            self.head = nn.Sequential(
+                nn.Linear(feat_dim,embed_dim),
+                nn.Dropout(drop_rate),
+                nn.ReLU(),
+                nn.Linear(embed_dim,20),   
+            )
+
+    def forward(self, x):
+        
+        if self.method == "baseline":
+            # x: B, N, C
+            x = self.norm(x)
+            x = x.mean(1).squeeze()
+            preds = self.head(x)
+            return preds
+
+
+class FutureHandsPredictionModel(nn.Module):
+    """ 
+        Vision Transformer with support for patch or hybrid CNN input stage
+    """
+    def __init__(self, 
+                img_size=224, 
+                patch_size=16, 
+                in_chans=3, 
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
+                keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
+                ):
+        super().__init__()
+
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
+        self.keep_dim = keep_dim
+        self.patch_size = patch_size
+        self.patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
+        num_patches = self.patch_embed.num_patches
+
+        if use_learnable_pos_emb:
+            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+        else:
+            # sine-cosine positional embeddings is on the way
+            self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
+
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+
+        # self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        # self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        # self.temporal_norm = norm_layer(embed_dim) if keep_dim else None
+
+        self.hands_prediction_head = HandsPredictionHead(embed_dim=256,feat_dim=embed_dim, method="baseline")
+
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token'}
+
+    def get_classifier(self):
+        return self.head
+
+    def reset_classifier(self, num_classes, global_pool=''):
+        self.num_classes = num_classes
+        self.head = nn.Linear(self.embed_dim, num_classes)
+
+    def forward_features(self, x):
+        B, C, T, H, W = x.shape
+        x = self.patch_embed(x)
+        B, _, _ = x.size()
+
+        if self.pos_embed is not None:
+            x = x + self.pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
+        x = self.pos_drop(x)
+
+        for blk in self.blocks:
+            x = blk(x)
+
+        return x
+
+    def forward(self, x):
+        # x: B, C, T, H, W,
+        B, C, T, H, W = x.shape
+        x = self.forward_features(x)
+        # x: B, (T//t)*(H//p0)*(W//p1), p0*p1*t*c
+
+        out = self.hands_prediction_head(x)
+
+        return out
+
+
+
+@register_model
+def vit_egoclip_base_patch16_224(pretrained=False, **kwargs):
+    model = VisionTransformer(
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs
+    )
+
+    return model
+
+
+@register_model
+def vit_hands_base_patch16_224(pretrained=False, **kwargs):
+    model = FutureHandsPredictionModel(
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs
+    )
+
+    return model
+
+
+@register_model
+def vit_lta_base_patch16_224(pretrained=False, **kwargs):
+    model = LongTermActionAnticipationModel(
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs
+    )
+
+    return model
+
+
 @register_model
 def vit_twohead_multicae_base_patch16_224(pretrained=False, **kwargs):
     model = TwoHeadMultiCAE(
@@ -1567,11 +2210,10 @@ def vit_twohead_multicae_base_patch16_224(pretrained=False, **kwargs):
     return model
 
 
-
 @register_model
-def vit_twohead_base_patch16_224(pretrained=False, **kwargs):
+def oscc_vit_base_patch16_224(pretrained=False, **kwargs):
 
-    model = Ego4dTwoHead_VisionTransformer(
+    model = OSCCModel(
             patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
             norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
 
@@ -1579,9 +2221,9 @@ def vit_twohead_base_patch16_224(pretrained=False, **kwargs):
     return model
 
 @register_model
-def vit_twohead_large_patch16_224(pretrained=False, **kwargs):
+def oscc_vit_large_patch16_224(pretrained=False, **kwargs):
 
-    model = Ego4dTwoHead_VisionTransformer(
+    model = OSCCModel(
             patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
             norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
 
@@ -1687,11 +2329,12 @@ def vit_large_patch16_512(pretrained=False, **kwargs):
 
 
 if __name__ == "__main__":
-    model1 = VisionTransformer(
+    device = "cuda:0"
+    model = LongTermActionAnticipationModel(
         patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         
-        num_classes= 2,
+        num_classes= 1000,
         all_frames= 16,
         tubelet_size=2,
         drop_rate=0,
@@ -1699,26 +2342,8 @@ if __name__ == "__main__":
         attn_drop_rate=0,
         use_mean_pooling=True,
         init_scale=0.001,
-        
-        )
+        ).to(device)
 
-    model2 = Ego4dTwoHead_VisionTransformer(
-        patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        
-        num_classes= 2,
-        all_frames= 16,
-        tubelet_size=2,
-        drop_rate=0,
-        drop_path_rate=0,
-        attn_drop_rate=0,
-        use_mean_pooling=True,
-        init_scale=0.001,
-        
-        )
-    count = 0
-    for k,v in model2.state_dict().items():
-        if k not in model1.state_dict().keys():
-            count += 1
+    # x = torch.randn((4,3,16,224,224)).to(device)
 
-    print(count) # 4
+    # out = model(x)
