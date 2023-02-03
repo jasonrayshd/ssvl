@@ -86,18 +86,20 @@ def save_frame(dest, frame, idx, frame_idx, related_clips, tmp_dir, desired_shor
     # write to video directory    
     frame_name_in_video_dir = "frame_{:010d}.jpg".format(idx)
     file_path =  os.path.join(dest, frame_name_in_video_dir)
-    cv2.imwrite(
-        file_path,
-        cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) 
-    )
+
+    if not os.path.exists(file_path):
+        cv2.imwrite(
+            file_path,
+            cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) 
+        )
 
     frame_name_in_clip_dir =  "frame_{:010d}".format(idx) + "_" + "{:010d}".format(frame_idx)  + '.jpg'
     # write to zip file for the clip, the zip file will be transferred when video has been processed
     for clip in related_clips: # list[int]
-        with zipfile.open(f"{tmp_dir}/{clip}.zip", "a+") as zf:
+        with zipfile.ZipFile(f"{tmp_dir}/{clip}.zip", "a") as zf:
             io_buf = io.BytesIO()
             pil = Image.fromarray(frame)
-            pil.save(io_buf, format="jpg")
+            pil.save(io_buf, format="jpeg", quality=100, subsampling=0)
             zf.writestr(frame_name_in_clip_dir, io_buf.getvalue())
 
     return 1
@@ -213,12 +215,22 @@ def td_worker(source, dest, data_dict, tmp_dir, td_queue, desired_shorter_side):
         # make directory for each clip
         os.makedirs(os.path.join(dest, uid + "_{:05d}".format(clip_idx)), exist_ok=True)
 
+        if os.path.exists(os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" )):
+            try:
+                # verify zip file is not corrupted and is not empty
+                zf = zipfile.ZipFile(os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" ), "r")
+                assert len(zf.namelist()) != 0
+                continue
+            except:
+                # else keep extracting frames for this clip
+                pass
+
         for frame_idx in clip:
             if frame_idx not in frame_to_clip.keys():
                 frame_to_clip[frame_idx] = []
             frame_to_clip[frame_idx].append(clip_idx) # mark the clip index of each frame
 
-        frames_list.extend(*clip)
+        frames_list.extend(clip)
 
     frames_list = sorted(list(set(frames_list)))
 
@@ -252,7 +264,9 @@ def td_worker(source, dest, data_dict, tmp_dir, td_queue, desired_shorter_side):
     for clip_idx in range(len(clip_list)):
 
         clip_name = str(clip_idx) + ".zip"
-        shutil.move(tmp_dir +"/" + clip_name, os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" ))
+        if not os.path.exists(os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" )):
+            # only transfer zip file that do not exist in dest
+            shutil.move(tmp_dir +"/" + clip_name, os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" ))
 
     # Last few frame indexes in frames_list might exceed video duration
     missed_frame = []
@@ -356,7 +370,18 @@ def main(args):
     processed_video_list = list(set(processed_video_list))
 
     # obtain exist videos that are not processed yet
-    filter_list = [video.split(".")[0] for video in os.listdir(source) if video.split(".")[0] not in processed_video_list]
+    # filter_list = [video.split(".")[0] for video in os.listdir(source) if video.split(".")[0] not in processed_video_list]
+
+    filter_list = [
+        "ec344610-74f4-4765-9c3f-0837ef78055d",
+        "a4c1f23e-702e-49a1-9600-0538e4e2e7db",
+        "4efd8c65-82c6-481b-8cf2-9038b0b7bc3d",
+        "170fb6c9-8550-4e82-bb9a-4ad574c0f0fa",
+    ]
+    # 4efd8c65-82c6-481b-8cf2-9038b0b7bc3d
+    # a4c1f23e-702e-49a1-9600-0538e4e2e7db
+    # 170fb6c9-8550-4e82-bb9a-4ad574c0f0fa
+    # ec344610-74f4-4765-9c3f-0837ef78055d
 
     # filter data_dict according to filter_list
     data_dict = filter_data(data_dict, filter_list)
@@ -373,7 +398,7 @@ def main(args):
         _temp = []
         for clip in v:
             # clip: list
-            _temp.extend(*clip)
+            _temp.extend(clip)
         total_frame_num += len(list(set(_temp)))
 
     print("Splitting Data for Multi-Processing..")

@@ -386,12 +386,12 @@ def main(args):
         start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
         # strategy="fixed_in_epoch",
     )
-
     if args.weight_decay_end is None:
         args.weight_decay_end = args.weight_decay
     wd_schedule_values = utils.cosine_scheduler(
         args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
-    print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
+    if wd_schedule_values is not None:
+        print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
     utils.auto_load_model(
         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
