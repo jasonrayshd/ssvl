@@ -486,9 +486,46 @@ def read_from_tarfile(source, name, frame_idx, as_pil=False, flow=False):
                     print(source, name, frame_idx, img_name)
                     print(e)
     
-    print(_debug_shape)
+    # print(_debug_shape)
     return frame_list
 
+def read_from_zip_file(source, name, frame_idx, as_pil=False, flow=False):
+    frame_list = [] if not flow else [[], []]
+    # _debug_shape = []
+    with zipfile.ZipFile(os.path.join(source,f"{name}.zip")) as zf:
+        for i in range(0, len(frame_idx), 1 if not flow else 2):
+            idx = frame_idx[i]
+            if flow:
+                idx = idx // 2 + 1
+
+            img_name = "frame_{:010d}.jpg".format(idx)
+
+            if flow:
+                uflow_bytes = zf.open(f"u/{img_name}").read()
+                vflow_bytes =  zf.open(f"v/{img_name}").read()
+                uflow = Image.open(io.BytesIO(uflow_bytes))
+                vflow = Image.open(io.BytesIO(vflow_bytes))
+                if not as_pil:
+                    uflow = np.array(uflow)
+                    vflow = np.array(vflow)
+
+                frame_list[0].append(uflow)
+                frame_list[1].append(vflow)
+ 
+            else:
+                try:
+                    rgb_bytes = zf.open(img_name).read()
+                    rgb = Image.open(io.BytesIO(rgb_bytes))
+                    if not as_pil:
+                        rgb = np.array(rgb)
+                    # _debug_shape.append(rgb.size)
+                    frame_list.append(rgb)
+                except Exception as e:
+                    print(source, name, frame_idx, img_name)
+                    print(e)
+    
+    # print(_debug_shape)
+    return frame_list
 
 def retry_load_images(image_paths, retry=10, backend="pytorch", 
             as_pil=False, path_to_compressed="", online_extracting=False,

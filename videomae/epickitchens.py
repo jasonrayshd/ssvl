@@ -178,6 +178,16 @@ def pack_frames_to_video_clip(cfg, video_record, target_fps=60,
         uflows, vflows = utils.read_from_tarfile(source, name, frame_idx, as_pil=as_pil, flow=True)
         return frames, uflows, vflows
 
+    elif getattr(cfg.DATA, "READ_FROM_ZIP", None):
+
+        source = path_to_video
+        name = f"{video_record.untrimmed_video_name}_{video_record._index}"
+        frames = utils.read_from_zip_file(source, name, frame_idx, as_pil=as_pil, flow=False)
+
+        source = path_to_flow
+        uflows, vflows = utils.read_from_zip_file(source, name, frame_idx, as_pil=as_pil, flow=True)
+        return frames, uflows, vflows
+
     img_paths = [os.path.join(path_to_video, img_tmpl.format(idx.item())) for idx in frame_idx]
 
     # code below will extract frames from compressed file [tar, ] if the directory not exist

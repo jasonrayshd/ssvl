@@ -957,7 +957,7 @@ class PretrainMultiModalTransformer(nn.Module):
 
         # project feature dimension to decoder dimension
         x1 = self.encoder_to_decoder(x1)
-        x2 = self.encoder_to_decoder(x2)
+        x2 = self.encoder_to_decoder(x2) 
 
         # split features in each set and skip global embedding of each set
         # Since we got 2 sets where each contains 2 modalities
