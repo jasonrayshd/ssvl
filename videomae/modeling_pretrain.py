@@ -983,13 +983,14 @@ class PretrainMultiModalTransformer(nn.Module):
         intra_rgb_full = torch.cat([intra_rgb_vis + rgb_pos_emd_vis, self.rgb_mask_token + rgb_pos_emd_mask], dim=1)    # [2*B, N, C_d]
         intra_flow_full = torch.cat([intra_flow_vis + flow_pos_emd_vis, self.flow_mask_token + flow_pos_emd_mask], dim=1) # [2*B, N, C_d]
 
-        cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+        # cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
         cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
 
         intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_full,  N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
         intra_flow_hat = self.flow_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
 
-        rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
+        # rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
+        rgb_hat = intra_rgb_hat
         flow_hat = torch.cat([intra_flow_hat, cross_flow_hat], dim=0)
 
         return rgb_hat, flow_hat
