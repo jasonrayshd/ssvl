@@ -1207,7 +1207,7 @@ class RegressorBlock(nn.Module):
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         mlp_hidden_dim = int(dim * mlp_ratio)
-        
+
         self.mlp_cross = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         if init_values > 0:

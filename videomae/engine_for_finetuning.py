@@ -70,19 +70,40 @@ def hands_metric(output, target_lst):
 
     """
     target, masks = target_lst
-    key_frame_L_mean_dist = 0.0
-    key_frame_R_mean_dist = 0.0
-    contact_frame_L_mean_dist = ( F.mse_loss(output[:, 16:18], target[:, 16:18], reduction="none") * masks[:, 16:18] ).mean()
-    contact_frame_R_mean_dist = ( F.mse_loss(output[:, 18:20], target[:, 18:20], reduction="none") * masks[:, 18:20] ).mean()
 
-    for i in range(4):
-        key_frame_L_mean_dist += ( F.mse_loss(output[:, 4*i : 4*i+2], target[:, 4*i : 4*i+2], reduction="none") * masks[:, 4*i : 4*i+2] ).mean()
-        key_frame_R_mean_dist += ( F.mse_loss(output[:, 4*i+2 : 4*i+4], target[:, 4*i+2 : 4*i+4], reduction="none") * masks[:, 4*i+2 : 4*i+4] ).mean()
+    if output.dim() == 1:
+        output = output.unsqueeze(0)
 
-    key_frame_L_mean_dist /= 4
-    key_frame_R_mean_dist /= 4
+    B, *_ = target.shape
 
-    return key_frame_L_mean_dist, key_frame_R_mean_dist, contact_frame_L_mean_dist, contact_frame_R_mean_dist
+    all_ldist = []
+    all_rdist = []
+    contact_ldist = []
+    contact_rdist = []
+    for i in range(B): # 5 pairs of positions (lx, ly, rx, ry)
+
+        for j in range(5):
+
+            ldist, rdist = -1, -1
+            if masks[i, 4*j] != 0 or masks[i, 4*j+1] != 0: # if hands are visible
+                ldist = torch.sqrt( (output[i, 4*j] - target[i, 4*j])**2 + (output[i, 4*j+1] - target[i, 4*j+1])**2 )
+                all_ldist.append(ldist)
+            if masks[i, 4*j+2] != 0 or masks[i, 4*j+3] != 0: # if hands are visible
+                rdist = torch.sqrt( (output[i, 4*j+2] - target[i, 4*j+2])**2 + (output[i, 4*j+3] - target[i, 4*j+3])**2)
+                all_rdist.append(rdist)
+
+            if j == 4:
+                if ldist != -1:
+                    contact_ldist.append(ldist)
+                if rdist != - 1:
+                    contact_rdist.append(rdist)
+
+    key_lhand_avg = sum(all_ldist) / len(all_ldist) if len(all_ldist) != 0 else -1
+    key_rhand_avg = sum(all_rdist) / len(all_rdist) if len(all_rdist) != 0 else -1
+    contact_lhand_avg = sum(contact_ldist) / len(contact_ldist) if len(contact_ldist) != 0 else -1
+    contact_rhand_avg = sum(contact_rdist) / len(contact_rdist) if len(contact_rdist) != 0 else -1
+
+    return key_lhand_avg, key_rhand_avg, contact_lhand_avg, contact_rhand_avg
 
 
 def get_loss_scale_for_deepspeed(model):
@@ -446,7 +467,7 @@ def hands_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     flows = flows.half()
                     output = model(samples, flows)
 
-        loss = criterion(output*mask, targets)
+        loss = criterion(output, target_lst)
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -475,10 +496,16 @@ def hands_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         metric_logger.update(loss=loss_value)
         metric_logger.update(loss_scale=loss_scale_value)
-        metric_logger.update(key_frame_L_mean_dist=key_frame_L_mean_dist)
-        metric_logger.update(key_frame_R_mean_dist=key_frame_R_mean_dist)
-        metric_logger.update(contact_frame_L_mean_dist=contact_frame_L_mean_dist)
-        metric_logger.update(contact_frame_R_mean_dist=contact_frame_R_mean_dist)
+
+        if key_frame_L_mean_dist != -1:
+            metric_logger.update(key_frame_L_mean_dist=key_frame_L_mean_dist)
+        if key_frame_R_mean_dist != -1:
+            metric_logger.update(key_frame_R_mean_dist=key_frame_R_mean_dist)
+        if contact_frame_L_mean_dist != -1:
+            metric_logger.update(contact_frame_L_mean_dist=contact_frame_L_mean_dist)
+        if contact_frame_R_mean_dist != -1:
+            metric_logger.update(contact_frame_R_mean_dist=contact_frame_R_mean_dist)
+
         min_lr = 10.
         max_lr = 0.
         for group in optimizer.param_groups:
@@ -496,11 +523,15 @@ def hands_train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         if log_writer is not None:
             log_writer.update(loss=loss_value, head="loss")
-            
-            log_writer.update(key_frame_L_mean_dist=key_frame_L_mean_dist)
-            log_writer.update(key_frame_R_mean_dist=key_frame_R_mean_dist)
-            log_writer.update(contact_frame_L_mean_dist=contact_frame_L_mean_dist)
-            log_writer.update(contact_frame_R_mean_dist=contact_frame_R_mean_dist)
+
+            if key_frame_L_mean_dist != -1:
+                log_writer.update(key_frame_L_mean_dist=key_frame_L_mean_dist)
+            if key_frame_L_mean_dist != -1:
+                log_writer.update(key_frame_R_mean_dist=key_frame_R_mean_dist)
+            if contact_frame_L_mean_dist != -1:
+                log_writer.update(contact_frame_L_mean_dist=contact_frame_L_mean_dist)
+            if contact_frame_R_mean_dist != -1:
+                log_writer.update(contact_frame_R_mean_dist=contact_frame_R_mean_dist)
 
             log_writer.update(loss_scale=loss_scale_value, head="opt")
             log_writer.update(lr=max_lr, head="opt")
@@ -658,7 +689,7 @@ def validation_one_epoch(data_loader, model, device, criterion, task):
             targets = target_lst[0]
             targets = [target.to(device, non_blocking=False) for target in targets] # tensor, verb or noun, depends on dataset
         elif "hands" in task:
-            targets = [target.to(device, non_blocking=True) for target in target_lst] # list
+            targets = [target.to(device, non_blocking=True) for target in target_lst] # [label, mask]
         else:
             targets = target_lst[0]
             targets = targets.to(device, non_blocking=True) # tensor
@@ -732,9 +763,22 @@ def validation_one_epoch(data_loader, model, device, criterion, task):
             score = acc1.item()
 
         elif task == "hands":
-            targets, mask = target_lst
 
-        metric_logger.meters["score"].update(score, n=batch_size)
+            key_frame_L_mean_dist, key_frame_R_mean_dist, contact_frame_L_mean_dist, contact_frame_R_mean_dist = hands_metric(output, targets)
+
+            if key_frame_L_mean_dist != -1:
+                metric_logger.update(key_frame_L_mean_dist=key_frame_L_mean_dist)
+            if key_frame_R_mean_dist != -1:
+                metric_logger.update(key_frame_R_mean_dist=key_frame_R_mean_dist)
+            if contact_frame_L_mean_dist != -1:
+                metric_logger.update(contact_frame_L_mean_dist=contact_frame_L_mean_dist)
+            if contact_frame_R_mean_dist != -1:
+                metric_logger.update(contact_frame_R_mean_dist=contact_frame_R_mean_dist)
+
+            score = contact_frame_R_mean_dist
+
+        if score != -1: # only update when score is valid, else ignore current score
+            metric_logger.meters["score"].update(score, n=batch_size)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

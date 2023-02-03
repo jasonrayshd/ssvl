@@ -6,8 +6,14 @@ OMP_NUM_THREADS=100 python -m torch.distributed.launch \
     --dist_eval \
     --config $3 \
     --overwrite command-line \
-    --project pt-epic55-ft-ego4dsc \
-    --name preepic55ftego4d_multimodal_A7 \
+    --project hands_prediction \
+    --name hands_A0
+    # --debug
+    # --wandb_id 32zlmgoi
+    # --wandb_id 299en5lv
+    # --name temp \
+    # --debug
+    # --name preepic55ftego4d_multimodal_A7 \
     # --debug
     # --wandb_id 1ccsw325
     # --debug

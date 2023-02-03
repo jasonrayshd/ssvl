@@ -1,4 +1,4 @@
-batch_size: 4
+batch_size: 8
 epochs: 100
 update_freq: 1
 save_ckpt_freq: 10
@@ -33,7 +33,7 @@ warmup_epochs: 5
 warmup_steps: -1
 
 # Mixup params
-mixup: 0.8
+mixup: 0.0
 cutmix: 0.0
 cutmix_minmax: null
 mixup_prob: 1.0
@@ -74,6 +74,12 @@ cfg:
 
   short_side_size: 256
   input_size: 224
+
+  auto_augment: 'rand-m7-n4-mstd0.5-inc1'
+  rand_erase_count: 1
+  rand_erase_prob: 0.25
+  rand_erase_mode: "pixel"
+  train_interpolation: "bicubic"
 
   test_spatial_crop_num: 3
   test_temporal_crop_num: 1

@@ -2189,6 +2189,14 @@ def vit_hands_base_patch16_224(pretrained=False, **kwargs):
 
     return model
 
+@register_model
+def vit_hands_base_patch16_320(pretrained=False, **kwargs):
+    model = FutureHandsPredictionModel(
+        img_size=320, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs
+    )
+
+    return model
 
 @register_model
 def vit_lta_base_patch16_224(pretrained=False, **kwargs):

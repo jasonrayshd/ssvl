@@ -1442,6 +1442,14 @@ class Ego4dFhoHands(Ego4dBase):
         self.max_observation_frame_num = 30 * self.max_observation_time
         # train
         self.repeat_sample = self.cfg.repeat_sample
+        
+        self.auto_augment = self.cfg.auto_augment
+        self.rand_erase_count = self.cfg.rand_erase_count
+        self.rand_erase_prob = self.cfg.rand_erase_prob
+        self.rand_erase = self.rand_erase_prob > 0
+        self.rand_erase_mode = self.cfg.rand_erase_mode
+        self.train_interpolation = self.cfg.train_interpolation
+
         # test
         self.test_num_clips = self.cfg.test_spatial_crop_num * self.cfg.test_temporal_crop_num
 
@@ -1617,8 +1625,36 @@ class Ego4dFhoHands(Ego4dBase):
                 frame_idx: list, frame indexes of current clip
         """
 
+        # clip = [transforms.ToTensor()(img) for img in clip]
+        # clip = torch.stack(clip, dim=0) # T C H W
+
+        # scl, asp = (
+        #     [0.08, 1.0],
+        #     [0.75, 1.3333],
+        # )
+
+        # clip = self.spatial_sampling(
+        #     clip,
+        #     spatial_idx=-1,
+        #     min_scale=256,
+        #     max_scale=320,
+        #     crop_size=self.input_size,
+        #     random_horizontal_flip = True,
+        #     inverse_uniform_sampling = False,
+        #     aspect_ratio=asp,
+        #     scale=scl,
+        #     motion_shift=False
+        # ) # T C H W, range in [0, 1]
+
+        # # flows =  self.prepare_flow(clip, info, frame_idx)
+
+        # clip = clip.permute(0, 2, 3, 1) # T C H W -> T H W C
+        # clip = self.normalize_tensor(
+        #     clip, self.mean, self.std
+        # ).permute(3, 0, 1, 2) # C T H W 
+
         clip = [transforms.ToTensor()(img) for img in clip]
-        clip = torch.stack(clip, dim=0) # T C H W
+        clip = torch.stack(clip) # T C H W
 
         scl, asp = (
             [0.08, 1.0],
@@ -1636,14 +1672,35 @@ class Ego4dFhoHands(Ego4dBase):
             aspect_ratio=asp,
             scale=scl,
             motion_shift=False
-        ) # T C H W, range in [0, 1]
+        ) # range in [0, 1]
 
-        # flows =  self.prepare_flow(clip, info, frame_idx)
+        # buffer shape: T C H W
+        aug_transform = video_transforms.create_random_augment(
+            input_size=(self.input_size, self.input_size),
+            auto_augment= self.auto_augment,
+            interpolation= self.train_interpolation,
+        )
+        # print(f"frame raw shape: {buffer[0].shape}") # H, W, C
+        clip = [transforms.ToPILImage()(frame) for frame in clip]
+        clip = aug_transform(clip) # T, H, W, C
+        clip = [transforms.ToTensor()(frame) for frame in clip]
 
-        clip = clip.permute(0, 2, 3, 1) # T C H W -> T H W C
+        clip = torch.stack(clip).permute(0, 2, 3, 1) # T C H W -> T H W C
         clip = self.normalize_tensor(
             clip, self.mean, self.std
         ).permute(3, 0, 1, 2) # C T H W 
+
+        if self.rand_erase:
+            erase_transform = RandomErasing(
+                self.rand_erase_prob,
+                mode= self.rand_erase_mode,
+                max_count= self.rand_erase_count,
+                num_splits= self.rand_erase_count,
+                device="cpu",
+            )
+            clip = clip.permute(1, 0, 2, 3)
+            clip = erase_transform(clip)
+            clip = clip.permute(1, 0, 2, 3)
 
         return clip
 

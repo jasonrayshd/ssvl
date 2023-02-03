@@ -114,22 +114,19 @@ class ActionAnticipationLoss(nn.Module):
 
 class HandsPredictionLoss(nn.Module):
     # smoother l1 loss
-    def __init__(self, beta=5):
+    def __init__(self, loss_type="l1", beta=5):
     
         super().__init__()
-        self.l1_loss = nn.L1Loss(reduction="none")
-        self.beta = beta
+        if loss_type == "l1":
+            self.l1_loss = torch.nn.SmoothL1Loss(reduction="sum",beta=5.0)
+        else:
+            raise NotImpelementedError(f"loss type: {loss_type} is not supported!")
 
     def forward(self, output, target_lst):
         target, mask = target_lst
-        B, *_ = target.shape
-        dist = self.l1_loss(output, target)
 
-        idx = ( dist < self.beta ).bool()
-
-        loss1 = 0.5*mask*torch.pow(output-target, 2) / self.beta
-        loss2 = mask*(dist - 0.5*self.beta)
-
-        loss = ( loss1[idx].sum() + loss2[~idx].sum() ) / B
+        effective_num = mask.sum()
+        loss = self.l1_loss(mask*output, target)
+        loss /= effective_num
 
         return loss
