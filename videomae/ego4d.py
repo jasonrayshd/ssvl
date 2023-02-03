@@ -419,18 +419,21 @@ class Egoclip(Ego4dBase):
         clip_idx = info["clip_idx"]
         frame_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_" + "{:05d}".format(clip_idx), "frames.zip")
         flow_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_" + "{:05d}".format(clip_idx), "flows.zip")
-        frame_zf_fp = zipfile.ZipFile(frame_zip_path, "r")
-        flow_zf_fp = zipfile.ZipFile(flow_zip_path, "r")
-        exist_frame_list = frame_zf_fp.namelist() # [frame_%010d_%010d.jpg, frame_%010d_%010d.jpg, ...]
-        exist_flow_list = flow_zf_fp.namelist() # [u/frame_%010d_%010d.jpg, v/frame_%010d_%010d.jpg, ...]
 
-        # sample rgb and flows
-        
-       
+        try:
+            frame_zf_fp = zipfile.ZipFile(frame_zip_path, "r")
+            flow_zf_fp = zipfile.ZipFile(flow_zip_path, "r")
+            exist_frame_list = frame_zf_fp.namelist() # [frame_%010d_%010d.jpg, frame_%010d_%010d.jpg, ...]
+            exist_flow_list = flow_zf_fp.namelist() # [u/frame_%010d_%010d.jpg, v/frame_%010d_%010d.jpg, ...]
+        except:
+            # zipfile does not exist or is corrupted
+            return None
+
+        # sample rgb and flows       
         ret = self.sample_frames(info, exist_frame_list, exist_flow_list)
         if ret is None:
             # actual frames number is less than required frame number
-            return
+            return None
 
         frame_name_lst, uflow_name_lst, vflow_name_lst = ret
 
@@ -550,6 +553,7 @@ class Egoclip(Ego4dBase):
             ret = self.prepare_clip_frames_flows(info=info)
             if ret is not None:
                 break
+            print(f"Fail to read frames and flows for video:{info['video_uid']} clip_idx:{info['clip_idx']}, randomly choosing a new ")
             random_idx = random.randint(0, len(self.package)-1)
             info = self.package[random_idx]
 

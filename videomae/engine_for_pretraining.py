@@ -722,28 +722,29 @@ class MultiModalLoss(nn.Module):
         rgb_recons, flow_recons = output
         # print(rgb_recons.shape)
 
-        # unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, torch.cat([rgb_target, rgb_target], dim=0))
-        # unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
-        # rgb_recons_loss, rgb_flow_recons_loss = unreduced_rgb_recons_loss[:B].mean(), unreduced_rgb_recons_loss[B:].mean()
-        # flow_recons_loss, flow_rgb_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
-
-        unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, rgb_target)
+        unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, torch.cat([rgb_target, rgb_target], dim=0))
         unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
-        rgb_recons_loss = unreduced_rgb_recons_loss.mean()
+        rgb_recons_loss, rgb_flow_recons_loss = unreduced_rgb_recons_loss[:B].mean(), unreduced_rgb_recons_loss[B:].mean()
         flow_recons_loss, flow_rgb_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
+
+        # no flow2rgb reconstruction
+        # unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, rgb_target)
+        # unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
+        # rgb_recons_loss = unreduced_rgb_recons_loss.mean()
+        # flow_recons_loss, flow_rgb_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
 
         # rgb_recons_loss = self.recons_loss(rgb_recons, rgb_target).mean()
         # flow_recons_loss = self.recons_loss(flow_recons, flow_target).mean()
 
         loss = {
-            # "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss +  self.lamb[3]*rgb_flow_recons_loss,
-            "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss,
+            "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss +  self.lamb[3]*rgb_flow_recons_loss,
+            # "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss,
             # "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_recons_loss,
 
             "rgb_recons": rgb_recons_loss,
             "flow_recons":flow_recons_loss,
 
-            "rgb_flow_recons": 0,
+            "rgb_flow_recons": rgb_flow_recons_loss,
             "flow_rgb_recons": flow_rgb_recons_loss,
         }
 
