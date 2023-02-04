@@ -1,6 +1,6 @@
 ## File organization:  
-(1) **Pretraining file entrypoint**:  run_mae_pretraining.py  engine_for_pretraining.py  
-(2) **Fintuning file entrypoint**:  run_class_finetuning.py  engine_for_finetuning.py  
+(1) **Pretraining file entrypoint**:  run_mae_pretraining.py, engine_for_pretraining.py  
+(2) **Fintuning file entrypoint**:  run_class_finetuning.py, engine_for_finetuning.py  
 (3) **Model definition for pretraining**: modeling_pretrain.py  
     **Model definition for fintuning**: modeling_finetune.py  
 (4) **Dataset file**: ego4d.py, epickitchens.py  
@@ -9,7 +9,7 @@
 ## Multimodal Pretraining
 ### Pretraining on Egoclip
 
-**Step 1**: Modify bash script as needed - File: scripts/temp_pretrain_multimodal.sh
+#### Step 1: Modify bash script as needed - File: scripts/temp_pretrain_multimodal.sh
 
 (1) modify *gpu per node* setting: set "nproc_per_node" to required gpu number  
 
@@ -26,12 +26,12 @@ pretrain_multimodal_epic55: experiments that pretrains on epic55/egoclip using m
 **you could disable the wandb logging by specifying "--debug" and debug code locally without recording trivial experiments online.**
 
 
-**Step 2**: Modify configuration file as needed - File: config/cluster/pretrain_multimodal_egoclip.yml
+#### Step 2: Modify configuration file as needed - File: config/cluster/pretrain_multimodal_egoclip.yml
 
 e.g. Specify a different model architecture by assigning new value to "model"
 
 
-**Final step**: run bash script  
+#### Final step: run bash script  
 
 e.g. run multimodal pretraining locally on egoclip with 4 GPUs  
 
@@ -46,13 +46,13 @@ CUDA_VISIBLE_DEVICES="0,1,2,3" bash temp_pretrain_multimodal.sh 0 0.0.0.0 ../con
 ```
 
 ### Pretraining on Epic55
-**Step 1:** same as pretraining on egoclip 
+#### Step 1:Ssame as pretraining on egoclip 
 
-**Step 2**: Modify configuration file as needed - File: config/cluster/pretrain_multimodal_epic55.yml
+#### Step 2: Modify configuration file as needed - File: config/cluster/pretrain_multimodal_epic55.yml
 
 e.g. Specify a different model architecture by assigning new value to "model"
 
-**Final step**: run bash script
+#### Final step: run bash script
 
 e.g. run multimodal pretraining locally  on epic55 with 4 GPUs  
 
