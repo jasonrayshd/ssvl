@@ -11,7 +11,7 @@
 
 #### Step 1: Modify bash script as needed - File: scripts/temp_pretrain_multimodal.sh
 
-(1) modify *gpu per node* setting: set "nproc_per_node" to required gpu number  
+(1) modify *gpu per node* setting: set "--nproc_per_node" to required number of gpus  
 
 (2) modify *name* of the experiment: set "--name" to a different name
 the name of the experiment determines the name of the output directory that stores model checkpoints. Therefore, to avoid overwrting files produced by other experiments, be sure to use a different name for each experiment.
@@ -31,7 +31,7 @@ pretrain_multimodal_epic55: experiments that pretrains on epic55/egoclip using m
 e.g. Specify a different model architecture by assigning new value to "model"
 
 
-#### Final step: run bash script  
+#### Final step: Run bash script  
 
 e.g. run multimodal pretraining locally on egoclip with 4 GPUs  
 
@@ -46,13 +46,13 @@ CUDA_VISIBLE_DEVICES="0,1,2,3" bash temp_pretrain_multimodal.sh 0 0.0.0.0 ../con
 ```
 
 ### Pretraining on Epic55
-#### Step 1:Ssame as pretraining on egoclip 
+#### Step 1: Same as pretraining on egoclip 
 
 #### Step 2: Modify configuration file as needed - File: config/cluster/pretrain_multimodal_epic55.yml
 
 e.g. Specify a different model architecture by assigning new value to "model"
 
-#### Final step: run bash script
+#### Final step: Run bash script
 
 e.g. run multimodal pretraining locally  on epic55 with 4 GPUs  
 
