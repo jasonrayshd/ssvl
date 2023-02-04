@@ -33,7 +33,7 @@ e.g. Specify a different model architecture by assigning new value to "model"
 
 **Final step**: run bash script  
 
-e.g. run multimodal pretraining scheme on egoclip with 4 GPUs locally  
+e.g. run multimodal pretraining locally on egoclip with 4 GPUs  
 
 ```bash
 cd scripts
@@ -54,7 +54,7 @@ e.g. Specify a different model architecture by assigning new value to "model"
 
 **Final step**: run bash script
 
-e.g. run multimodal pretraining scheme on epic55 with 4 GPUs locally  
+e.g. run multimodal pretraining locally  on epic55 with 4 GPUs  
 
 ```bash
 cd scripts
