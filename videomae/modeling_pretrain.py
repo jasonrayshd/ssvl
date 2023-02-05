@@ -376,21 +376,27 @@ class MultiModalBlock(nn.Module):
         # x = torch.cat(token_dict["tokens"], dim=0)     # torch.Tensor, concate along batch dimension
         x1, x2 = token_dict["tokens"]
         N1 = token_dict["split_point"]
-        B, *_ = x1.shape          # Bn=B*2, N=N1+N2
 
-        x1_rgb = x1[:, :N1, :]
-        x1_flow = x1[:, N1:, :]
+        if N1 > 0:
+            # two modalities
+            x1_rgb, x1_flow = x1[:, :N1, :], x1[:, N1:, :]
+            # process RGB
+            x1_rgb = x1_rgb + self.drop_path( self.attn(self.norm1(x1_rgb)) )
+            x1_rgb = x1_rgb + self.drop_path( self.mlp(self.norm2(x1_rgb)) )
+            # process Flow
+            x1_flow = x1_flow + self.drop_path( self.attn(self.norm1(x1_flow)) )
+            x1_flow = x1_flow + self.drop_path( self.mlp(self.norm2(x1_flow)) )
 
-        x1_rgb = x1_rgb + self.drop_path( self.attn(self.norm1(x1_rgb)) )
-        x1_rgb = x1_rgb + self.drop_path( self.mlp(self.norm2(x1_rgb)) )
+            x1 = torch.cat([x1_rgb, x1_flow], dim=1)
+        else:
+            # only one modality: rgb or flow
+            x1 = x1 + self.drop_path( self.attn(self.norm1(x1)) )
+            x1 = x1 + self.drop_path( self.mlp(self.norm2(x1)) )
 
-        x1_flow = x1_flow + self.drop_path( self.attn(self.norm1(x1_flow)) )
-        x1_flow = x1_flow + self.drop_path( self.mlp(self.norm2(x1_flow)) )
+        if x2 is not None:
+            x2 = x2 + self.drop_path( self.attn(self.norm1(x2)) )
+            x2 = x2 + self.drop_path( self.mlp(self.norm2(x2)) )
 
-        x2 = x2 + self.drop_path( self.attn(self.norm1(x2)) )
-        x2 = x2 + self.drop_path( self.mlp(self.norm2(x2)) )
-
-        x1 = torch.cat([x1_rgb, x1_flow], dim=1)
         token_dict["tokens"] = [x1, x2]
 
         return token_dict
@@ -443,6 +449,8 @@ class PretrainMultiModalEncoder(nn.Module):
                 
                 rgb_tubelet_size=2,
                 flow_tubelet_size=1,
+                
+                modality="rgbflow", # [rgb, flow, rgbflow] 
 
                 img_size=224, 
                 patch_size=16, 
@@ -468,30 +476,31 @@ class PretrainMultiModalEncoder(nn.Module):
 
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-
+        self.modality = modality
         self.keep_dim = keep_dim
 
-        self.rgb_patch_embed = PatchEmbed(
-                        img_size=img_size, patch_size=patch_size, in_chans=rgb_in_chans,
-                        embed_dim=embed_dim, num_frames=rgb_num_frames, tubelet_size=rgb_tubelet_size)
+        if "rgb" in modality:
+            self.rgb_patch_embed = PatchEmbed(
+                            img_size=img_size, patch_size=patch_size, in_chans=rgb_in_chans,
+                            embed_dim=embed_dim, num_frames=rgb_num_frames, tubelet_size=rgb_tubelet_size)
+            
+            num_patches = self.rgb_patch_embed.num_patches
+            self.rgb_pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim)) if use_learnable_pos_emb else get_sinusoid_encoding_table(num_patches, embed_dim)
 
-        self.flow_patch_embed = PatchEmbed(
-                        img_size=img_size, patch_size=patch_size, in_chans=flow_in_chans,
-                        embed_dim=embed_dim, num_frames=flow_num_frames, tubelet_size=flow_tubelet_size)
+        if "flow" in modality:
+            self.flow_patch_embed = PatchEmbed(
+                            img_size=img_size, patch_size=patch_size, in_chans=flow_in_chans,
+                            embed_dim=embed_dim, num_frames=flow_num_frames, tubelet_size=flow_tubelet_size)
 
-        num_patches = self.rgb_patch_embed.num_patches
+            num_patches = self.flow_patch_embed.num_patches
+            self.flow_pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim)) if use_learnable_pos_emb else get_sinusoid_encoding_table(num_patches, embed_dim)
 
         self.global_embed1 = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.global_embed2 = nn.Parameter(torch.zeros(1, 1, embed_dim))
         trunc_normal_(self.global_embed1, std=.02)
-        trunc_normal_(self.global_embed2, std=.02)
-        if use_learnable_pos_emb:
-            self.pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim))
-            # self.x2_pos_embed = nn.Parameter(torch.zeros(2*num_patches, embed_dim))
-        else:
-            # sine-cosine positional embeddings is on the way
-            self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
-            # self.x2_pos_embed = get_sinusoid_encoding_table(2*num_patches, embed_dim)
+
+        if modality == "rgbflow":
+            self.global_embed2 = nn.Parameter(torch.zeros(1, 1, embed_dim))
+            trunc_normal_(self.global_embed2, std=.02)
 
         self.pos_drop = nn.Dropout(p=drop_rate)
 
@@ -540,37 +549,39 @@ class PretrainMultiModalEncoder(nn.Module):
             rgb:  torch.Tensor,  B, 3, T, H, W
             flow: torch.Tensor,  B, 2, T//2, H, W
         """
-        x_rgb = self.rgb_patch_embed(rgb)
-        x_flow = self.flow_patch_embed(flow)
-        B, _, C = x_rgb.size()
+        x1_vis = None
+        x2_vis = None
+        N1 = -9999
 
-        # if self.rgb_type_embed is not None:
-        #     x_rgb += self.rgb_type_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
-        #     x_flow += self.flow_type_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
+        if "rgb" in self.modality:
+            x_rgb = self.rgb_patch_embed(rgb)
+            B, _, C = x_rgb.shape
+            x_rgb += self.rgb_pos_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
+            x_rgb_vis = x_rgb[~rgb_mask].reshape(B, -1, C) # ~mask means visible
 
-        x_rgb += self.pos_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
-        x_flow += self.pos_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
-        # x2 += self.x2_pos_embed.expand(B, -1, -1).type_as(x2).to(x2.device).clone().detach()
+        if "flow" in self.modality:
+            x_flow = self.flow_patch_embed(flow)
+            B, _, C = x_flow.shape
+            x_flow += self.flow_pos_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
+            x_flow_vis = x_flow[~flow_mask].reshape(B, -1, C) # ~mask means visible
 
-        # x2 = torch.cat([x_rgb, x_flow], dim=1)
+        expand_global_embed1 = self.global_embed1.expand(B, -1, -1).cuda()
 
-        x_rgb_vis = x_rgb[~rgb_mask].reshape(B, -1, C) # ~mask means visible
-        x_flow_vis = x_flow[~flow_mask].reshape(B, -1, C) # ~mask means visible
-
-        expand_global_embed1 = self.global_embed1.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device)
-        expand_global_embed2 = self.global_embed2.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device)
-        # print(mask.shape)
-        # x2_mask = torch.cat([mask, mask], dim=1)
-        # # print(x2_mask.shape)
-        # x2_vis = x2[~x2_mask].reshape(B, -1, C)
-        N1, N2 = x_rgb_vis.shape[1], x_flow_vis.shape[1]
-        x1_vis = torch.cat([expand_global_embed1, x_rgb_vis, expand_global_embed1, x_flow_vis], dim=1)
-        x2_vis = torch.cat([expand_global_embed2, x_rgb_vis, x_flow_vis], dim=1)
+        if self.modality == "rgbflow":
+            expand_global_embed2 = self.global_embed2.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device)
+            x1_vis = torch.cat([expand_global_embed1, x_rgb_vis, expand_global_embed1, x_flow_vis], dim=1)
+            x2_vis = torch.cat([expand_global_embed2, x_rgb_vis, x_flow_vis], dim=1)
+            N1 = x_rgb_vis.shape[1]
+        elif self.modality == "rgb":
+            x1_vis =  torch.cat([expand_global_embed1.type_as(x_rgb), x_rgb_vis], dim=1)
+        elif self.modality == "flow":
+            x1_vis = torch.cat([expand_global_embed1.type_as(x_flow), x_flow_vis], dim=1)
 
         token_dict = {
             "split_point": N1+1,
             "tokens": [x1_vis, x2_vis]
         }
+
         for blk in self.blocks:
             token_dict = blk(token_dict)
 
@@ -820,6 +831,8 @@ class PretrainMultiModalTransformer(nn.Module):
 
                 rgb_num_classes= 1536,
                 flow_num_classes= 512,
+                
+                modality="rgbflow", # [rgb, flow, rgbflow]
 
                 img_size=224, 
                 patch_size=16, 
@@ -855,6 +868,8 @@ class PretrainMultiModalTransformer(nn.Module):
             flow_num_frames = flow_num_frames,     # 8
             rgb_tubelet_size = rgb_tubelet_size,   # 2
             flow_tubelet_size = flow_tubelet_size, # 1
+            
+            modality = modality,
 
             img_size=img_size, 
             patch_size=patch_size, 
@@ -872,59 +887,87 @@ class PretrainMultiModalTransformer(nn.Module):
             init_values=init_values,
             use_learnable_pos_emb=use_learnable_pos_emb)
 
-        self.rgb_decoder = PretrainMultiModalCrossAttentionDecoder(
+        if "rgb" in modality:
+            self.rgb_decoder = PretrainMultiModalCrossAttentionDecoder(
 
-            num_classes=rgb_num_classes, 
+                num_classes=rgb_num_classes, 
 
-            embed_dim=decoder_embed_dim, 
-            depth=decoder_depth,
-            num_cross_blocks = 4,
-            num_heads=decoder_num_heads, 
-            mlp_ratio=mlp_ratio, 
-            qkv_bias=qkv_bias, 
-            qk_scale=qk_scale, 
-            drop_rate=drop_rate, 
-            attn_drop_rate=attn_drop_rate,
-            drop_path_rate=drop_path_rate, 
-            norm_layer=norm_layer, 
-            init_values=init_values,
-            # tubelet_size=tubelet_size,
+                embed_dim=decoder_embed_dim, 
+                depth=decoder_depth,
+                num_cross_blocks = 1,
+                num_heads=decoder_num_heads, 
+                mlp_ratio=mlp_ratio, 
+                qkv_bias=qkv_bias, 
+                qk_scale=qk_scale, 
+                drop_rate=drop_rate, 
+                attn_drop_rate=attn_drop_rate,
+                drop_path_rate=drop_path_rate, 
+                norm_layer=norm_layer, 
+                init_values=init_values,
+                # tubelet_size=tubelet_size,
 
-            )
-        
-        self.flow_decoder = PretrainMultiModalCrossAttentionDecoder(
+                )
+            
+            self.rgb_mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+            self.rgb_type_embed = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+            trunc_normal_(self.rgb_mask_token, std=.02)
+            trunc_normal_(self.rgb_type_embed, std=.02)
 
-            num_classes=flow_num_classes,
+            self.rgb_pos_embed = get_sinusoid_encoding_table(self.encoder.rgb_patch_embed.num_patches, decoder_embed_dim)
 
-            embed_dim=decoder_embed_dim, 
-            depth=decoder_depth,
-            num_cross_blocks=2,
-            num_heads=decoder_num_heads, 
-            mlp_ratio=mlp_ratio, 
-            qkv_bias=qkv_bias, 
-            qk_scale=qk_scale, 
-            drop_rate=drop_rate, 
-            attn_drop_rate=attn_drop_rate,
-            drop_path_rate=drop_path_rate, 
-            norm_layer=norm_layer, 
-            init_values=init_values,
-            # tubelet_size=tubelet_size,
-            )
+        if "flow" in modality:
+            self.flow_decoder = PretrainMultiModalCrossAttentionDecoder(
 
+                num_classes=flow_num_classes,
+
+                embed_dim=decoder_embed_dim, 
+                depth=decoder_depth,
+                num_cross_blocks=1,
+                num_heads=decoder_num_heads, 
+                mlp_ratio=mlp_ratio, 
+                qkv_bias=qkv_bias, 
+                qk_scale=qk_scale, 
+                drop_rate=drop_rate, 
+                attn_drop_rate=attn_drop_rate,
+                drop_path_rate=drop_path_rate, 
+                norm_layer=norm_layer, 
+                init_values=init_values,
+                # tubelet_size=tubelet_size,
+                )
+            
+            self.flow_mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+            self.flow_type_embed = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+            trunc_normal_(self.flow_mask_token, std=.02)
+            trunc_normal_(self.flow_type_embed, std=.02)
+            
+            self.flow_pos_embed = get_sinusoid_encoding_table(self.encoder.flow_patch_embed.num_patches, decoder_embed_dim)
+
+
+        # self.decoder = PretrainMultiModalCrossAttentionDecoder(
+
+        #     num_classes=-1,
+
+        #     embed_dim=decoder_embed_dim, 
+        #     depth=decoder_depth,
+        #     num_cross_blocks = 2,
+        #     num_heads=decoder_num_heads, 
+        #     mlp_ratio=mlp_ratio, 
+        #     qkv_bias=qkv_bias, 
+        #     qk_scale=qk_scale, 
+        #     drop_rate=drop_rate, 
+        #     attn_drop_rate=attn_drop_rate,
+        #     drop_path_rate=drop_path_rate, 
+        #     norm_layer=norm_layer, 
+        #     init_values=init_values,
+        #     # tubelet_size=tubelet_size,
+
+        #     )
+        # self.rgb_head = nn.Linear(decoder_embed_dim, rgb_num_classes)
+        # self.flow_head = nn.Linear(decoder_embed_dim, flow_num_classes)
+
+        self.modality = modality
         self.encoder_to_decoder = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=False)
 
-        self.rgb_mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
-        self.flow_mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
-
-        self.pos_embed = get_sinusoid_encoding_table(self.encoder.rgb_patch_embed.num_patches, decoder_embed_dim)
-
-        trunc_normal_(self.rgb_mask_token, std=.02)
-        trunc_normal_(self.flow_mask_token, std=.02)
-
-        self.rgb_type_embed = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
-        self.flow_type_embed = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
-        trunc_normal_(self.rgb_type_embed, std=.02)
-        trunc_normal_(self.flow_type_embed, std=.02)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -940,7 +983,8 @@ class PretrainMultiModalTransformer(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {'pos_embed', 'cls_token', 
+        return {'pos_embed', 'cls_token',
+        "rgb_pos_embed","flow_pos_embed",
         'rgb_mask_token','flow_mask_token' 
         "rgb_type_embed", "flow_type_embed",
         "global_embed1", "global_embed2",
@@ -953,45 +997,72 @@ class PretrainMultiModalTransformer(nn.Module):
         N1 = token_dict["split_point"]
         x1, x2 = token_dict["tokens"] # [B, 2*N_vis, C_e]
         # x1 is within-modality set that self-attention will only be computed within each modality
-        # x2 is cross-modality set that self-attention will be computed across modality
+        # x2 is cross-modality set that self-attenhtion will be computed across modality
 
         # project feature dimension to decoder dimension
         x1 = self.encoder_to_decoder(x1)
-        x2 = self.encoder_to_decoder(x2) 
+        if x2 is not None:
+            x2 = self.encoder_to_decoder(x2) 
 
         # split features in each set and skip global embedding of each set
         # Since we got 2 sets where each contains 2 modalities
         # finally, we obtain four features
-        intra_rgb_vis, cross_flow_vis = x1[:, 1:N1, :], x2[:, N1:, :]
-        intra_flow_vis, cross_rgb_vis = x1[:, N1+1:, :], x2[:, 1:N1, :]
-        B, N, C = intra_rgb_vis.shape
+        if N1 > 0: # two modalities
+            intra_rgb_vis, cross_flow_vis = x1[:, 1:N1, :], x2[:, N1:, :]
+            intra_flow_vis, cross_rgb_vis = x1[:, N1+1:, :], x2[:, 1:N1, :]
+            B, N, C = intra_rgb_vis.shape
+        elif self.modality == "rgb": # only one modality, rgb or flow
+            intra_rgb_vis = x1[:, 1:, :]
+            B, N, C = intra_rgb_vis.shape
+        elif self.modality == "flow":
+            intra_flow_vis = x1[:, 1:, :]
+            B, N, C = intra_flow_vis.shape
 
-        # prepare sinusoidal(unlearnable) position embedding
-        expand_pos_embed = self.pos_embed.expand(B, -1, -1).type_as(x1).to(x1.device).clone().detach()
-        rgb_pos_emd_vis = expand_pos_embed[~rgb_mask].reshape(B, -1, C)
-        rgb_pos_emd_mask = expand_pos_embed[rgb_mask].reshape(B, -1, C)
-        flow_pos_emd_vis = expand_pos_embed[~flow_mask].reshape(B, -1, C)
-        flow_pos_emd_mask = expand_pos_embed[flow_mask].reshape(B, -1, C)
+        if "rgb" in self.modality:
+             # prepare sinusoidal(unlearnable) position embedding
+            expand_pos_embed = self.rgb_pos_embed.expand(B, -1, -1).type_as(x1).to(x1.device).clone().detach()
+            rgb_pos_emd_vis = expand_pos_embed[~rgb_mask].reshape(B, -1, C)
+            rgb_pos_emd_mask = expand_pos_embed[rgb_mask].reshape(B, -1, C)
+            intra_rgb_full = torch.cat([intra_rgb_vis + rgb_pos_emd_vis, self.rgb_mask_token + rgb_pos_emd_mask], dim=1)    # [2*B, N, C_d]
+            _, N_mask, _ = rgb_pos_emd_mask.shape
 
-        _, N_mask, _ = flow_pos_emd_mask.shape
-        # print(N_mask)
-        # add learnable type embedding to featurs from cross-modality set
-        cross_rgb_vis += self.rgb_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
-        cross_flow_vis += self.flow_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
+        if "flow" in self.modality:
+            expand_pos_embed = self.flow_pos_embed.expand(B, -1, -1).type_as(x1).to(x1.device).clone().detach()
+            flow_pos_emd_vis = expand_pos_embed[~flow_mask].reshape(B, -1, C)
+            flow_pos_emd_mask = expand_pos_embed[flow_mask].reshape(B, -1, C)
+            intra_flow_full = torch.cat([intra_flow_vis + flow_pos_emd_vis, self.flow_mask_token + flow_pos_emd_mask], dim=1) # [2*B, N, C_d]
+            _, N_mask, _ = flow_pos_emd_mask.shape
 
-        cross_full = torch.cat([cross_rgb_vis + rgb_pos_emd_vis, cross_flow_vis + flow_pos_emd_vis], dim=1)
-        intra_rgb_full = torch.cat([intra_rgb_vis + rgb_pos_emd_vis, self.rgb_mask_token + rgb_pos_emd_mask], dim=1)    # [2*B, N, C_d]
-        intra_flow_full = torch.cat([intra_flow_vis + flow_pos_emd_vis, self.flow_mask_token + flow_pos_emd_mask], dim=1) # [2*B, N, C_d]
+        if self.modality == "rgbflow":
+            # add learnable type embedding to featurs from cross-modality set
 
-        cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
-        cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+            cross_rgb_vis += self.rgb_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
+            cross_flow_vis += self.flow_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
+            cross_full = torch.cat([cross_rgb_vis + rgb_pos_emd_vis, cross_flow_vis + flow_pos_emd_vis], dim=1)
+            cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+            cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+            # print(f"flow_full: {intra_flow_full.shape}, rgb_full:{intra_rgb_full.shape}, cross_rgb_hat:{cross_rgb_hat.shape}, cross_flow_hat:{cross_flow_hat.shape}")
 
-        intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_full,  N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
-        intra_flow_hat = self.flow_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+            # intra_rgb_hat = self.rgb_head(cross_flow_hat)
+            # intra_flow_hat = self.flow_head(cross_rgb_hat)
+            # cross_rgb_hat = self.rgb_head(cross_rgb_hat)
+            # cross_flow_hat = self.flow_head(cross_flow_hat)
+            intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_full,  N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+            intra_flow_hat = self.flow_decoder(intra_flow_full, cross_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
 
-        rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
-        # rgb_hat = intra_rgb_hat
-        flow_hat = torch.cat([intra_flow_hat, cross_flow_hat], dim=0)
+            rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
+            # rgb_hat = intra_rgb_hat
+            flow_hat = torch.cat([intra_flow_hat, cross_flow_hat], dim=0)
+
+        elif self.modality == "rgb":
+            intra_rgb_hat = self.rgb_decoder(intra_rgb_full, intra_rgb_full,  N_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+            rgb_hat = intra_rgb_hat
+            flow_hat = None
+        
+        elif self.modality == "flow":
+            intra_flow_hat = self.flow_decoder(intra_flow_full, intra_flow_full, N_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+            rgb_hat = None
+            flow_hat = intra_flow_hat
 
         return rgb_hat, flow_hat
 
@@ -2333,11 +2404,12 @@ def pretrain_videomae_multicae_base_patch16_224(pretrained=False, **kwargs):
 
 if __name__ == "__main__":
     from masking_generator import AgnosticMaskingGenerator
+    import numpy as np
     # from engine_for_pretraining import TwoStreamVitLoss
     # from einops import rearrange
     mask_gen = AgnosticMaskingGenerator(input_size=[8, 14, 14], mask_ratio=0.9)
-    device = "cuda:6"
-    B = 2
+    device = "cuda:0"
+    B = 1
     # model = pretrain_tsvit_base_patch16_224(
     #     decoder_depth = 4, 
     #     tokenizer_backbone = "simplecnn",
@@ -2346,13 +2418,20 @@ if __name__ == "__main__":
     #     fuse_scheme = "concate",
     #     share_within_modality_proj_layer = True,
     #     ).to(device)
-    model = PretrainMultiModalTransformer().to(device)
+    model = pretrain_videomae_multimodal_base_patch16_224(
+        modality="flow"
+        ).to(device)
     rgb = torch.randn((B, 3, 16, 224, 224)).to(device)
     flows = torch.randn((B, 2, 8, 224, 224)).to(device)
-    mask = torch.from_numpy(mask_gen()).to(torch.bool).unsqueeze(0).to(device).repeat(B, 1)
-    print(mask.shape)
-    output = model(rgb, flows, mask)
-    print(output[0].shape, output[1])
+    rgb_mask = torch.from_numpy(np.array(mask_gen(B))).to(torch.bool).to(device)
+    flow_mask = torch.from_numpy(np.array(mask_gen(B))).to(torch.bool).to(device)
+    print(rgb_mask.shape)
+    with torch.no_grad():
+        x1, x2 = model(rgb, flows, rgb_mask, flow_mask)
+    if x1 != None:
+        print(x1.shape)
+    if x2 != None:
+        print(x2.shape)
     # print(output.shape)
     # rgb_rgb_hat, rgb_flow_hat, flow_rgb_hat, flow_flow_hat, rgb_vis, flow_vis, rgb_token, flow_token = output
     # print(rgb_rgb_hat.shape, rgb_flow_hat.shape, flow_rgb_hat.shape, flow_flow_hat.shape, rgb_vis.shape, flow_vis.shape, rgb_token.shape, flow_token.shape)

@@ -292,7 +292,7 @@ def cache_tar_to_local(zip_file_path, raw_dest, cache_log_file = "cache.log", fl
 
     # else copy file and handle potential error
     os.makedirs(dest, exist_ok=True)
-    
+
     retry = 10
     for i in range(retry):
         # keep trying caching tar file
@@ -501,8 +501,8 @@ def read_from_zip_file(source, name, frame_idx, as_pil=False, flow=False):
             img_name = "frame_{:010d}.jpg".format(idx)
 
             if flow:
-                uflow_bytes = zf.open(f"u/{img_name}").read()
-                vflow_bytes =  zf.open(f"v/{img_name}").read()
+                uflow_bytes = zf.read(f"u/{img_name}")
+                vflow_bytes =  zf.read(f"v/{img_name}")
                 uflow = Image.open(io.BytesIO(uflow_bytes))
                 vflow = Image.open(io.BytesIO(vflow_bytes))
                 if not as_pil:
@@ -514,7 +514,7 @@ def read_from_zip_file(source, name, frame_idx, as_pil=False, flow=False):
  
             else:
                 try:
-                    rgb_bytes = zf.open(img_name).read()
+                    rgb_bytes = zf.read(img_name)
                     rgb = Image.open(io.BytesIO(rgb_bytes))
                     if not as_pil:
                         rgb = np.array(rgb)

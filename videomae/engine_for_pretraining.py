@@ -720,12 +720,29 @@ class MultiModalLoss(nn.Module):
 
         # print(output[0].shape)
         rgb_recons, flow_recons = output
-        # print(rgb_recons.shape)
 
-        unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, torch.cat([rgb_target, rgb_target], dim=0))
-        unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
-        rgb_recons_loss, rgb_flow_recons_loss = unreduced_rgb_recons_loss[:B].mean(), unreduced_rgb_recons_loss[B:].mean()
-        flow_recons_loss, flow_rgb_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
+        rgb_recons_loss = None
+        flow_recons_loss = None
+        rgb_flow_recons_loss = None
+        flow_rgb_recons_loss = None
+
+        # print(rgb_recons.shape)
+        if rgb_recons is None:
+            # only operate on flow modality
+            unreduced_flow_recons_loss = self.recons_loss(flow_recons, flow_target)
+            flow_recons_loss = unreduced_flow_recons_loss.mean()
+            total_loss = flow_recons_loss
+        elif flow_recons is None:
+            # only operate on rgb modality
+            unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, rgb_target)
+            rgb_recons_loss = unreduced_rgb_recons_loss.mean()
+            total_loss = rgb_recons_loss
+        else:
+            unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, torch.cat([rgb_target, rgb_target], dim=0))
+            unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
+            rgb_recons_loss, rgb_flow_recons_loss = unreduced_rgb_recons_loss[:B].mean(), unreduced_rgb_recons_loss[B:].mean()
+            flow_recons_loss, flow_rgb_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
+            total_loss = self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss +  self.lamb[3]*rgb_flow_recons_loss
 
         # no flow2rgb reconstruction
         # unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, rgb_target)
@@ -737,7 +754,7 @@ class MultiModalLoss(nn.Module):
         # flow_recons_loss = self.recons_loss(flow_recons, flow_target).mean()
 
         loss = {
-            "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss +  self.lamb[3]*rgb_flow_recons_loss,
+            "sum": total_loss,
             # "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss,
             # "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_recons_loss,
 
@@ -753,10 +770,11 @@ class MultiModalLoss(nn.Module):
 
 
 def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
+                    device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
 
+                    rgb_patch_size: int = 16, flow_patch_size: int=16,
                     mask_generators = None,
                     lamb = [1,1,1,1],
                     ):
@@ -810,7 +828,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
             unnorm_videos = videos * std + mean  # in [0, 1]
 
             if normlize_target:
-                videos_squeeze = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2) c', p0=2, p1=patch_size, p2=patch_size)
+                videos_squeeze = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2) c', p0=2, p1=rgb_patch_size, p2=rgb_patch_size)
                 videos_norm = (videos_squeeze - videos_squeeze.mean(dim=-2, keepdim=True)
                     ) / (videos_squeeze.var(dim=-2, unbiased=True, keepdim=True).sqrt() + 1e-6)
 
@@ -818,7 +836,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
                 B, _, C = videos_patch.shape
                 rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
             else:
-                videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=patch_size, p2=patch_size)
+                videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=rgb_patch_size, p2=rgb_patch_size)
                 B, _, C = videos_patch.shape
                 rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
 
@@ -831,7 +849,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
         assert T%N == 0, f"Number of flows:{N} to be predicted should be divisible by number of frames:{T}"
         # print(flows.shape)
 
-        flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
+        flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=flow_patch_size, p2=flow_patch_size)
 
         # tublet_size = 2
         # bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
@@ -866,14 +884,24 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
 
         torch.cuda.synchronize()
 
+        recons_loss = 0
+        cross_recons = 0
+        if loss_dct["rgb_recons"]:
+            recons_loss += loss_dct["rgb_recons"] 
+        if loss_dct["flow_recons"]:
+            recons_loss += loss_dct["flow_recons"]
+        if loss_dct["rgb_flow_recons"] and loss_dct["flow_rgb_recons"]:
+            cross_recons = loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"]
+
         metric_logger.update(loss=loss_value)
         metric_logger.update(rgb_recons_loss=loss_dct["rgb_recons"])
         metric_logger.update(flow_recons_loss=loss_dct["flow_recons"])
-        metric_logger.update(recons_loss=loss_dct["rgb_recons"]+loss_dct["flow_recons"])
+        metric_logger.update(recons_loss=recons_loss)
 
-        metric_logger.update(rgb_flow_recons=loss_dct["rgb_flow_recons"])
-        metric_logger.update(flow_rgb_recons=loss_dct["flow_rgb_recons"])
-        metric_logger.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"])
+        if loss_dct["rgb_flow_recons"] is not None:
+            metric_logger.update(rgb_flow_recons=loss_dct["rgb_flow_recons"])
+            metric_logger.update(flow_rgb_recons=loss_dct["flow_rgb_recons"])
+            metric_logger.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"])
 
         metric_logger.update(loss_scale=loss_scale_value)
 
@@ -897,11 +925,12 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
             log_writer.update(loss=loss_value, head="loss")
             log_writer.update(rgb_recons=loss_dct["rgb_recons"], head="rgb_recons")
             log_writer.update(flow_recons=loss_dct["flow_recons"], head="flow_recons")
-            log_writer.update(recons_loss=loss_dct["rgb_recons"] + loss_dct["flow_recons"], head="recons_loss")
+            log_writer.update(recons_loss=recons_loss, head="recons_loss")
 
-            log_writer.update(rgb_flow_recons=loss_dct["rgb_flow_recons"], head="rgb_flow_recons")
-            log_writer.update(flow_rgb_recons=loss_dct["flow_rgb_recons"], head="flow_rgb_recons")
-            log_writer.update(cross_recons=loss_dct["rgb_flow_recons"] + loss_dct["flow_rgb_recons"], head="cross_recons")
+            if loss_dct["rgb_flow_recons"] is not None:
+                log_writer.update(rgb_flow_recons=loss_dct["rgb_flow_recons"], head="rgb_flow_recons")
+                log_writer.update(flow_rgb_recons=loss_dct["flow_rgb_recons"], head="flow_rgb_recons")
+                log_writer.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"], head="cross_recons")
 
             log_writer.update(loss_scale=loss_scale_value, head="opt")
             log_writer.update(lr=max_lr, head="opt")

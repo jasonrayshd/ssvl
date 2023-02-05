@@ -8,8 +8,11 @@ save_ckpt_freq: 10
 # Model parameters
 model: "pretrain_videomae_multimodal_base_patch16_224"
 decoder_depth: 6
-mask_type: "agnostic"         # choices=['tube']
-mask_ratio: 0.9
+rgb_mask_type: "agnostic"         # choices=['tube']
+rgb_mask_ratio: 0.9
+flow_mask_type: "agnostic"         # choices=['tube']
+flow_mask_ratio: 0.9
+modality: "rgbflow"
 input_size: 224           # videos input size for backbone
 drop_path: 0.0            # help='Drop path rate (default: 0.1)    
 normlize_target: False     #help='normalized the target patch pixels

@@ -34,10 +34,18 @@ from ego4d_trim import _get_frames
 import torch.nn.functional as F
 
 import io
+import os
 import random
 import zipfile
 from zipfile import ZipFile
+import shutil
 
+def logtofile(msg, dest="/mnt/shuang/Ouput/output_ego4d/preprocessed_data/egoclip_error_reading.log"):
+    with open(dest, "a+") as f:
+        f.write(msg+"\n")
+        f.flush()
+
+    os.fsync()
 
 def debug_functions(Dataset, **kwargs):
     dataset = Dataset(**kwargs)
@@ -312,6 +320,11 @@ class Ego4dBase(torch.utils.data.Dataset):
                 else:
                     continue
 
+    def attempt(self, func, **kwargs):
+        try:
+            return func(**kwargs)
+        except Exception as e:
+            return None
 
 class Egoclip(Ego4dBase):
 
@@ -420,36 +433,59 @@ class Egoclip(Ego4dBase):
         frame_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_" + "{:05d}".format(clip_idx), "frames.zip")
         flow_zip_path = os.path.join(self.cfg.FRAME_DIR_PATH, uid, uid+"_" + "{:05d}".format(clip_idx), "flows.zip")
 
-        try:
-            frame_zf_fp = zipfile.ZipFile(frame_zip_path, "r")
-            flow_zf_fp = zipfile.ZipFile(flow_zip_path, "r")
+        # open frame/flow zip file which might not exist
+        frame_zf_fp = self.attempt(zipfile.ZipFile, file=frame_zip_path, mode="r" )
+        if frame_zf_fp is None: return None
+        flow_zf_fp = self.attempt(zipfile.ZipFile, file=flow_zip_path, mode="r")
+        if flow_zf_fp is None:
+            frame_zf_fp.close() # close frame zip file
+            return None
+
+        # define postprocess for this function that will be called when error occurs
+        def _postprocess():
+            self.attempt( frame_zf_fp.close )
+            self.attempt( flow_zf_fp.close )
+
+        try: # zip file might be corrupted
             exist_frame_list = frame_zf_fp.namelist() # [frame_%010d_%010d.jpg, frame_%010d_%010d.jpg, ...]
             exist_flow_list = flow_zf_fp.namelist() # [u/frame_%010d_%010d.jpg, v/frame_%010d_%010d.jpg, ...]
         except:
-            # zipfile does not exist or is corrupted
+            # zipfile is corrupted
+            print("zipfile is corrupted..")
+            _postprocess()
             return None
 
-        # sample rgb and flows       
+        # sample specific index of rgb and flows       
         ret = self.sample_frames(info, exist_frame_list, exist_flow_list)
         if ret is None:
             # actual frames number is less than required frame number
+            _postprocess()
             return None
 
         frame_name_lst, uflow_name_lst, vflow_name_lst = ret
 
-        # load frame content
-        frame_lst = self.load_from_zip(frame_name_lst, frame_zf_fp)
+        # load frame/flows from zip file
+        frame_lst = self.attempt(self.load_from_zip, frame_name_lst=frame_name_lst, zf_fp=frame_zf_fp )
+        if frame_lst is None:
+            # 23.02.04: might be PIL read error
+            logtofile(f"Error occurred when reading frames {frame_zip_path} ")
+            _postprocess()
+            return None
 
         if self.load_flow == "local": # only load flow when needed
-            uflow_lst = self.load_from_zip(uflow_name_lst, flow_zf_fp, isflow=True)
-            vflow_lst = self.load_from_zip(vflow_name_lst, flow_zf_fp, isflow=True)
+            uflow_lst = self.attempt( self.load_from_zip, frame_name_lst=uflow_name_lst, zf_fp=flow_zf_fp, isflow=True)
+            vflow_lst = self.attempt( self.load_from_zip, frame_name_lst=vflow_name_lst, zf_fp=flow_zf_fp, isflow=True)
+            if uflow_lst is None or vflow_lst is None:
+                # 23.02.04: might be PIL read error
+                logtofile(f"Error occurred when reading flows {flow_zip_path} ")
+                _postprocess()
+                return None
         else:
             uflow_lst = None
             vflow_lst = None
 
         # post process
-        frame_zf_fp.close()
-        flow_zf_fp.close()
+        _postprocess()
 
         return frame_lst, uflow_lst, vflow_lst
 
@@ -532,8 +568,8 @@ class Egoclip(Ego4dBase):
 
         frame_lst = []
         for frame_name in frame_name_lst:
-            img_fp = zf_fp.open(frame_name)
-            buffer = io.BytesIO(img_fp.read())
+            content = zf_fp.read(frame_name)
+            buffer = io.BytesIO(content)
             img = Image.open(buffer) if not isflow else Image.open(buffer).split()[0]
             frame_lst.append(img)
 
@@ -553,7 +589,7 @@ class Egoclip(Ego4dBase):
             ret = self.prepare_clip_frames_flows(info=info)
             if ret is not None:
                 break
-            print(f"Fail to read frames and flows for video:{info['video_uid']} clip_idx:{info['clip_idx']}, randomly choosing a new ")
+            print(f"Fail to read frames and flows for video:{info['video_uid']} clip_idx:{info['clip_idx']}, randomly choosing a new sample...")
             random_idx = random.randint(0, len(self.package)-1)
             info = self.package[random_idx]
 

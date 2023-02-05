@@ -7,20 +7,32 @@ from epickitchens import Epickitchens
 
 
 def create_mask_generator(args):
+    generate_fns = {
+        "agnostic": AgnosticMaskingGenerator,
+        "tube": TubeMaskingGenerator,
+    }
 
-    if args.mask_type == 'tube':
-        generate_fn = TubeMaskingGenerator
-    elif args.mask_type == "agnostic":
-        generate_fn = AgnosticMaskingGenerator
+    rgb_masked_position_generator = None
+    flow_masked_position_generator = None
+
+    if getattr(args, "rgb_window_size", None):
+        rgb_masked_position_generator = generate_fns[args.rgb_mask_type](
+            args.rgb_window_size, args.rgb_mask_ratio
+        )
     else:
-        raise ValueError(f"Unknown mask type {args.mask_type}")
-
-    rgb_masked_position_generator = generate_fn(
-        args.window_size, args.mask_ratio
-    )
-    flow_masked_position_generator = generate_fn(
-        args.window_size, args.mask_ratio
-    )
+        # if rgb is not used in the training, then the mask does not matter
+        rgb_masked_position_generator = generate_fns[args.rgb_mask_type](
+            args.flow_window_size, args.rgb_mask_ratio
+        )
+    if getattr(args, "flow_window_size", None):
+        flow_masked_position_generator = generate_fns[args.flow_mask_type](
+            args.flow_window_size, args.flow_mask_ratio
+        )
+    else:
+        # if flow is not used in the training, then the mask does not matter
+        flow_masked_position_generator = generate_fns[args.flow_mask_type](
+            args.rgb_window_size, args.flow_mask_ratio
+        )
 
     return rgb_masked_position_generator, flow_masked_position_generator
 

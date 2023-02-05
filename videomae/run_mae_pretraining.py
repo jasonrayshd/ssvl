@@ -178,6 +178,7 @@ def get_model(args):
     elif args.pretrain == "multimodal":
         model = create_model(
             args.model,
+            modality = args.modality,
             pretrained=False,
             drop_path_rate=args.drop_path,
             drop_block_rate=None,
@@ -268,18 +269,30 @@ def main(args):
     if args.pretrain == "ts":
         assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
         patch_size = model.rgb_encoder.patch_embed.patch_size
+        print("Patch size = %s" % str(patch_size))
+        # window size for masking
+        args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+        args.patch_size = patch_size
     elif args.pretrain == "mae":
         patch_size = model.encoder.patch_embed.patch_size
+        print("Patch size = %s" % str(patch_size))
+        # window size for masking
+        args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+        args.patch_size = patch_size
     elif args.pretrain == "multimodal" or args.pretrain == "multicae":
-        patch_size = model.encoder.rgb_patch_embed.patch_size
+        rgb_patch_size = None
+        flow_patch_size = None
+
+        if "rgb" in args.modality:
+            rgb_patch_size = model.encoder.rgb_patch_embed.patch_size
+            args.rgb_window_size = (args.num_frames // 2, args.input_size // rgb_patch_size[0], args.input_size // rgb_patch_size[1])
+        if "flow" in args.modality:
+            flow_patch_size = model.encoder.flow_patch_embed.patch_size
+            args.flow_window_size = (args.num_frames // 2, args.input_size // flow_patch_size[0], args.input_size // flow_patch_size[1])
+
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
-    print("Patch size = %s" % str(patch_size))
-
-    # window size for masking
-    args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
-    args.patch_size = patch_size
 
     # if args.flow_mode == "online":
     #     mp.set_start_method('spawn')
@@ -448,7 +461,8 @@ def main(args):
                 start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values,
                 wd_schedule_values=wd_schedule_values,
-                patch_size=patch_size[0],
+                rgb_patch_size=rgb_patch_size[0] if rgb_patch_size is not None else flow_patch_size[0],
+                flow_patch_size=flow_patch_size[0] if flow_patch_size is not None else rgb_patch_size[0],
                 normlize_target=args.normlize_target,
 
                 mask_generators = mask_generators,
