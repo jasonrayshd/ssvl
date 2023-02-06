@@ -130,3 +130,53 @@ class HandsPredictionLoss(nn.Module):
         loss /= effective_num
 
         return loss
+    
+
+class PNRLoss(nn.Module):
+
+    def __init__(self, smoothing=0.1):
+
+        super().__init__()
+
+        self.bound = 2 # only using smoothing within certrain range around key frame
+
+        self.smoothing = smoothing
+        self.confidence = 1 - self.smoothing
+
+    def forward(self, output, target):
+
+        """
+            output: (B, T+1)
+            target: (B)
+        """
+        B, d = output.shape
+        T = d - 1
+
+        logprobs = F.log_softmax(output, dim=-1) # (B, T+1)
+        nll_loss = -logprobs.gather(dim=-1, index=target.unsqueeze(1))
+        nll_loss =  nll_loss.squeeze(1) # (B)
+ 
+        sign = ( target < T ).long().cuda() # (B, 1) indicate whether state change occurs
+        loc = torch.arange(-self.bound, self.bound+1, 1).unsqueeze(0).repeat(B, 1).cuda() + target.unsqueeze(1)
+        mask = torch.where((loc>=0)*(loc<T), 1, 0)
+
+        loc = torch.clamp(loc, min=0, max=T-1) # (B, self.bound*2+1)
+
+        smooth_loss = -logprobs.gather(dim=-1, index=loc) # (B, self.bound*2+1)
+        smooth_loss = smooth_loss * mask
+
+        loss =  self.confidence * nll_loss  + sign*(self.smoothing * smooth_loss.mean(-1)) + (1-sign)*(self.smoothing * nll_loss)
+
+        return loss.mean()
+
+
+if __name__ == "__main__":
+
+    loss_fn = PNRLoss()
+    B = 4
+    T = 16
+
+    target = (torch.randint(0, T+1, size=(B, )))
+    output = torch.randn(B,17)
+    print(target)
+    loss_fn(output, target)

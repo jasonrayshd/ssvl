@@ -34,7 +34,7 @@ from datasets import build_dataset
 from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, hands_train_one_epoch, egoclip_train_one_epoch, validation_one_epoch, final_test, merge
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, CustomLayerDecayValueAssigner
 
-from loss import ActionAnticipationLoss, HandsPredictionLoss
+from loss import ActionAnticipationLoss, HandsPredictionLoss, PNRLoss
 from config_utils import parse_yml, combine
 from flow_extractor import flowExtractor
 
@@ -357,6 +357,8 @@ def main(args, ds_init):
         drop_block_rate=None,
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
+
+        task=args.cfg.task
     )
     try:
         patch_size = model.patch_embed.patch_size
@@ -490,9 +492,13 @@ def main(args, ds_init):
         args.weight_decay_end = args.weight_decay
     wd_schedule_values = utils.cosine_scheduler(
         args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
-    print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
-    if args.cfg.task == "oscc" or args.cfg.task == "pnr":
+    if wd_schedule_values is not None:
+        print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
+    else:
+        print("WD is fixed to: %.7f" % args.weight_decay)
+
+    if args.cfg.task == "oscc":
         if mixup_fn is not None:
             # smoothing is handled with mixup label transform
             criterion = SoftTargetCrossEntropy()
@@ -502,6 +508,11 @@ def main(args, ds_init):
             criterion = torch.nn.CrossEntropyLoss()
 
         train_fn = osccpnr_train_one_epoch
+
+    elif args.cfg.task == "pnr":
+        criterion = PNRLoss(smoothing=args.smoothing)
+        train_fn = osccpnr_train_one_epoch
+
     elif "lta" in args.cfg.task: # [lta_verb, lta_noun]
         criterion = ActionAnticipationLoss(celoss="focal" if mixup_fn is None else "soft", head_type=args.head_type) # lta_verb or lta_noun
         train_fn = partial(lta_train_one_epoch, head_type=args.head_type)
@@ -549,6 +560,8 @@ def main(args, ds_init):
                 val_criterion = ActionAnticipationLoss(celoss="", head_type=args.head_type) # lta_verb or lta_noun
             elif "hands" in args.cfg.task:
                 val_criterion = HandsPredictionLoss(loss_type="l1")
+            # elif args.cfg.task == "pnr":
+            #     val_criterion = PNRLoss(smoothing=args.smoothing)
             else:
                 val_criterion = torch.nn.CrossEntropyLoss()
 

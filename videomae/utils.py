@@ -628,15 +628,15 @@ def filter_checkpoint_fho(checkpoint_model):
                 new_dict[key[12:]] = checkpoint_model[key]
             elif "flow_patch_embed" not in key:
                 # other blocks except flow_path_embed
-                if "intra_rgb" in key:
-                    # multimodal
-                    raw_key = key
-                    key = key.split(".")[1:] # remove "encoder."
-                    key[2] = key[2].split("_")[0] # might be norm1 or norm2
-                    key = ".".join(key)
-                    new_dict[key] = checkpoint_model[raw_key]
-                else:
-                    new_dict[key[8:]] = checkpoint_model[key]
+                # if "intra_rgb" in key:
+                #     # multimodal
+                #     raw_key = key
+                #     key = key.split(".")[1:] # remove "encoder."
+                #     key[2] = key[2].split("_")[0] # might be norm1 or norm2
+                #     key = ".".join(key)
+                #     new_dict[key] = checkpoint_model[raw_key]
+                # else:
+                new_dict[key[8:]] = checkpoint_model[key]
             # elif "regressor" in key:
             #     new_dict[key[8:]] = checkpoint_model[key]
             elif "encoder.norm" in key:

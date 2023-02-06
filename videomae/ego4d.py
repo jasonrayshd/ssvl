@@ -586,6 +586,8 @@ class Ego4dFhoOscc(Ego4dBase):
         self.input_size = self.cfg.input_size
         self.save_as_zip = self.cfg.SAVE_AS_ZIP    # save frames in zip file
 
+        self.num_frames = self.cfg.NUM_FRAMES
+
         # train
         self.repeat_sample = self.cfg.repeat_sample
         # train augmentation
@@ -596,6 +598,7 @@ class Ego4dFhoOscc(Ego4dBase):
         self.rand_erase_mode = self.cfg.rand_erase_mode
         self.train_interpolation = self.cfg.train_interpolation
         # test
+        self.test_temporal_sample = self.cfg.test_temporal_sample
         self.test_spatial_sample = self.cfg.test_spatial_sample
 
         self.load_flow = self.cfg.load_flow # str, [online, local]
@@ -621,12 +624,18 @@ class Ego4dFhoOscc(Ego4dBase):
         negative_vid_err_msg = "Wrong negative clips' frame path provided"
         assert os.path.exists(self.negative_vid_dir), negative_vid_err_msg
 
-        self.package = dict()
+        self.package = list()
         self.ann_data = json.load(open(self.ann_path, 'r'))["clips"]
 
-        for count, value in enumerate(
-            tqdm(self.ann_data, desc='Preparing data')
-        ):  
+        num_pos = 0
+        num_neg = 0
+
+
+        # pnr
+        # train: 653680(pos:316976 neg:336704)
+        # val:   449028(pos:213508 neg:235520)
+        
+        for value in tqdm(self.ann_data, desc='Preparing data'):  
 
             clip_start_sec = value['parent_start_sec']
             clip_end_sec = value['parent_end_sec']
@@ -635,43 +644,119 @@ class Ego4dFhoOscc(Ego4dBase):
             video_id = value['video_uid']
             unique_id = value['unique_id']
 
-            assert count not in self.package.keys()
             if self.mode in ['train', 'val']:
                 state_change = value['state_change']
                 if "parent_pnr_frame" in value.keys():
                     pnr_frame = value['parent_pnr_frame']
                 else:
                     pnr_frame = value["pnr_frame"]
-            else:
+
+
+                if self.task == "oscc":
+                    self.package.append({
+                        'unique_id': unique_id,
+                        'pnr_frame': pnr_frame,
+                        # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                        'clip_start_sec': clip_start_sec,
+                        'clip_end_sec': clip_end_sec,
+                        'clip_start_frame': int(clip_start_frame),
+                        'clip_end_frame': int(clip_end_frame),
+                        'video_id': video_id,
+
+                        "video_path": os.path.join(self.video_dir, video_id+".mp4"),
+                        "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
+                    })
+                elif self.task == "pnr":
+                    if pnr_frame:
+
+                        for i in range(0, self.num_frames):
+                            st = max(int(clip_start_frame), pnr_frame - i)
+                            end = min(int(clip_end_frame), pnr_frame - i + self.num_frames-1 )
+                            if end - st + 1 < self.num_frames: continue
+
+                            self.package.append({
+                                'unique_id': unique_id,
+                                'pnr_frame': pnr_frame,
+                                # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                                'clip_start_sec': clip_start_sec,
+                                'clip_end_sec': clip_end_sec,
+
+                                'clip_start_frame': st,
+                                'clip_end_frame': end,
+
+                                'video_id': video_id,
+                                "video_path": os.path.join(self.video_dir, video_id+".mp4"),
+                                "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
+                            })
+                            num_pos += 1
+                            if end == int(clip_end_frame):
+                                break
+
+                    else:
+                        # no state change occurs, repeat "num_frames" times.
+                        for i in range(0, self.num_frames):
+                            self.package.append({
+                                'unique_id': unique_id,
+                                'pnr_frame': pnr_frame,
+                                # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                                'clip_start_sec': clip_start_sec,
+                                'clip_end_sec': clip_end_sec,
+
+                                'clip_start_frame': int(clip_start_frame),
+                                'clip_end_frame': int(clip_end_frame),
+
+                                'video_id': video_id,
+                                "video_path": os.path.join(self.video_dir, video_id+".mp4"),
+                                "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
+                            })
+                            num_neg += 1
+            else:# test mode
+
                 state_change = None
                 pnr_frame = None
+                if self.task == "oscc":
+                    for temporal_idx in range(self.test_temporal_sample):
+                        for spatial_idx in range(self.test_spatial_sample):
+ 
+                            self.package.append({
+                                'unique_id': unique_id,
+                                'pnr_frame': pnr_frame,
+                                # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                                'clip_start_sec': clip_start_sec,
+                                'clip_end_sec': clip_end_sec,
+                                'clip_start_frame': int(clip_start_frame),
+                                'clip_end_frame': int(clip_end_frame),
+                                'video_id': video_id,
 
-            self.package[count] = {
-                'unique_id': unique_id,
-                'pnr_frame': pnr_frame,
-                # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
-                'clip_start_sec': clip_start_sec,
-                'clip_end_sec': clip_end_sec,
-                'clip_start_frame': int(clip_start_frame),
-                'clip_end_frame': int(clip_end_frame),
-                'video_id': video_id,
+                                "temporal_idx": temporal_idx,
+                                "spatial_idx": spatial_idx,
+                                "video_path": os.path.join(self.video_dir, video_id+".mp4"),
+                                "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
+                            })
 
-                "video_path": os.path.join(self.video_dir, video_id+".mp4"),
-                "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
-            }
+                elif self.task == "pnr":
+                    # dense sampling every frame
+                    for spatial_idx in range(self.test_spatial_sample):
+                        temporal_idx = 0
+                        for frame_idx in range(int(clip_start_frame), int(clip_end_frame), self.num_frames):
+                            self.package.append({
+                                'unique_id': unique_id,
+                                'pnr_frame': pnr_frame,
+                                # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                                'clip_start_sec': clip_start_sec,
+                                'clip_end_sec': clip_end_sec,
+                                'clip_start_frame': frame_idx,
+                                'clip_end_frame': min(int(clip_end_frame), frame_idx+self.num_frames),
+                                'video_id': video_id,
 
-        if self.mode == "test":
-            self.tmp_package = dict()
-            # Multiple spatial crop for testing
-            for cp in range(self.test_spatial_sample):
-                for k, v in self.package.items():
-                    self.tmp_package[cp * len(self.package) + k] = {}
-                    self.tmp_package[cp * len(self.package) + k].update(v)
-                    self.tmp_package[cp * len(self.package) + k]["spatial_crop"] = cp
+                                "temporal_idx": temporal_idx,
+                                "spatial_idx": spatial_idx,
+                                "video_path": os.path.join(self.video_dir, video_id+".mp4"),
+                                "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
+                            })
+                            temporal_idx += 1
 
-            self.package = self.tmp_package
-
-        print(f'Number of clips for {self.mode}: {len(self.package)}')
+        print(f'Number of clips for {self.mode}: {len(self.package)}(pos:{num_pos} neg:{num_neg})')
  
     def init_transformation(self):
 
@@ -713,8 +798,9 @@ class Ego4dFhoOscc(Ego4dBase):
         if self.mode == "train":
 
             # prepare clip frames and flows at the same time
+            # print(len(clip))
             clip, flows = self.data_transform(clip, info, frame_idx)
- 
+            # print(clip.shape)
             # supports repeat sampling
             if self.repeat_sample > 1:
                 clip, labels, flows = list(zip(*[ [ clip, labels, flows ] for _ in range(self.repeat_sample) ] ))
@@ -765,9 +851,7 @@ class Ego4dFhoOscc(Ego4dBase):
         #     clip_path = os.path.join(self.negative_vid_dir, unique_id)
 
         if os.path.exists(clip_path):
-
             if not save_as_zip:
-
                 # The frames for this clip are already saved.
                 num_frames = len(os.listdir(clip_path))
                 # if frame number does not match annotation file and frames.zip does not exist
@@ -780,17 +864,14 @@ class Ego4dFhoOscc(Ego4dBase):
                     print(
                         f'Deleting {clip_path} as it has {num_frames} frames'
                     )
-
                     os.system(f'rm -r {clip_path}')
                 else:
                     return None
-
             elif os.path.exists(os.path.join(clip_path, "frames.zip")):
                     return None
 
         print(f'Saving frames for {clip_path}...')
         os.makedirs(clip_path, exist_ok=True)
-
         start = time.time()
 
         # list of frame indexes
@@ -824,7 +905,7 @@ class Ego4dFhoOscc(Ego4dBase):
             if save_as_zip:
                 imgByteArr = io.BytesIO()
                 pil = Image.fromarray(frame)
-                pil.save(imgByteArr, format="jpeg")
+                pil.save(imgByteArr, format="jpeg", quality=100, subsampling=0)
                 zf.writestr(f'{frame_count}.jpeg', imgByteArr.getvalue())
 
             num_saved_frames += 1
@@ -836,13 +917,7 @@ class Ego4dFhoOscc(Ego4dBase):
             f'frames saved; {clip_path}')
 
 
-    def oscc_sample_frames(self,
-        unique_id,
-        clip_start_frame,
-        clip_end_frame,
-        num_frames_required,
-        pnr_frame
-    ):
+    def oscc_sample_frames(self, info):
         """
  
             Return sampled index of specific number of frames
@@ -856,85 +931,11 @@ class Ego4dFhoOscc(Ego4dBase):
 
             if no state change occurs, then elements of the second list are zero
         """ 
-        num_frames = clip_end_frame - clip_start_frame
-        if num_frames < num_frames_required:
-            print(f'Issue: {unique_id}; {num_frames}; {num_frames_required}')
-        error_message = "Can\'t sample more frames than there are in the video"
-        assert num_frames >= num_frames_required, error_message
-        lower_lim = np.floor(num_frames/num_frames_required)
-        upper_lim = np.ceil(num_frames/num_frames_required)
-        lower_frames = list()
-        upper_frames = list()
-        # lower_keyframe_candidates_list = list()
-        # upper_keyframe_candidates_list = list()
-        for frame_count in range(clip_start_frame, clip_end_frame, 1):
-            if frame_count % lower_lim == 0:
-                lower_frames.append(frame_count)
-                # if pnr_frame is not None:
-                #     lower_keyframe_candidates_list.append(
-                #         np.abs(frame_count - pnr_frame)
-                #     )
-                # else:
-                #     lower_keyframe_candidates_list.append(0.0)
-            if frame_count % upper_lim == 0:
-                upper_frames.append(frame_count)
-                # if pnr_frame is not None:
-                #     upper_keyframe_candidates_list.append(
-                #         np.abs(frame_count - pnr_frame)
-                #     )
-                # else:
-                #     upper_keyframe_candidates_list.append(0.0)
-        if len(upper_frames) < num_frames_required:
-            return lower_frames[:num_frames_required]
-            # lower_keyframe_candidates_list[:num_frames_required]
-        else:
-            return upper_frames[:num_frames_required]
-            # upper_keyframe_candidates_list[:num_frames_required]
 
-
-    def pnr_sample_frames(self,
-        unique_id,
-        clip_start_frame,
-        clip_end_frame,
-        num_frames_required,
-        pnr_frame
-    ):
-
-        pass
-
-
-    def read_frames_from_video(self, video_path, frames_list):
-        """
-            Code for decoding the video
-        """
-
-        cv2.setNumThreads(3)
-        # official code where av == 6.0.0
-        clip = []
-        container = av.open(video_path)
-        for frame in _get_frames(
-                frames_list,
-                container,
-                include_audio=False,
-                audio_buffer_frames=0
-            ):  
-            frame = frame.to_rgb().to_ndarray()
-            clip.append(frame)
-
-        return clip
-
-    def prepare_clip_frames_labels(self, info, from_zip=False):
-        """
-            sample specified number of frames given clip
-        """
-        clip_path = info["clip_path"]
-        message = f'Clip path {clip_path} does not exists...'
-        assert os.path.isdir(clip_path), message
-        # number of frames to be sampled
-        num_frames_per_clip= (
-            self.cfg.SAMPLING_FPS * self.cfg.CLIP_LEN_SEC
-        )
         pnr_frame = info['pnr_frame']
+        unique_id = info["unique_id"]
+        clip_path = info["clip_path"]
+        num_frames_required = self.num_frames
 
         if self.mode == 'train':
             # Random clipping
@@ -973,36 +974,95 @@ class Ego4dFhoOscc(Ego4dBase):
                 f'frame {random_end_frame} info {info} clip path {clip_path}')
             assert random_start_frame < random_end_frame, message
 
+
+        num_frames = random_end_frame - random_start_frame
+        if num_frames < num_frames_required:
+            print(f'Issue: {unique_id}; {num_frames}; {num_frames_required}')
+        error_message = "Can\'t sample more frames than there are in the video"
+        assert num_frames >= num_frames_required, error_message
+        lower_lim = np.floor(num_frames/num_frames_required)
+        upper_lim = np.ceil(num_frames/num_frames_required)
+        lower_frames = list()
+        upper_frames = list()
+        for frame_count in range(random_start_frame, random_end_frame, 1):
+            if frame_count % lower_lim == 0:
+                lower_frames.append(frame_count)
+            if frame_count % upper_lim == 0:
+                upper_frames.append(frame_count)
+        if len(upper_frames) < num_frames_required:
+            return lower_frames[:num_frames_required]
+        else:
+            return upper_frames[:num_frames_required]
+
+
+    def pnr_sample_frames(self, info):
+
+        pnr_frame = info['pnr_frame']
+        unique_id = info["unique_id"]
+        num_frames_required = self.num_frames
+
+        # read all frames from package (total frame number: self.num_frames)
+
+        if pnr_frame:
+            frames = list(range(info["clip_start_frame"], info["clip_end_frame"]+1))
+        else:
+            # total_frame_num = info["clip_end_frame"]-info["clip_start_frame"]+1
+            # np.random.uniform: [low, high)
+            random_start_frame = np.random.randint(info["clip_start_frame"], info["clip_end_frame"] - self.num_frames)
+            random_end_frame = random_start_frame + self.num_frames - 1
+
+            frames = list(range(random_start_frame, random_end_frame+1))
+
+        # print(unique_id, len(frames))
+        return frames
+
+
+    def read_frames_from_video(self, video_path, frames_list):
+        """
+            Code for decoding the video
+        """
+
+        # cv2.setNumThreads(3)
+        # official code where av == 6.0.0
+        clip = []
+        container = av.open(video_path)
+        for frame in _get_frames(
+                frames_list,
+                container,
+                include_audio=False,
+                audio_buffer_frames=0
+            ):  
+            frame = frame.to_rgb().to_ndarray()
+            clip.append(frame)
+
+        return clip
+
+    def prepare_clip_frames_labels(self, info, from_zip=False):
+        """
+            sample specified number of frames given clip
+        """
+        clip_path = info["clip_path"]
+        message = f'Clip path {clip_path} does not exists...'
+        assert os.path.isdir(clip_path), message
+        # number of frames to be sampled
+        pnr_frame = info['pnr_frame']
+
         labels = None
         if self.cfg.task == "oscc":
-            candidate_frame_nums  = self.oscc_sample_frames(
-                info['unique_id'],
-                random_start_frame,
-                random_end_frame,
-                num_frames_per_clip,
-                pnr_frame
-            )
-
+            candidate_frame_nums  = self.oscc_sample_frames(info)
             labels = 1 if pnr_frame is not None else 0
 
         elif self.cfg.task == "pnr":
-            candidate_frame_nums, keyframe_candidates_list = self.pnr_sample_frames(
-                info['unique_id'],
-                random_start_frame,
-                random_end_frame,
-                num_frames_per_clip,
-                pnr_frame
-            )
+            candidate_frame_nums = self.pnr_sample_frames(info)
 
             if pnr_frame is not None:
                 # if state change occurs, then prepare label for state change temporal localization
-                keyframe_location = np.argmin(keyframe_candidates_list)
-                # use hard labels by default
-                hard_labels = np.zeros(len(candidate_frame_nums))
-                hard_labels[keyframe_location] = 1
-                labels = hard_labels
+                keyframe_location = ( np.array(candidate_frame_nums) - pnr_frame ) == 0
+                keyframe_location = keyframe_location.argmax()
+                assert candidate_frame_nums[keyframe_location] == pnr_frame, print(candidate_frame_nums, pnr_frame)
+                labels = keyframe_location
             else:
-                labels = keyframe_candidates_list # all zero
+                labels = self.num_frames
 
         else:
             raise NotImplementedError(f"Not implemented task:{self.cfg.task} for osccpnr dataset")
@@ -1058,7 +1118,8 @@ class Ego4dFhoOscc(Ego4dBase):
         # Calculating the effective fps. In other words, the fps after sampling
         # changes when we are randomly clipping and varying the duration of the
         # clip
-        final_clip_length = (random_end_frame/30) - (random_start_frame/30)
+        num_frames_per_clip = info["clip_end_frame"] - info["clip_start_frame"] + 1
+        final_clip_length = (candidate_frame_nums[-1]/30) - (candidate_frame_nums[0]/30)
         effective_fps = num_frames_per_clip / final_clip_length
     
         return clip, np.array(labels), effective_fps, candidate_frame_nums

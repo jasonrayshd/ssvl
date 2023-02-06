@@ -79,7 +79,7 @@ def build_dataset(mode, args, flow_extractor=None):
 
     if args.cfg.task == "oscc" or args.cfg.task == "pnr":
         dataset = Ego4dFhoOscc(mode, args.cfg, pretrain=False, flow_extractor=flow_extractor)
-        num_classes = 2 if args.cfg.task == "oscc" else 32
+        num_classes = 2
 
     elif "lta" in args.cfg.task: # [lta_verb, lta_noun]
         dataset = Ego4dFhoLTA(mode, args.cfg, pretrain=False, flow_extractor=flow_extractor)
