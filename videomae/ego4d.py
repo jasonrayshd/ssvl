@@ -40,12 +40,6 @@ import zipfile
 from zipfile import ZipFile
 import shutil
 
-def logtofile(msg, dest="/mnt/shuang/Ouput/output_ego4d/preprocessed_data/egoclip_error_reading.log"):
-    with open(dest, "a+") as f:
-        f.write(msg+"\n")
-        f.flush()
-
-    os.fsync()
 
 def debug_functions(Dataset, **kwargs):
     dataset = Dataset(**kwargs)
@@ -326,9 +320,11 @@ class Ego4dBase(torch.utils.data.Dataset):
         except Exception as e:
             return None
 
+
 class Egoclip(Ego4dBase):
 
     def init_dataset(self):
+
         self.anno_path = os.path.join(self.cfg.ANN_DIR, "egoclip.csv")
 
         self.repeat_sample = self.cfg.repeat_sample
@@ -337,7 +333,30 @@ class Egoclip(Ego4dBase):
 
         self.load_flow = self.cfg.load_flow # str, [online, local]
 
+        # errors that might encounter during data loading
+        self.error_table = {
+            "-1": "Insufficient Number of Frames",
+            "-2": "Missing Zip File",
+            "-3": "Corrupted Zip Files Encountered",
+            "-4": "Corrupted Files Encountered",
+            "-5": "Miss Matched Frame and Flow Files"
+        }
+
+        self.log_path = self.kwargs["output_path"]
+        self.rank = self.kwargs["rank"]
+
         assert self.load_flow != "online", "Only support load flow locally while using egoclip"
+
+    def logtofile(self, msg, dest="/mnt/shuang/Data/ego4d/preprocessed_data/egoclip_error_reading.log"):
+
+        dest = os.path.join(self.log_path, f"egoclip_error_reading_{self.rank}.log")
+
+        f = open(dest, "a+")
+        f.write(msg+"\n")
+        f.flush() # flush python process buffer to os buffer
+        os.fsync(f.fileno()) # force flush os buffer to disk
+
+        f.close()
 
     def build_dataset(self):
         """
@@ -346,8 +365,9 @@ class Egoclip(Ego4dBase):
             Args:
                 anno_path: str, path to egoclip csv annotation file
         """
-        reader = csv.reader(open(self.anno_path, "r", encoding='utf-8'))
-        # next(reader) # skip head for egoclip.csv
+        fp = open(self.anno_path, "r", encoding='utf-8')
+        reader = csv.reader(fp, )
+        next(reader) # skip head for egoclip.csv
         rows = list(reader)
         self.package = []  # clips that are used for pretraining
         self.skip_lst = [] # clips that are ignored
@@ -356,31 +376,10 @@ class Egoclip(Ego4dBase):
         for row in tqdm(rows):
 
             meta = row[0].split("\t")
-            
             if meta[0] not in video2clipidx:
                 video2clipidx[meta[0]] = 0
             else:
                 video2clipidx[meta[0]] += 1
-            
-            # match verb and noun
-            pattern1 = "\[(\d*)\].*?\[(\d*)"
-            pattern2 = "\[(\d*).*?"
-            result = re.findall(pattern1, row[0])
-            if len(result) == 0:
-                result = re.findall(pattern2, row[0])
-                if len(result) == 0:
-                    skipped += 1
-                    continue # if still cannot match, then abadon
-                verb = result[0]
-                verb = -1 if verb == "" else int(verb)
-                noun = -1
-            else:
-                verb, noun = result[0]
-                verb = -1 if verb == "" else int(verb)
-                noun = -1 if noun == "" else int(noun)
-
-            if ("verb" in self.cfg.task and verb == -1) or ("noun" in self.cfg.task and noun == -1):
-                continue # skip clip with missing label in egoclip action recognition
 
             pack = {
                     "video_uid": meta[0],
@@ -391,8 +390,7 @@ class Egoclip(Ego4dBase):
                     "clip_start": meta[5],
                     "clip_end": meta[6],
                     "arration_info": "\t".join(meta[7:]),
-                    "verb": verb,
-                    "noun": noun,
+    
                     "start_frame": int( float(meta[5])*30 ),
                     # NOTE 2022.11.09: end frame might do not exist due to the accuracy of float number
                     "end_frame": int( float(meta[6])*30 ),
@@ -401,13 +399,42 @@ class Egoclip(Ego4dBase):
             }
 
             if pack["end_frame"] - pack["start_frame"] + 1 < self.cfg.NUM_FRAMES:
-                # if the length of the clip is smaller than required number of frames to be sampled
-                # then skip this clip
+                # if the length of the clip is smaller than required number of frames to be sampled then skip this clip
+                # this metric is inaccurate, since actual number of frames might be smaller than recordings in the annotation file
                 self.skip_lst.append(pack)
                 continue
 
+            # filter data for egoclip action recognition
+            if "verb" in self.cfg.task or "noun" in self.cfg.task:
+                # match verb and noun
+                pattern1 = "\[(\d*)\].*?\[(\d*)"
+                pattern2 = "\[(\d*).*?"
+                result = re.findall(pattern1, row[0])
+                if len(result) == 0:
+                    result = re.findall(pattern2, row[0])
+                    if len(result) == 0:
+                        skipped += 1
+                        continue # if still cannot match, then abadon
+                    verb = result[0]
+                    verb = -1 if verb == "" else int(verb)
+                    noun = -1
+                else:
+                    verb, noun = result[0]
+                    verb = -1 if verb == "" else int(verb)
+                    noun = -1 if noun == "" else int(noun)
+
+                if ("verb" in self.cfg.task and verb == -1) or ("noun" in self.cfg.task and noun == -1):
+                    continue # skip clip with missing label in egoclip action recognition
+
+                # update label
+                pack.update({
+                    "verb": verb,
+                    "noun": noun,
+                })
+
             self.package.append(pack)
-        print(f"Skipped {skipped} clips in total")
+        fp.close() # close annotation file descriptor
+        print(f"Skipped {skipped} clips due to missing label, {len(self.skip_lst)} clips due to insufficient frames")
 
     def init_transformation(self):
 
@@ -435,11 +462,11 @@ class Egoclip(Ego4dBase):
 
         # open frame/flow zip file which might not exist
         frame_zf_fp = self.attempt(zipfile.ZipFile, file=frame_zip_path, mode="r" )
-        if frame_zf_fp is None: return None
+        if frame_zf_fp is None: return -2 # file is missing
         flow_zf_fp = self.attempt(zipfile.ZipFile, file=flow_zip_path, mode="r")
         if flow_zf_fp is None:
             frame_zf_fp.close() # close frame zip file
-            return None
+            return -2 # file is missing
 
         # define postprocess for this function that will be called when error occurs
         def _postprocess():
@@ -451,16 +478,20 @@ class Egoclip(Ego4dBase):
             exist_flow_list = flow_zf_fp.namelist() # [u/frame_%010d_%010d.jpg, v/frame_%010d_%010d.jpg, ...]
         except:
             # zipfile is corrupted
-            print("zipfile is corrupted..")
             _postprocess()
-            return None
+            return -3 # zip file is corrupted
+
+        if 2*len(exist_frame_list) != len(exist_flow_list)+2:
+            self.logtofile(f"Miss Matched Flows and Frame files: {frame_zip_path} ")
+            _postprocess()
+            return -5 # miss matched flows and frames
 
         # sample specific index of rgb and flows       
         ret = self.sample_frames(info, exist_frame_list, exist_flow_list)
         if ret is None:
             # actual frames number is less than required frame number
             _postprocess()
-            return None
+            return -1 # insufficient frame/flow number
 
         frame_name_lst, uflow_name_lst, vflow_name_lst = ret
 
@@ -468,18 +499,18 @@ class Egoclip(Ego4dBase):
         frame_lst = self.attempt(self.load_from_zip, frame_name_lst=frame_name_lst, zf_fp=frame_zf_fp )
         if frame_lst is None:
             # 23.02.04: might be PIL read error
-            logtofile(f"Error occurred when reading frames {frame_zip_path} ")
+            self.logtofile(f"Files in zip file are corrupted: {frame_zip_path} ")
             _postprocess()
-            return None
+            return -4 # file in zipball is corrupted
 
         if self.load_flow == "local": # only load flow when needed
             uflow_lst = self.attempt( self.load_from_zip, frame_name_lst=uflow_name_lst, zf_fp=flow_zf_fp, isflow=True)
             vflow_lst = self.attempt( self.load_from_zip, frame_name_lst=vflow_name_lst, zf_fp=flow_zf_fp, isflow=True)
             if uflow_lst is None or vflow_lst is None:
                 # 23.02.04: might be PIL read error
-                logtofile(f"Error occurred when reading flows {flow_zip_path} ")
+                self.logtofile(f"Files in zip file are corrupted: {flow_zip_path} ")
                 _postprocess()
-                return None
+                return -4 # file in zipball is corrupted
         else:
             uflow_lst = None
             vflow_lst = None
@@ -581,15 +612,21 @@ class Egoclip(Ego4dBase):
 
         msg = f"fail to load frame for video_uid:{info['video_uid']} clip_id:{info['clip_idx']}"
 
-        # load frames and label
-        # load until succeed
-        # some zip files may contain frames less than required number of frames
-        ret = None
-        while ret is None:
+        # load frames and label until succeed
+
+        # potential error cases:
+        # (1) some zip files may contain frames less than required number of frames
+        # (2) some zip files are missing
+        # (3) some zip files are corrupted or files in zip file are corrupted
+        # (4) too many opened zip file descriptors
+
+
+        ret = 0
+        while isinstance(ret, int):
             ret = self.prepare_clip_frames_flows(info=info)
-            if ret is not None:
-                break
-            print(f"Fail to read frames and flows for video:{info['video_uid']} clip_idx:{info['clip_idx']}, randomly choosing a new sample...")
+            if isinstance(ret, tuple): break # sucessfully load frames and flows
+
+            print(f"Data Loading Error:{self.error_table[str(ret)]}, {info['video_uid']} clip_idx:{info['clip_idx']}, randomly choosing a new sample...")
             random_idx = random.randint(0, len(self.package)-1)
             info = self.package[random_idx]
 

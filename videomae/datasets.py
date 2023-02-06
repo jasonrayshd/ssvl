@@ -1,7 +1,9 @@
+import os
 from torchvision import transforms
 from transforms import *
-from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 
+import utils
+from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 from ego4d import Ego4dFhoOscc, Ego4dFhoLTA, Ego4dFhoHands, Egoclip
 from epickitchens import Epickitchens
 
@@ -11,10 +13,9 @@ def create_mask_generator(args):
         "agnostic": AgnosticMaskingGenerator,
         "tube": TubeMaskingGenerator,
     }
+    default_window_size = (16//2, 224//16, 224//16)
 
-    rgb_masked_position_generator = None
-    flow_masked_position_generator = None
-
+    # create rgb mask generator
     if getattr(args, "rgb_window_size", None):
         rgb_masked_position_generator = generate_fns[args.rgb_mask_type](
             args.rgb_window_size, args.rgb_mask_ratio
@@ -22,8 +23,10 @@ def create_mask_generator(args):
     else:
         # if rgb is not used in the training, then the mask does not matter
         rgb_masked_position_generator = generate_fns[args.rgb_mask_type](
-            args.flow_window_size, args.rgb_mask_ratio
+            default_window_size, args.rgb_mask_ratio
         )
+
+    # create flow mask generator
     if getattr(args, "flow_window_size", None):
         flow_masked_position_generator = generate_fns[args.flow_mask_type](
             args.flow_window_size, args.flow_mask_ratio
@@ -31,7 +34,7 @@ def create_mask_generator(args):
     else:
         # if flow is not used in the training, then the mask does not matter
         flow_masked_position_generator = generate_fns[args.flow_mask_type](
-            args.rgb_window_size, args.flow_mask_ratio
+            default_window_size, args.flow_mask_ratio
         )
 
     return rgb_masked_position_generator, flow_masked_position_generator
@@ -73,7 +76,10 @@ def build_pretraining_dataset(args, **kwargs):
     mode = "train"
 
     if args.cfg.task == "egoclip":
-        dataset = Egoclip(mode, args.cfg, pretrain=True, pretrain_transform=transform)
+        rank = utils.get_rank()
+        local_rank = os.environ['LOCAL_RANK']
+        dataset = Egoclip(mode, args.cfg, pretrain=True, pretrain_transform=transform,
+                        output_path=os.path.join(args.output_dir, args.name), rank=f"{rank}_{local_rank}" )
 
     elif args.cfg.task == "epic-kitchens":
         dataset = Epickitchens(args.cfg, mode, pretrain_transform=transform)
