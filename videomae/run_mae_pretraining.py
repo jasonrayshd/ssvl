@@ -8,7 +8,7 @@ import torch
 import torch.backends.cudnn as cudnn
 import json
 import os
-
+from tqdm import tqdm
 import copy
 
 from pathlib import Path
@@ -178,6 +178,7 @@ def get_model(args):
     elif args.pretrain == "multimodal":
         model = create_model(
             args.model,
+            modality = args.modality,
             pretrained=False,
             drop_path_rate=args.drop_path,
             drop_block_rate=None,
@@ -228,11 +229,11 @@ def load_weight_for_rgb_encoder(raw_checkpoints, pretrain="ts"):
 def main(args):
     utils.init_distributed_mode(args)
 
-    logging.basicConfig(
-        filename=os.path.join(opts.output_dir, opts.name, f"console_{utils.get_rank()}_{os.environ['LOCAL_RANK']}.log"),
-        filemode="w",
-        level=logging.DEBUG,
-    )
+    # logging.basicConfig(
+    #     filename=os.path.join(args.output_dir, args.name, f"console_{utils.get_rank()}_{os.environ['LOCAL_RANK']}.log"),
+    #     filemode="w",
+    #     level=logging.DEBUG,
+    # )
 
     device = torch.device(args.device)
 
@@ -240,7 +241,7 @@ def main(args):
     seed = args.seed + utils.get_rank()
 
     if utils.get_rank() == 0 and not args.debug:
-        wandb.init(project=args.project, id=args.wandb_id, resume="must" if args.wandb_id else None, config=vars(opts))
+        wandb.init(project=args.project, id=args.wandb_id, resume="must" if args.wandb_id else None, config=vars(args))
 
     print(args)
 
@@ -268,18 +269,30 @@ def main(args):
     if args.pretrain == "ts":
         assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
         patch_size = model.rgb_encoder.patch_embed.patch_size
+        print("Patch size = %s" % str(patch_size))
+        # window size for masking
+        args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+        args.patch_size = patch_size
     elif args.pretrain == "mae":
         patch_size = model.encoder.patch_embed.patch_size
+        print("Patch size = %s" % str(patch_size))
+        # window size for masking
+        args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+        args.patch_size = patch_size
     elif args.pretrain == "multimodal" or args.pretrain == "multicae":
-        patch_size = model.encoder.rgb_patch_embed.patch_size
+        rgb_patch_size = None
+        flow_patch_size = None
+
+        if "rgb" in args.modality:
+            rgb_patch_size = model.encoder.rgb_patch_embed.patch_size
+            args.rgb_window_size = (args.num_frames // 2, args.input_size // rgb_patch_size[0], args.input_size // rgb_patch_size[1])
+        if "flow" in args.modality:
+            flow_patch_size = model.encoder.flow_patch_embed.patch_size
+            args.flow_window_size = (args.num_frames // 2, args.input_size // flow_patch_size[0], args.input_size // flow_patch_size[1])
+
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
-    print("Patch size = %s" % str(patch_size))
-
-    # window size for masking
-    args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
-    args.patch_size = patch_size
 
     # if args.flow_mode == "online":
     #     mp.set_start_method('spawn')
@@ -441,6 +454,12 @@ def main(args):
             ) 
 
         elif args.pretrain == "multimodal":
+            patch_args = {}
+            if "rgb" in args.modality:
+                patch_args["rgb_patch_size"] = rgb_patch_size[0] 
+            if "flow" in args.modality:
+                patch_args["flow_patch_size"] = flow_patch_size[0]
+
             train_stats = train_multimodal_one_epoch(
                 model, data_loader_train,
                 optimizer, device, epoch, loss_scaler,
@@ -448,11 +467,13 @@ def main(args):
                 start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values,
                 wd_schedule_values=wd_schedule_values,
-                patch_size=patch_size[0],
+
                 normlize_target=args.normlize_target,
 
                 mask_generators = mask_generators,
                 lamb = args.lamb,
+
+                **patch_args
             )
         elif args.pretrain == "multicae":
             train_stats = train_multicae_one_epoch(

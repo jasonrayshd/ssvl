@@ -132,6 +132,9 @@ def read_egoclip_csv(anno_path):
         start_f = max(0, int( float(meta[5]) * 30) )
         end_f = max(0, int( float(meta[6]) * 30) )
 
+        if start_f > end_f:
+            print(f"invalid clip: {meta}, {len(data_dict[meta[0]])}")
+            continue
         frame_num += end_f - start_f
         data_dict[meta[0]].append(list(range(start_f, end_f+1))) # [[], [], [], ...]
 
@@ -213,13 +216,14 @@ def td_worker(source, dest, data_dict, tmp_dir, td_queue, desired_shorter_side):
     frames_list = []
     for clip_idx, clip in enumerate(clip_list):
         # make directory for each clip
-        os.makedirs(os.path.join(dest, uid + "_{:05d}".format(clip_idx)), exist_ok=True)
+        os.makedirs(os.path.join(dest, uid, uid + "_{:05d}".format(clip_idx)), exist_ok=True)
 
-        if os.path.exists(os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" )):
+        if os.path.exists(os.path.join(dest, uid, uid + "_{:05d}".format(clip_idx), "frames.zip" )):
             try:
                 # verify zip file is not corrupted and is not empty
-                zf = zipfile.ZipFile(os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" ), "r")
+                zf = zipfile.ZipFile(os.path.join(dest, uid, uid + "_{:05d}".format(clip_idx), "frames.zip" ), "r")
                 assert len(zf.namelist()) != 0
+                print(f'{os.path.join(dest, uid, uid + "_{:05d}".format(clip_idx), "frames.zip" )} exists')
                 continue
             except:
                 # else keep extracting frames for this clip
@@ -264,9 +268,9 @@ def td_worker(source, dest, data_dict, tmp_dir, td_queue, desired_shorter_side):
     for clip_idx in range(len(clip_list)):
 
         clip_name = str(clip_idx) + ".zip"
-        if not os.path.exists(os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" )):
+        if not os.path.exists(os.path.join(dest, uid, uid + "_{:05d}".format(clip_idx), "frames.zip" )):
             # only transfer zip file that do not exist in dest
-            shutil.move(tmp_dir +"/" + clip_name, os.path.join(dest, uid + "_{:05d}".format(clip_idx), "frames.zip" ))
+            shutil.move(tmp_dir +"/" + clip_name, os.path.join(dest, uid, uid + "_{:05d}".format(clip_idx), "frames.zip" ))
 
     # Last few frame indexes in frames_list might exceed video duration
     missed_frame = []
@@ -373,10 +377,10 @@ def main(args):
     # filter_list = [video.split(".")[0] for video in os.listdir(source) if video.split(".")[0] not in processed_video_list]
 
     filter_list = [
-        "ec344610-74f4-4765-9c3f-0837ef78055d",
-        "a4c1f23e-702e-49a1-9600-0538e4e2e7db",
+        # "ec344610-74f4-4765-9c3f-0837ef78055d",
+        # "a4c1f23e-702e-49a1-9600-0538e4e2e7db",
         "4efd8c65-82c6-481b-8cf2-9038b0b7bc3d",
-        "170fb6c9-8550-4e82-bb9a-4ad574c0f0fa",
+        # "170fb6c9-8550-4e82-bb9a-4ad574c0f0fa",
     ]
     # 4efd8c65-82c6-481b-8cf2-9038b0b7bc3d
     # a4c1f23e-702e-49a1-9600-0538e4e2e7db
