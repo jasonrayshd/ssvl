@@ -220,11 +220,13 @@ def load_weight_for_rgb_encoder(raw_checkpoints, pretrain="ts"):
                     _tmp = k.split(".")
                     _tmp[1] = "rgb_patch_embed"
                     k = ".".join(_tmp)
+                elif "encoder_to_decoder" in k:
+                    continue
 
                 rgb_encoder_checkpoints[k] = v
 
-            elif k == "mask_token":
-                rgb_encoder_checkpoints["rgb_mask_token"] = v
+            # elif k == "mask_token":
+            #     rgb_encoder_checkpoints["rgb_mask_token"] = v
 
     return rgb_encoder_checkpoints
 
