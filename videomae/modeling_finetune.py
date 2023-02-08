@@ -1917,6 +1917,8 @@ class LongTermActionAnticipationModel(nn.Module):
                 tubelet_size=2,
                 use_mean_pooling=True,
                 keep_dim = False, # keep dimension of encoder extracted features or not ( will not return x[:,0] or x.mean(1) in forward_features() ))
+                
+                head_type = "baseline"
                 ):
         super().__init__()
 
@@ -1948,7 +1950,7 @@ class LongTermActionAnticipationModel(nn.Module):
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
 
-        self.head_type = "baseline"
+        self.head_type = head_type
 
         if self.head_type == "varant":
             self.anticipation_model = VarAnt(

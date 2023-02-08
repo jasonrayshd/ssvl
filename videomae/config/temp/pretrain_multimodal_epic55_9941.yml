@@ -8,56 +8,59 @@ save_ckpt_freq: 10
 # Model parameters
 model: "pretrain_videomae_multimodal_base_patch16_224"
 decoder_depth: 6
-rgb_mask_type: "agnostic"         # choices=['tube']
-rgb_mask_ratio: 0.9
-flow_mask_type: "agnostic"         # choices=['tube']
-flow_mask_ratio: 0.9
+
+
+# possible values for 'mask_type': [multimodal, agnostic, tube, agnostic_tube, tube_agnostic, agnostic_agnostic, tube_tube]
+# Notice:
+# when input modality is composed of rgb and flow and mask_type is either 'agnostic' or 'tube' 
+# then perform uniform sampling among all rgb and flow tokens instead of independently amoung each modality
+mask_type: "multimodal"
+
+# possible values for 'mask_ratio': float or str of format "float_float"
+# float_float is used to specify different masking ratio for each modality
+# only works when rgb and flow are both input modality
+# Notice:
+# mask_ratio should correspond with mask_type that when mask_type is in [agnostic, tube], then mask ratio is a float
+# else mask_ratio should be str of format 'float_float'
+mask_ratio: 0.9
+
 modality: "rgbflow"
-input_size: 224           # videos input size for backbone
-drop_path: 0.0            # help='Drop path rate (default: 0.1)    
-normlize_target: False     #help='normalized the target patch pixels
+input_size: 224
+drop_path: 0.0
+normlize_target: False
 
 # Optimizer parameters
-opt: "adamw"               # help='Optimizer, default: "adamw"
-opt_eps: 1.0e-8             # help='Optimizer Epsilon (default: 1e-8)
-opt_betas: null           # type=float, nargs='+  metavar='BETA help='Optimizer Betas (default: None, use opt default)
-clip_grad: null           # type=float, None, metavar='NORM help='Clip gradient norm (default: None, no clipping)
-momentum: 0.9             # metavar='M help='SGD momentum (default: 0.9)
-weight_decay: 0.0001        # help='weight decay (default: 0.05)
-weight_decay_end: null    # help="""Final value of the
-                          # weight decay. We use a cosine schedule for WD. 
-                          # (Set the same value with args.weight_decay to keep weight decay no change)""")
+opt: "adamw"
+opt_eps: 1.0e-8
+opt_betas: null
+clip_grad: null
+momentum: 0.9
+weight_decay: 0.0001
+weight_decay_end: null
 
-lr: 5.0e-5                # metavar='LR help='learning rate (default: 1.5e-4)
+lr: 5.0e-5
+warmup_lr: 1.0e-7
+min_lr: 1.0e-7
 
-warmup_lr: 1.0e-7           # metavar='LR help='warmup learning rate (default: 1e-6)
-min_lr: 1.0e-7              # metavar='LR help='lower lr bound for cyclic schedulers that hit 0 (1e-5)
-
-warmup_epochs: 20         # metavar='N help='epochs to warmup LR, if scheduler supports
-warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler supports
-
-# Augmentation parameters
-# color_jitter: 0.0                           # metavar='PCT help='Color jitter factor (default: 0.4)
-# train_interpolation: 'bicubic'              # help='Training interpolation (random, bilinear, bicubic default: "bicubic")
+warmup_epochs: 20
+warmup_steps: -1
 
 # Dataset parameters
-data_path: '/path/to/list_kinetics-400'     # help='dataset path
-imagenet_default_mean_and_std: true         # action='store_true
+data_path: '/path/to/list_kinetics-400'
+imagenet_default_mean_and_std: true
 num_frames: 16
 sampling_rate: 4
-output_dir: "/data/jiachen/output/multimodal"                              # help='path where to save, empty for no saving
-log_dir: "/data/jiachen/output/multimodal"                              # help='path where to tensorboard log
-# device: 'cuda'                              # help='device to use for training / testing
-# seed: 0
-resume: ""                                  # help='resume from checkpoint
-auto_resume: False                           # 
+output_dir: "/data/jiachen/output/multimodal"
+log_dir: "/data/jiachen/output/multimodal"
 
-start_epoch: 0                              # help='start epoch
+resume: ""
+auto_resume: False
+
+start_epoch: 0
 num_workers: 30
 pin_mem: true
-# flow images
+
 pretrain: "multimodal"
-# predict_preprocessed_flow: true               # whether use preprocessed flow images as target at pretraining
 
 lamb: [1, 1, 1, 1]
 
@@ -81,12 +84,6 @@ cfg:
     NUM_FRAMES: 16
     REPEATED_SAMPLING: 0
     READ_FROM_TAR: false
-    # TRAIN_JITTER_SCALES: [256, 320]
-    # TRAIN_CROP_SIZE: 224
-    # TEST_CROP_SIZE: 224
 
-  # TEST:
-  #   NUM_SPATIAL_CROPS: ""
-  #   NUM_ENSEMBLE_VIEWS: ""
   VERSION: 55
   ONINE_EXTRACTING: true

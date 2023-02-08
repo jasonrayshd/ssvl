@@ -8,38 +8,6 @@ from ego4d import Ego4dFhoOscc, Ego4dFhoLTA, Ego4dFhoHands, Egoclip
 from epickitchens import Epickitchens
 
 
-def create_mask_generator(args):
-    generate_fns = {
-        "agnostic": AgnosticMaskingGenerator,
-        "tube": TubeMaskingGenerator,
-    }
-    default_window_size = (16//2, 224//16, 224//16)
-
-    # create rgb mask generator
-    if getattr(args, "rgb_window_size", None):
-        rgb_masked_position_generator = generate_fns[args.rgb_mask_type](
-            args.rgb_window_size, args.rgb_mask_ratio
-        )
-    else:
-        # if rgb is not used in the training, then the mask does not matter
-        rgb_masked_position_generator = generate_fns[args.rgb_mask_type](
-            default_window_size, args.rgb_mask_ratio
-        )
-
-    # create flow mask generator
-    if getattr(args, "flow_window_size", None):
-        flow_masked_position_generator = generate_fns[args.flow_mask_type](
-            args.flow_window_size, args.flow_mask_ratio
-        )
-    else:
-        # if flow is not used in the training, then the mask does not matter
-        flow_masked_position_generator = generate_fns[args.flow_mask_type](
-            default_window_size, args.flow_mask_ratio
-        )
-
-    return rgb_masked_position_generator, flow_masked_position_generator
-
-
 class DataAugmentationForVideoMAE(object):
     def __init__(self, args):
         self.input_mean = [0.485, 0.456, 0.406]  # IMAGENET_DEFAULT_MEAN

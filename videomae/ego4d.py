@@ -45,6 +45,136 @@ def debug_functions(Dataset, **kwargs):
     dataset = Dataset(**kwargs)
     sample = dataset[0]
 
+def get_basic_config_for(task):
+    """
+        Return basic configuration for each task
+        Args:
+            task: str, name of task
+        Return:
+            cfg: argparse.Namespace
+    """
+    if task == "oscc-pnr":
+         cfg = {
+            # path used
+            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
+            "VIDEO_DIR_PATH": "/data/shared/ssvl/ego4d/v1/full_scale",
+            "CLIPS_SAVE_PATH": "/data/shared/ssvl/ego4d/v1/pos",
+            "NO_SC_PATH": "/data/shared/ssvl/ego4d/v1/neg",
+            "SAVE_AS_ZIP": True,
+            "CLIP_LEN_SEC": 8,
+            "SAMPLING_FPS": 2, 
+            "MEAN":[0.485, 0.456, 0.406],
+            "STD": [0.229, 0.224, 0.225],
+            # "FRAME_FORMAT": "{:10d}.jpeg",
+
+            "short_side_size": 256,
+            "input_size": 224,
+            # train
+            "repeat_sample": 1,
+            # train augmentation
+            "auto_augment": 'rand-m7-n4-mstd0.5-inc1',
+            "rand_erase_count": 1,
+            "rand_erase_prob": 0.25,
+            "rand_erase_mode": "pixel",
+            "train_interpolation": "bicubic",
+            # test
+            "test_spatial_sample": 3,
+
+            "task": "fho_oscc_tl",
+            "load_flow": "none", # [online, local, none] 
+        }
+
+    elif task == "hands":
+        cfg = {
+            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
+            "FRAME_DIR_PATH": "/data/shared/ssvl/ego4d/v1/fho_hands",
+            "MEAN":[0.485, 0.456, 0.406],
+            "STD": [0.229, 0.224, 0.225],
+            "FRAME_FORMAT": "{:010d}.jpg",  # image frame format
+
+            "observation_time_second": 4,  # observation time of baseline method is 2s
+
+            "repeat_sample": 1, 
+            "test_spatial_crop_num": 3,
+            "test_temporal_crop_num": 1,
+
+            "task": "fho_hands"
+        }
+
+    elif task == "egoclip":
+
+        cfg = {
+            "ANN_DIR": "/mnt/shuang/Data/ego4d/data/v1/annotations",
+            "FRAME_DIR_PATH": "/mnt/shuang/Data/ego4d/preprocessed_data/egoclip",
+            "NUM_FRAMES": 16,
+
+            "MEAN":[0.485, 0.456, 0.406],
+            "STD": [0.229, 0.224, 0.225],
+
+            "FRAME_FORMAT": "frame_{:10d}_{:010d}.jpg",  # image frame format
+
+            "repeat_sample": 1, 
+            "test_spatial_crop_num": 3,
+            "test_temporal_crop_num": 1,
+
+            "load_flow": "local",
+
+            "task": "fho_hands"
+        }
+
+    elif task == "lta":
+
+        cfg = {
+            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
+            "FRAME_DIR_PATH": "/data/shared/ssvl/ego4d/v1/fho_lta/test",
+            "NUM_FRAMES": 16,
+
+            "MEAN":[0.485, 0.456, 0.406],
+            "STD": [0.229, 0.224, 0.225],
+
+            "FRAME_FORMAT": "{:010d}.jpg",  # image frame format
+
+            "repeat_sample": 1, 
+            "input_clip_num": 1,
+            "num_action_predict": 20,
+            "short_side_size": 256,
+            "input_size": 224,
+
+            "test_spatial_crop_num": 3,
+            "test_temporal_crop_num": 1,
+
+            "load_flow": "local",
+            "task": "lta"
+        }
+
+    elif task == "sta":
+
+        cfg = {
+            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
+            "FRAME_DIR_PATH": "/data/shared/ssvl/ego4d/v1/fho_sta/",
+            "NUM_FRAMES": 16,
+
+            "MEAN":[0.485, 0.456, 0.406],
+            "STD": [0.229, 0.224, 0.225],
+
+            "FRAME_FORMAT": "{:010d}.jpg",  # image frame format
+
+            "repeat_sample": 1, 
+            "short_side_size": 256,
+            "input_size": 224,
+            "test_spatial_crop_num": 3,
+            "test_temporal_crop_num": 1,
+
+
+
+
+            "load_flow": "local",
+            "task": "sta"
+
+        }
+    return Namespace(**cfg)
+
+
 class Ego4dBase(torch.utils.data.Dataset):
     """
     Data loader for state change detection and key-frame localization.
@@ -744,49 +874,66 @@ class Ego4dFhoOscc(Ego4dBase):
                         "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
                     })
                 elif self.task == "pnr":
-                    if pnr_frame:
 
-                        for i in range(0, self.num_frames):
-                            st = max(int(clip_start_frame), pnr_frame - i)
-                            end = min(int(clip_end_frame), pnr_frame - i + self.num_frames-1 )
-                            if end - st + 1 < self.num_frames: continue
+                    self.package.append({
+                        'unique_id': unique_id,
+                        'pnr_frame': pnr_frame,
+                        # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                        'clip_start_sec': clip_start_sec,
+                        'clip_end_sec': clip_end_sec,
+                        'clip_start_frame': int(clip_start_frame),
+                        'clip_end_frame': int(clip_end_frame),
 
-                            self.package.append({
-                                'unique_id': unique_id,
-                                'pnr_frame': pnr_frame,
-                                # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
-                                'clip_start_sec': clip_start_sec,
-                                'clip_end_sec': clip_end_sec,
+                        'video_id': video_id,
+                        "video_path": os.path.join(self.video_dir, video_id+".mp4"),
+                        "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
+                    })
 
-                                'clip_start_frame': st,
-                                'clip_end_frame': end,
+                    # multi-class classification dense sampling strategy
+                    # see experiment pnr/noble-brook-2 on wandb for more information
+                    # if pnr_frame:
 
-                                'video_id': video_id,
-                                "video_path": os.path.join(self.video_dir, video_id+".mp4"),
-                                "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
-                            })
-                            num_pos += 1
-                            if end == int(clip_end_frame):
-                                break
+                        # for i in range(0, self.num_frames):
+                        #     st = max(int(clip_start_frame), pnr_frame - i)
+                        #     end = min(int(clip_end_frame), pnr_frame - i + self.num_frames-1 )
+                        #     if end - st + 1 < self.num_frames: continue
 
-                    else:
-                        # no state change occurs, repeat "num_frames" times.
-                        for i in range(0, self.num_frames):
-                            self.package.append({
-                                'unique_id': unique_id,
-                                'pnr_frame': pnr_frame,
-                                # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
-                                'clip_start_sec': clip_start_sec,
-                                'clip_end_sec': clip_end_sec,
+                            # self.package.append({
+                            #     'unique_id': unique_id,
+                            #     'pnr_frame': pnr_frame,
+                            #     # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                            #     'clip_start_sec': clip_start_sec,
+                            #     'clip_end_sec': clip_end_sec,
 
-                                'clip_start_frame': int(clip_start_frame),
-                                'clip_end_frame': int(clip_end_frame),
+                            #     'clip_start_frame': st,
+                            #     'clip_end_frame': end,
 
-                                'video_id': video_id,
-                                "video_path": os.path.join(self.video_dir, video_id+".mp4"),
-                                "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
-                            })
-                            num_neg += 1
+                            #     'video_id': video_id,
+                            #     "video_path": os.path.join(self.video_dir, video_id+".mp4"),
+                            #     "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
+                            # })
+                            #     num_pos += 1
+                            #     if end == int(clip_end_frame):
+                            #         break
+
+                    # else:
+                    #     # no state change occurs, repeat "num_frames" times.
+                    #     for i in range(0, self.num_frames):
+                    #         self.package.append({
+                    #             'unique_id': unique_id,
+                    #             'pnr_frame': pnr_frame,
+                    #             # 'state': 0 if not state_change else 1, # NOTE:state_change might be True, False or None
+                    #             'clip_start_sec': clip_start_sec,
+                    #             'clip_end_sec': clip_end_sec,
+
+                    #             'clip_start_frame': int(clip_start_frame),
+                    #             'clip_end_frame': int(clip_end_frame),
+
+                    #             'video_id': video_id,
+                    #             "video_path": os.path.join(self.video_dir, video_id+".mp4"),
+                    #             "clip_path": os.path.join(self.positive_vid_dir, unique_id) if state_change else os.path.join(self.negative_vid_dir, unique_id)
+                    #         })
+                    #         num_neg += 1
             else:# test mode
 
                 state_change = None
@@ -882,10 +1029,14 @@ class Ego4dFhoOscc(Ego4dBase):
             if self.repeat_sample > 1:
                 clip, labels, flows = list(zip(*[ [ clip, labels, flows ] for _ in range(self.repeat_sample) ] ))
 
+            return clip, flows, labels
+
         elif self.mode == "val":
             clip = self.data_transform(clip)
             flows = self.prepare_flow(clip, info, frame_idx)
             clip = self.normalize(clip)
+
+            return clip, flows, [labels, clip["clip_idx"]]
 
         elif self.mode =="test":
             # support multiple spatial crops
@@ -908,7 +1059,6 @@ class Ego4dFhoOscc(Ego4dBase):
 
             return clip, flows, frame_idx
 
-        return clip, flows, labels
 
 
     def check_extract_clip_frames(self, info, save_as_zip=False):
@@ -1080,15 +1230,31 @@ class Ego4dFhoOscc(Ego4dBase):
 
         # read all frames from package (total frame number: self.num_frames)
 
-        if pnr_frame:
-            frames = list(range(info["clip_start_frame"], info["clip_end_frame"]+1))
-        else:
-            # total_frame_num = info["clip_end_frame"]-info["clip_start_frame"]+1
-            # np.random.uniform: [low, high)
-            random_start_frame = np.random.randint(info["clip_start_frame"], info["clip_end_frame"] - self.num_frames)
-            random_end_frame = random_start_frame + self.num_frames - 1
+        if self.mode == "train":
+            if pnr_frame:
+                # verion 1:
+                # use all frames. This is used together with multi-class classfication dense sampling strategy
+                # frames = list(range(info["clip_start_frame"], info["clip_end_frame"]+1))
 
-            frames = list(range(random_start_frame, random_end_frame+1))
+                # version 2:
+                # sample around PNR frame
+                st = max(info["clip_start_frame"], pnr_frame - self.num_frames + 1)
+                end = min(pnr_frame + 1, info["clip_end_frame"] - self.num_frames)
+                random_start_frame = np.random.randint(st, end)
+                random_end_frame = random_start_frame + self.num_frames - 1
+
+                frames = list(range(random_start_frame, random_end_frame+1))
+
+            else:
+                # total_frame_num = info["clip_end_frame"]-info["clip_start_frame"]+1
+                # np.random.uniform: [low, high)
+                random_start_frame = np.random.randint(info["clip_start_frame"], info["clip_end_frame"] - self.num_frames)
+                random_end_frame = random_start_frame + self.num_frames - 1
+
+                frames = list(range(random_start_frame, random_end_frame+1))
+
+        elif self.mode in ["val", "test"]:
+            frames = list(range(info["clip_start_frame"], info["clip_end_frame"]+1))
 
         # print(unique_id, len(frames))
         return frames
@@ -1134,12 +1300,16 @@ class Ego4dFhoOscc(Ego4dBase):
 
             if pnr_frame is not None:
                 # if state change occurs, then prepare label for state change temporal localization
-                keyframe_location = ( np.array(candidate_frame_nums) - pnr_frame ) == 0
-                keyframe_location = keyframe_location.argmax()
-                assert candidate_frame_nums[keyframe_location] == pnr_frame, print(candidate_frame_nums, pnr_frame)
-                labels = keyframe_location
+                # keyframe_location = ( np.array(candidate_frame_nums) - pnr_frame ) == 0
+                # keyframe_location = keyframe_location.argmax()
+                # assert candidate_frame_nums[keyframe_location] == pnr_frame, print(candidate_frame_nums, pnr_frame)
+                # labels = keyframe_location
+
+                labels = 1
             else:
-                labels = self.num_frames
+                # labels = self.num_frames
+
+                labels = 0
 
         else:
             raise NotImplementedError(f"Not implemented task:{self.cfg.task} for osccpnr dataset")
@@ -1264,127 +1434,6 @@ class Ego4dFhoOscc(Ego4dBase):
             clip = clip.permute(1, 0, 2, 3)
 
         return clip, flows
-
-
-# class Ego4dFhoScod(Ego4dBase):
-
-#     def init_dataset(self):
-
-#         self.rand_brightness = self.cfg.rand_brightness # by default (0.9, 1.1)
-#         self.rand_flip_prob = self.cfg.rand_flip_prob # 0.5 by default 
-#         self.input_size = self.cfg.input_size
-#         self.short_side_size = self.cfg.short_side_size
-#         self.anno_path = os.path.join(self.cfg.ANN_DIR, f"fho_scod_{self.mode}.json")
-
-#         self.mean = torch.tensor(self.mean).view(3,1,1,1)
-#         self.std = torch.tensor(self.std).view(3,1,1,1)
-
-#     def build_dataset(self):
-
-#         clips = json.load(open(self.anno_path, "r"))["clips"]
-#         self.lst_dict = []
-#         image_id = 1
-
-#         for clip in clips:
-#             data_dict = {}
-#             data_dict["file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pnr_frame"]["frame_number"])+".jpeg")
-#             data_dict["pre_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pre_frame"]["frame_number"])+".jpeg")
-#             data_dict["post_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["post_frame"]["frame_number"])+".jpeg")
-#             data_dict["height"] = clip["pnr_frame"]["height"]
-#             data_dict["width"] = clip["pnr_frame"]["width"]
-#             data_dict["image_id"] = image_id
-#             data_dict["annotations"] = []
-
-#             if self.mode == "test":
-#                 image_id += 1
-#                 self.lst_dict.append(data_dict)
-#                 continue
-
-#             for bbox in clip["pnr_frame"]["bbox"]:
-
-#                 if bbox["object_type"] == "object_of_change":
-#                     data_dict["annotations"].append({
-#                         "segmentation": [],
-#                         "category_id": 1,
-#                         "bbox": [bbox["bbox"]["x"], bbox["bbox"]["y"], bbox["bbox"]["width"], bbox["bbox"]["height"]],
-#                         "bbox_mode": 1, # XYWH_ABS
-#                         "iscrowd": 0,
-#                     })
-
-#             image_id += 1
-#             self.lst_dict.append(data_dict)
-
-#     def init_transformation(self):
-#         if self.mode == "train":
-#             # See "Data Augmentation" tutorial for details usage
-#             self.data_transform = detection_transform.AugmentationList([
-#                         detection_transform.RandomBrightness(*self.rand_brightness),
-#                         detection_transform.RandomFlip(prob=self.rand_flip_prob),
-#                         detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
-#                         # T.RandomCrop("absolute", (224, 224))
-#                         detection_transform.Resize((self.input_size, self.input_size))
-#                     ])
-#         else:
-#             self.data_transform = detection_transform.AugmentationList([
-#                         detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
-#                         # T.CenterCrop("absolute", (224, 224))
-#                         detection_transform.Resize((self.input_size, self.input_size))
-#                     ])
- 
-#     def __getitem__(self, index):
-
-#         dataset_dict = self.lst_dict[index]
-#         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
-
-#         image = self._load_frame(dataset_dict["file_name"])
-#         pre_image = self._load_frame(dataset_dict["pre_file_name"])
-#         post_image = self._load_frame(dataset_dict["post_file_name"])
-
-
-#         auginput = detection_transform.AugInput(image)
-#         transform = self.data_transform(auginput)
-#         image = torch.from_numpy(auginput.image.transpose(2, 0, 1).copy())
-#         pre_image = torch.from_numpy(transform.apply_image(pre_image).transpose(2, 0, 1).copy())
-#         post_image = torch.from_numpy(transform.apply_image(post_image).transpose(2, 0, 1).copy())
-
-#         # random pick combination of pnr frame with pre/post frame
-#         _p = random.random()
-#         vit_input = torch.stack([pre_image, image.clone()], dim=0) if _p > 0.5 else torch.stack([image.clone(), post_image], dim=0)
-#         vit_input = vit_input.permute(1, 0, 2, 3) / 255.0 # C, T, H, W
-
-#         vit_input = (vit_input - self.mean) / self.std
-
-#         annos = [
-#             detection_utils.transform_instance_annotations(annotation, [transform], image.shape[1:])
-#             for annotation in dataset_dict.pop("annotations")
-#         ]
-#         annos = detection_utils.annotations_to_instances(annos, image.shape[1:])
-
-#         return image, vit_input, annos, dataset_dict
-
-
-#     def visualize(np_rgb_image, xyxy_abs_box, name="detection_vis.png"):
-#         # For debugging  
-
-#         """
-#             np_rgb_image: numpy.ndarray, in rgb format
-#             xyxy_abs_box: list, length is 4
-        
-#         """
-
-#         from detectron2.utils.visualizer import Visualizer
-#         from detectron2.structures import Instances
-
-#         H, W, C = np_rgb_image.shape
-#         instance = Instances((H, W))
-#         instance.pred_boxes = torch.tensor([xyxy_abs_box]) # the box should be XYXY_ABS
-#         instance.scores = torch.tensor([1])
-#         instance.pred_classes = torch.tensor([1])
-
-#         vis = Visualizer(np_rgb_image, instance_mode=1)
-#         vis_result = vis.draw_instance_predictions(instance)
-
-#         vis_result.save(name)
 
 
 class Ego4dFhoLTA(Ego4dBase):
@@ -1629,11 +1678,11 @@ class Ego4dFhoHands(Ego4dBase):
             for i, annot in enumerate(clip['frames']):
                 
                 if self.mode == "test":
-                    
+
                     pre_45_frame = annot["pre_45"]["frame"]
                     pre_frame = annot["pre_frame"]["frame"] if "pre_frame" in annot else -1
                     st = max(0, pre_45_frame - self.max_observation_frame_num)
-                    end = pre_frame + 30 if pre_frame == -1 else pre_45_frame + 45 + 30
+                    end = pre_frame + 30 if pre_frame != -1 else pre_45_frame + 45 + 30
                 else:
                     st = annot["action_start_frame"]
                     end = annot["action_end_frame"]
@@ -1843,126 +1892,221 @@ class Ego4dFhoHands(Ego4dBase):
         return clip
 
 
-def get_basic_config_for(task):
-    """
-        Return basic configuration for each task
-        Args:
-            task: str, name of task
-        Return:
-            cfg: argparse.Namespace
-    """
-    if task == "oscc-pnr":
-         cfg = {
-            # path used
-            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
-            "VIDEO_DIR_PATH": "/data/shared/ssvl/ego4d/v1/full_scale",
-            "CLIPS_SAVE_PATH": "/data/shared/ssvl/ego4d/v1/pos",
-            "NO_SC_PATH": "/data/shared/ssvl/ego4d/v1/neg",
-            "SAVE_AS_ZIP": True,
-            "CLIP_LEN_SEC": 8,
-            "SAMPLING_FPS": 2, 
-            "MEAN":[0.485, 0.456, 0.406],
-            "STD": [0.229, 0.224, 0.225],
-            # "FRAME_FORMAT": "{:10d}.jpeg",
+class Ego4dFhoSTA(Ego4dBase):
 
-            "short_side_size": 256,
-            "input_size": 224,
-            # train
-            "repeat_sample": 1,
-            # train augmentation
-            "auto_augment": 'rand-m7-n4-mstd0.5-inc1',
-            "rand_erase_count": 1,
-            "rand_erase_prob": 0.25,
-            "rand_erase_mode": "pixel",
-            "train_interpolation": "bicubic",
-            # test
-            "test_spatial_sample": 3,
 
-            "task": "fho_oscc_tl",
-            "load_flow": "none", # [online, local, none] 
-        }
+    def init_dataset(self):
+        
+        self.anno_path = os.path.join(
+            self.cfg.ANN_DIR, "fho_sta_{}.json".format(self.mode)
+        )
 
-    elif task == "scod":
+        self.source = self.cfg.FRAME_DIR_PATH
+        self.source = os.path.join(self.source , self.mode)
+        self.max_observation_time = 4
+        self.max_observation_frame_num = 30 * self.max_observation_time
+        # train
+        self.repeat_sample = self.cfg.repeat_sample
 
-        cfg = {
-            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
-            "FRAME_DIR_PATH": "/data/shared/ssvl/ego4d/v1/fho_scod/pre_pnr_post_frames",
-            "SAVE_AS_ZIP": True,
-            "MEAN":[0.485, 0.456, 0.406],
-            "STD": [0.229, 0.224, 0.225],
-            "FRAME_FORMAT": "{:010d}.jpg",  # image frame format
+        # self.auto_augment = self.cfg.auto_augment
+        # self.rand_erase_count = self.cfg.rand_erase_count
+        # self.rand_erase_prob = self.cfg.rand_erase_prob
+        # self.rand_erase = self.rand_erase_prob > 0
+        # self.rand_erase_mode = self.cfg.rand_erase_mode
+        # self.train_interpolation = self.cfg.train_interpolation
 
-            "task": "fho_scod",
+        # test
+        self.test_num_clips = self.cfg.test_spatial_crop_num * self.cfg.test_temporal_crop_num
 
-            "rand_brightness": (0.9, 1.1),
-            "rand_flip_prob": 0.5,
-            "input_size" : 224,
-            "short_side_size" : 256,
-        }
+        self.short_side_size = self.cfg.short_side_size
+        self.input_size = self.cfg.input_size
+        # train
+        self.num_frame = self.cfg.NUM_FRAMES
 
-    elif task == "hands":
-        cfg = {
-            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
-            "FRAME_DIR_PATH": "/data/shared/ssvl/ego4d/v1/fho_hands",
-            "MEAN":[0.485, 0.456, 0.406],
-            "STD": [0.229, 0.224, 0.225],
-            "FRAME_FORMAT": "{:010d}.jpg",  # image frame format
+    
+    def build_dataset(self):
 
-            "observation_time_second": 4,  # observation time of baseline method is 2s
+        self.package = []
 
-            "repeat_sample": 1, 
-            "test_spatial_crop_num": 3,
-            "test_temporal_crop_num": 1,
+        clips = json.load(open(anno_path, "r"))["annotations"]
 
-            "task": "fho_hands"
-        }
+        for clip in clips:
+            uid = clip["uid"]
+            video_uid = clip["video_id"]
+            clip_uid = clip["clip_uid"]
+            frame = int(clip["frame"])
 
-    elif task == "egoclip":
+            # exist frames: [st, end], both st and end are included
+            st = max(0, frame - self.max_observation_frame)
+            end = frame + 30
 
-        cfg = {
-            "ANN_DIR": "/mnt/shuang/Data/ego4d/data/v1/annotations",
-            "FRAME_DIR_PATH": "/mnt/shuang/Data/ego4d/preprocessed_data/egoclip",
-            "NUM_FRAMES": 16,
+            zip_path = os.path.join(self.source, clip_uid, uid+".zip")
 
-            "MEAN":[0.485, 0.456, 0.406],
-            "STD": [0.229, 0.224, 0.225],
+            self.package.append({
+                "uid": uid,
+                "video_uid": video_uid,
+                "clip_uid": clip_uid,
+                "clip_name": uid+".zip",
 
-            "FRAME_FORMAT": "frame_{:10d}_{:010d}.jpg",  # image frame format
+                "clip_start_frame": st,
+                "clip_end_frame": end,
+                "clip_path": zip_path,
 
-            "repeat_sample": 1, 
-            "test_spatial_crop_num": 3,
-            "test_temporal_crop_num": 1,
 
-            "load_flow": "local",
+            })
 
-            "task": "fho_hands"
-        }
+            
 
-    elif task == "lta":
+    def init_transformation(self):
 
-        cfg = {
-            "ANN_DIR": "/data/shared/ssvl/ego4d/v1/annotations",
-            "FRAME_DIR_PATH": "/data/shared/ssvl/ego4d/v1/fho_lta/test",
-            "NUM_FRAMES": 16,
+        if self.mode == "train":
+            # See "Data Augmentation" tutorial for details usage
+            self.data_transform = self.train_transform
+        elif self.mode == 'val':
+            self.data_transform = video_transforms.Compose([
+                video_transforms.ShorterSideResize(self.short_side_size),
+                video_transforms.CenterCrop(size=(self.input_size, self.input_size)),
+                volume_transforms.ClipToTensor(),
+            ])
 
-            "MEAN":[0.485, 0.456, 0.406],
-            "STD": [0.229, 0.224, 0.225],
+        elif self.mode == 'test':
+            self.data_transform = video_transforms.Compose([
+                video_transforms.ShorterSideResize(self.short_side_size),
+                volume_transforms.ClipToTensor(),
+            ])
 
-            "FRAME_FORMAT": "{:010d}.jpg",  # image frame format
 
-            "repeat_sample": 1, 
-            "input_clip_num": 1,
-            "num_action_predict": 20,
-            "short_side_size": 256,
-            "input_size": 224,
+    def train_transform(self):
+        pass
 
-            "test_spatial_crop_num": 3,
-            "test_temporal_crop_num": 1,
+    def __getitem__(self, idx):
 
-            "load_flow": "local",
-            "task": "lta"
-        }
-    return Namespace(**cfg)
+        pass
+
+
+    def __len__(self):
+        pass
+
+
+# class Ego4dFhoScod(Ego4dBase):
+
+#     def init_dataset(self):
+
+#         self.rand_brightness = self.cfg.rand_brightness # by default (0.9, 1.1)
+#         self.rand_flip_prob = self.cfg.rand_flip_prob # 0.5 by default 
+#         self.input_size = self.cfg.input_size
+#         self.short_side_size = self.cfg.short_side_size
+#         self.anno_path = os.path.join(self.cfg.ANN_DIR, f"fho_scod_{self.mode}.json")
+
+#         self.mean = torch.tensor(self.mean).view(3,1,1,1)
+#         self.std = torch.tensor(self.std).view(3,1,1,1)
+
+#     def build_dataset(self):
+
+#         clips = json.load(open(self.anno_path, "r"))["clips"]
+#         self.lst_dict = []
+#         image_id = 1
+
+#         for clip in clips:
+#             data_dict = {}
+#             data_dict["file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pnr_frame"]["frame_number"])+".jpeg")
+#             data_dict["pre_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["pre_frame"]["frame_number"])+".jpeg")
+#             data_dict["post_file_name"] = os.path.join(self.cfg.FRAME_DIR_PATH, clip["video_uid"], str(clip["post_frame"]["frame_number"])+".jpeg")
+#             data_dict["height"] = clip["pnr_frame"]["height"]
+#             data_dict["width"] = clip["pnr_frame"]["width"]
+#             data_dict["image_id"] = image_id
+#             data_dict["annotations"] = []
+
+#             if self.mode == "test":
+#                 image_id += 1
+#                 self.lst_dict.append(data_dict)
+#                 continue
+
+#             for bbox in clip["pnr_frame"]["bbox"]:
+
+#                 if bbox["object_type"] == "object_of_change":
+#                     data_dict["annotations"].append({
+#                         "segmentation": [],
+#                         "category_id": 1,
+#                         "bbox": [bbox["bbox"]["x"], bbox["bbox"]["y"], bbox["bbox"]["width"], bbox["bbox"]["height"]],
+#                         "bbox_mode": 1, # XYWH_ABS
+#                         "iscrowd": 0,
+#                     })
+
+#             image_id += 1
+#             self.lst_dict.append(data_dict)
+
+#     def init_transformation(self):
+#         if self.mode == "train":
+#             # See "Data Augmentation" tutorial for details usage
+#             self.data_transform = detection_transform.AugmentationList([
+#                         detection_transform.RandomBrightness(*self.rand_brightness),
+#                         detection_transform.RandomFlip(prob=self.rand_flip_prob),
+#                         detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
+#                         # T.RandomCrop("absolute", (224, 224))
+#                         detection_transform.Resize((self.input_size, self.input_size))
+#                     ])
+#         else:
+#             self.data_transform = detection_transform.AugmentationList([
+#                         detection_transform.ResizeShortestEdge(self.short_side_size, max_size=1920),
+#                         # T.CenterCrop("absolute", (224, 224))
+#                         detection_transform.Resize((self.input_size, self.input_size))
+#                     ])
+ 
+#     def __getitem__(self, index):
+
+#         dataset_dict = self.lst_dict[index]
+#         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
+
+#         image = self._load_frame(dataset_dict["file_name"])
+#         pre_image = self._load_frame(dataset_dict["pre_file_name"])
+#         post_image = self._load_frame(dataset_dict["post_file_name"])
+
+
+#         auginput = detection_transform.AugInput(image)
+#         transform = self.data_transform(auginput)
+#         image = torch.from_numpy(auginput.image.transpose(2, 0, 1).copy())
+#         pre_image = torch.from_numpy(transform.apply_image(pre_image).transpose(2, 0, 1).copy())
+#         post_image = torch.from_numpy(transform.apply_image(post_image).transpose(2, 0, 1).copy())
+
+#         # random pick combination of pnr frame with pre/post frame
+#         _p = random.random()
+#         vit_input = torch.stack([pre_image, image.clone()], dim=0) if _p > 0.5 else torch.stack([image.clone(), post_image], dim=0)
+#         vit_input = vit_input.permute(1, 0, 2, 3) / 255.0 # C, T, H, W
+
+#         vit_input = (vit_input - self.mean) / self.std
+
+#         annos = [
+#             detection_utils.transform_instance_annotations(annotation, [transform], image.shape[1:])
+#             for annotation in dataset_dict.pop("annotations")
+#         ]
+#         annos = detection_utils.annotations_to_instances(annos, image.shape[1:])
+
+#         return image, vit_input, annos, dataset_dict
+
+
+#     def visualize(np_rgb_image, xyxy_abs_box, name="detection_vis.png"):
+#         # For debugging  
+
+#         """
+#             np_rgb_image: numpy.ndarray, in rgb format
+#             xyxy_abs_box: list, length is 4
+        
+#         """
+
+#         from detectron2.utils.visualizer import Visualizer
+#         from detectron2.structures import Instances
+
+#         H, W, C = np_rgb_image.shape
+#         instance = Instances((H, W))
+#         instance.pred_boxes = torch.tensor([xyxy_abs_box]) # the box should be XYXY_ABS
+#         instance.scores = torch.tensor([1])
+#         instance.pred_classes = torch.tensor([1])
+
+#         vis = Visualizer(np_rgb_image, instance_mode=1)
+#         vis_result = vis.draw_instance_predictions(instance)
+
+#         vis_result.save(name)
 
 
 if __name__ == "__main__":

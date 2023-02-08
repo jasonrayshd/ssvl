@@ -774,8 +774,9 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
 
-                    rgb_patch_size: int = 16, flow_patch_size: int=16,
-                    mask_generators = None,
+                    patch_size = 16,
+                    num_tokens = 1568,
+                    mask_generator = None,
                     lamb = [1,1,1,1],
                     ):
     model.train()
@@ -799,24 +800,35 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
                     param_group["weight_decay"] = wd_schedule_values[it]
 
         videos, flows = batch[0], batch[1]
-
         B, *_ = videos.shape
-        rgb_mask, flow_mask = mask_generators[0](batch_size=B), mask_generators[1](batch_size=B) # numpy.ndarray
+        mask_batch = B # batch for generating mask
 
+        # for repeat sampling
         if len(videos.shape) == 6: # repeated sampling is used, (B, Repeat, C, T, H, W)
             _, repeat, *_ = videos.shape
             videos = videos.reshape(-1, *videos.shape[2:])
-            for i in range(repeat):
-                rgb_mask.extend(mask_generators[0](batch_size=B))
-                flow_mask.extend(mask_generators[1](batch_size=B))
-
             flows = flows.reshape(-1, *flows.shape[2:])
+            mask_batch = B * repeat
 
         videos = videos.to(device, non_blocking=True)
         flows = flows.to(device, non_blocking=True)
 
-        rgb_mask = torch.from_numpy(np.stack(rgb_mask, axis=0)).to(device, non_blocking=True).flatten(1).to(torch.bool)
-        flow_mask = torch.from_numpy(np.stack(flow_mask, axis=0)).to(device, non_blocking=True).flatten(1).to(torch.bool)
+        # process mask
+        mask_lst = mask_generator(batch_size=mask_batch)
+        if len(mask_lst) == 1: # joint mask for all rgb and flow tokens
+            mask = mask_lst[0] # mask: list[np.ndarray]
+            # spererate mask for rgb and flow for model input
+            mask = np.stack(mask, axis=0) # mask: np.ndarray
+            rgb_mask = mask[:, :num_tokens]
+            flow_mask = mask[:, num_tokens:]
+
+        elif len(mask_lst) == 2: # separate mask for rgb and flow tokens
+            rgb_mask, flow_mask = mask_lst # rgb_mask, flow_mask: list[numpy.ndarray]
+            rgb_mask = np.stack(rgb_mask, axis=0)
+            flow_mask = np.stack(flow_mask, axis=0)
+
+        rgb_mask = torch.from_numpy(rgb_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
+        flow_mask = torch.from_numpy(flow_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
 
         # use given target or simply reconstruct input video
 
@@ -828,7 +840,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
             unnorm_videos = videos * std + mean  # in [0, 1]
 
             if normlize_target:
-                videos_squeeze = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2) c', p0=2, p1=rgb_patch_size, p2=rgb_patch_size)
+                videos_squeeze = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2) c', p0=2, p1=patch_size, p2=patch_size)
                 videos_norm = (videos_squeeze - videos_squeeze.mean(dim=-2, keepdim=True)
                     ) / (videos_squeeze.var(dim=-2, unbiased=True, keepdim=True).sqrt() + 1e-6)
 
@@ -836,7 +848,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
                 B, _, C = videos_patch.shape
                 rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
             else:
-                videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=rgb_patch_size, p2=rgb_patch_size)
+                videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=patch_size, p2=patch_size)
                 B, _, C = videos_patch.shape
                 rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
 
@@ -849,7 +861,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
         assert T%N == 0, f"Number of flows:{N} to be predicted should be divisible by number of frames:{T}"
         # print(flows.shape)
 
-        flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=flow_patch_size, p2=flow_patch_size)
+        flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
 
         # tublet_size = 2
         # bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)

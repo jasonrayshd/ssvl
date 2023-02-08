@@ -344,6 +344,18 @@ def main(args, ds_init):
     else:
         all_frames = args.cfg.NUM_FRAMES
 
+    # set different parameters for specific task
+    if args.cfg.task in ["pnr", "oscc"]:
+        _task_specific_params = {
+            "task": args.cfg.task,
+        }
+    elif "lta" in args.cfg.task:
+        _task_specific_params = {
+            "head_type": args.head_type,
+        }
+    else:
+        _task_specific_params= {}
+
     model = create_model(
         args.model,
         pretrained=False,
@@ -358,7 +370,7 @@ def main(args, ds_init):
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
 
-        task=args.cfg.task
+        **_task_specific_params,
     )
     try:
         patch_size = model.patch_embed.patch_size
@@ -510,7 +522,20 @@ def main(args, ds_init):
         train_fn = osccpnr_train_one_epoch
 
     elif args.cfg.task == "pnr":
-        criterion = PNRLoss(smoothing=args.smoothing)
+        # version 1:
+        # used together with multi-class classficiation dense sampling strategy
+        # criterion = PNRLoss(smoothing=args.smoothing)
+
+        # version 2:
+        # binary classification
+        if mixup_fn is not None:
+            # smoothing is handled with mixup label transform
+            criterion = SoftTargetCrossEntropy()
+        elif args.smoothing > 0.:
+            criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
+        else:
+            criterion = torch.nn.CrossEntropyLoss()
+
         train_fn = osccpnr_train_one_epoch
 
     elif "lta" in args.cfg.task: # [lta_verb, lta_noun]
