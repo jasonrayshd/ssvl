@@ -220,6 +220,7 @@ def load_weight_for_rgb_encoder(raw_checkpoints, pretrain="ts"):
                     _tmp = k.split(".")
                     _tmp[1] = "rgb_patch_embed"
                     k = ".".join(_tmp)
+                    rgb_encoder_checkpoints["flow_patch_embed"] = v
                 elif "encoder_to_decoder" in k:
                     continue
 
@@ -296,10 +297,8 @@ def main(args):
                 input_size_lst = [input_size]*2 # [input size for rgb, input size for flow]
             else: # mask among all rgb and flow tokens
                 # double temporal dimension
-                if mask_type_lst[0]  == "multimodal":
-                    input_size_lst = [ input_size ]
-                else:
-                    input_size_lst = [(args.num_frames, args.input_size // patch_size[0], args.input_size // patch_size[1])]           
+                assert mask_type_lst[0]  == "multimodal"
+                input_size_lst = [ input_size ]
 
             print(mask_type_lst, mask_ratio_lst, input_size_lst)
 
@@ -343,6 +342,7 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
+        prefetch_factor = 1,
         # multiprocessing_context="spawn" if args.flow_mode == "online" else None,
         worker_init_fn=utils.seed_worker
     )

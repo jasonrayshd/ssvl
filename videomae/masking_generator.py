@@ -90,15 +90,18 @@ class MultiModalMaskingGenerator:
     def __init__(self, input_size, mask_ratio):
         self.frames, self.height, self.width = input_size
         self.num_patches_per_frame =  self.height * self.width
-        self.total_patches = self.frames * self.num_patches_per_frame 
+        self.total_patches = self.frames * self.num_patches_per_frame
+
         self.total_masks = int(mask_ratio * self.total_patches)
+        # self.total_masks_per_modality = int(mask_ratio * self.total_patches)
         self.visible_patches = ( self.total_patches - self.total_masks ) * 2
-        # self.rgb_masks = np.random.randint(0, self.total_masks+1)
-        # self.flow_masks = self.total_masks - self.rgb_masks
+
+        self.min_visible_patches = 20
+
 
     def __repr__(self):
-        repr_str = "Multimodal Mask: total patches {}, mask patches {}".format(
-            self.total_patches, self.total_masks
+        repr_str = "Multimodal Mask: total patches {}, mask patches {}, minimum visible patches {}".format(
+            self.total_patches, self.total_masks, self.min_visible_patches
         )
         return repr_str
 
@@ -108,21 +111,23 @@ class MultiModalMaskingGenerator:
                 batch_size: int
 
             Return:
-                batch_mask: list[numpy.ndarray]
+                batch_mask: list[numpy.ndarray], length: batch_size
         """
 
         mask = np.arange(0, self.total_patches) 
         mask = np.expand_dims(mask, axis=0).repeat(batch_size, axis=0)
 
-        rgb_visible_num = np.random.randint(1, self.visible_patches, size=batch_size)
+        rgb_visible_num = np.random.randint(self.min_visible_patches, self.visible_patches+1-self.min_visible_patches, size=(1,)).repeat(batch_size, axis=0)
+        # print(rgb_visible_num)
         rgb_visible_num = np.expand_dims(rgb_visible_num, axis=1).repeat(self.total_patches, axis=1)
         flow_visible_num = self.visible_patches - rgb_visible_num
 
         rgb_mask = np.where(mask < rgb_visible_num, 0, 1)
         flow_mask = np.where(mask < flow_visible_num, 0, 1)
 
-        np.random.shuffle(rgb_mask)
-        np.random.shuffle(flow_mask)
+        rgb_mask = shuffle_along_axis(rgb_mask, 1)
+        flow_mask = shuffle_along_axis(flow_mask, 1)
+
         mask = np.concatenate((rgb_mask, flow_mask), axis=1)
 
         mask_lst = [mask[i] for i in range(batch_size)]

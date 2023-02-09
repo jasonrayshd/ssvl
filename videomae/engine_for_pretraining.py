@@ -815,7 +815,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
 
         # process mask
         mask_lst = mask_generator(batch_size=mask_batch)
-        if len(mask_lst) == 1: # joint mask for all rgb and flow tokens
+        if len(mask_lst) == 1: # multimodal masking, joint mask for all rgb and flow tokens
             mask = mask_lst[0] # mask: list[np.ndarray]
             # spererate mask for rgb and flow for model input
             mask = np.stack(mask, axis=0) # mask: np.ndarray
@@ -827,6 +827,7 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
             rgb_mask = np.stack(rgb_mask, axis=0)
             flow_mask = np.stack(flow_mask, axis=0)
 
+        # print(rgb_mask.shape)
         rgb_mask = torch.from_numpy(rgb_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
         flow_mask = torch.from_numpy(flow_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
 
@@ -870,12 +871,11 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
 
         flow_target = flow_target[flow_mask]
         flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
-
         flow_target = flow_target.to(device, non_blocking=True)
 
         with torch.cuda.amp.autocast():
             outputs = model(videos, flows, rgb_mask, flow_mask)
- 
+
             loss_dct = loss_func(outputs, rgb_target, flow_target)
             loss = loss_dct["sum"]
 
