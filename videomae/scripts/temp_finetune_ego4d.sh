@@ -7,5 +7,5 @@ OMP_NUM_THREADS=100 python -m torch.distributed.launch \
     --config $3 \
     --overwrite command-line \
     --project lta \
-    --name lta_A2 \
-    # --debug
+    --name lta_A2_noun \
+    --debug

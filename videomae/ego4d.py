@@ -1599,7 +1599,7 @@ class Ego4dFhoLTA(Ego4dBase):
             frames.extend(sampled_frames)
             frame_idx_lst.extend(frame_index)
 
-        target = [input_clips[-1]["verb_label"]] if self.cfg.task == "lta_verb" else input_clips[-1]["noun_label"]
+        target = [input_clips[-1]["verb_label"]] if self.cfg.task == "lta_verb" else [input_clips[-1]["noun_label"]]
         for clip_info in forecast_clips:
             target.append( clip_info["verb_label"] if self.cfg.task == "lta_verb" else clip_info["noun_label"])
 

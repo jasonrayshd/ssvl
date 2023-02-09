@@ -57,7 +57,7 @@ auto_resume: false
 # flow_mode: ""
 save_ckpt: true
 start_epoch: 0
-num_workers: 12
+num_workers: 6
 
 cfg:
   # Data Loading
@@ -79,5 +79,5 @@ cfg:
   test_spatial_crop_num: 3
   test_temporal_crop_num: 1
 
-  task: "lta_verb"
+  task: "lta_noun"
   load_flow: "none"
