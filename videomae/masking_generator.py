@@ -92,7 +92,7 @@ class MultiModalMaskingGenerator:
         self.num_patches_per_frame =  self.height * self.width
         self.total_patches = self.frames * self.num_patches_per_frame 
         self.total_masks = int(mask_ratio * self.total_patches)
-
+        self.visible_patches = ( self.total_patches - self.total_masks ) * 2
         # self.rgb_masks = np.random.randint(0, self.total_masks+1)
         # self.flow_masks = self.total_masks - self.rgb_masks
 
@@ -114,12 +114,12 @@ class MultiModalMaskingGenerator:
         mask = np.arange(0, self.total_patches) 
         mask = np.expand_dims(mask, axis=0).repeat(batch_size, axis=0)
 
-        rgb_masked_num = np.random.randint(0, self.total_masks+1, size=batch_size)
-        rgb_masked_num = np.expand_dims(rgb_masked_num, axis=1).repeat(self.total_patches, axis=1)
-        flow_masked_num = self.total_masks - rgb_masked_num
+        rgb_visible_num = np.random.randint(1, self.visible_patches, size=batch_size)
+        rgb_visible_num = np.expand_dims(rgb_visible_num, axis=1).repeat(self.total_patches, axis=1)
+        flow_visible_num = self.visible_patches - rgb_visible_num
 
-        rgb_mask = np.where(mask < rgb_masked_num, 1, 0)
-        flow_mask = np.where(mask < flow_masked_num, 1, 0)
+        rgb_mask = np.where(mask < rgb_visible_num, 0, 1)
+        flow_mask = np.where(mask < flow_visible_num, 0, 1)
 
         np.random.shuffle(rgb_mask)
         np.random.shuffle(flow_mask)
