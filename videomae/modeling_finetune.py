@@ -97,6 +97,7 @@ class Attention(nn.Module):
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
+        print("before proj x shape",x.shape)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x

@@ -381,6 +381,7 @@ class MultiModalBlock(nn.Module):
             # two modalities
             x1_rgb, x1_flow = x1[:, :N1, :], x1[:, N1:, :]
             # process RGB
+            print("x1_rgb shape:", x1_rgb.shape)
             x1_rgb = x1_rgb + self.drop_path( self.attn(self.norm1(x1_rgb)) )
             x1_rgb = x1_rgb + self.drop_path( self.mlp(self.norm2(x1_rgb)) )
             # process Flow
@@ -566,7 +567,7 @@ class PretrainMultiModalEncoder(nn.Module):
             x_flow_vis = x_flow[~flow_mask].reshape(B, -1, C) # ~mask means visible
 
         expand_global_embed1 = self.global_embed1.expand(B, -1, -1).cuda()
-        # print("rgb_vis shape:", x_rgb_vis.shape, "flow_vis shape:", x_flow_vis.shape)
+        print("rgb_vis shape:", x_rgb_vis.shape, "flow_vis shape:", x_flow_vis.shape)
         if self.modality == "rgbflow":
             expand_global_embed2 = self.global_embed2.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device)
             x1_vis = torch.cat([expand_global_embed1, x_rgb_vis, expand_global_embed1, x_flow_vis], dim=1)
