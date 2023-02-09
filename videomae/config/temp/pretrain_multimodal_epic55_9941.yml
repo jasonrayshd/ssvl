@@ -7,8 +7,7 @@ save_ckpt_freq: 10
 
 # Model parameters
 model: "pretrain_videomae_multimodal_base_patch16_224"
-decoder_depth: 6
-
+decoder_depth: 3
 
 # possible values for 'mask_type': [multimodal, agnostic, tube, agnostic_tube, tube_agnostic, agnostic_agnostic, tube_tube]
 # Notice:
@@ -22,7 +21,7 @@ mask_type: "multimodal"
 # Notice:
 # mask_ratio should correspond with mask_type that when mask_type is in [agnostic, tube], then mask ratio is a float
 # else mask_ratio should be str of format 'float_float'
-mask_ratio: 0.9
+mask_ratio: 0.95
 
 modality: "rgbflow"
 input_size: 224
@@ -57,7 +56,7 @@ resume: ""
 auto_resume: False
 
 start_epoch: 0
-num_workers: 30
+num_workers: 5
 pin_mem: true
 
 pretrain: "multimodal"
