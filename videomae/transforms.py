@@ -58,9 +58,8 @@ class GroupNormalize(object):
         rep_std = self.std * (tensor.size()[0]//len(self.std))
 
         # TODO: make efficient
-        for t, l, m, s in zip(tensor, label, rep_mean, rep_std):
+        for t, m, s in zip(tensor, rep_mean, rep_std):
             t.sub_(m).div_(s)
-            l.sub_(m).div_(s)
 
         return (tensor, label)
 

@@ -1064,37 +1064,37 @@ class PretrainMultiModalTransformer(nn.Module):
         if self.modality == "rgbflow":
             # version 1: attention on full cross-modality tokens
             # add learnable type embedding to featurs from cross-modality set
-            # cross_rgb_vis += self.rgb_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
-            # cross_flow_vis += self.flow_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
-            # cross_full = torch.cat([cross_rgb_vis + rgb_pos_emd_vis, cross_flow_vis + flow_pos_emd_vis], dim=1)
-
-            # cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, N_rgb_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
-            # cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, N_flow_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
-
-            # intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_full,  N_rgb_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
-            # intra_flow_hat = self.flow_decoder(intra_flow_full, cross_full, N_flow_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
-
-            # rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
-            # # rgb_hat = intra_rgb_hat
-            # flow_hat = torch.cat([intra_flow_hat, cross_flow_hat], dim=0)
-
-            # version 2: attention on partial cross-modality tokens
-
             cross_rgb_vis += self.rgb_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
-            cross_rgb_vis += rgb_pos_emd_vis
-
             cross_flow_vis += self.flow_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
-            cross_flow_vis += flow_pos_emd_vis
+            cross_full = torch.cat([cross_rgb_vis + rgb_pos_emd_vis, cross_flow_vis + flow_pos_emd_vis], dim=1)
 
-            cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_rgb_vis, N_rgb_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
-            cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_flow_vis, N_flow_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+            cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_full, N_rgb_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+            cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_full, N_flow_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
 
-            intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_rgb_vis,  N_rgb_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
-            intra_flow_hat = self.flow_decoder(intra_flow_full, cross_flow_vis, N_flow_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+            intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_full,  N_rgb_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+            intra_flow_hat = self.flow_decoder(intra_flow_full, cross_full, N_flow_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
 
             rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
             # rgb_hat = intra_rgb_hat
             flow_hat = torch.cat([intra_flow_hat, cross_flow_hat], dim=0)
+
+            # version 2: attention on partial cross-modality tokens
+
+            # cross_rgb_vis += self.rgb_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
+            # cross_rgb_vis += rgb_pos_emd_vis
+
+            # cross_flow_vis += self.flow_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
+            # cross_flow_vis += flow_pos_emd_vis
+
+            # cross_rgb_hat = self.rgb_decoder(intra_flow_full, cross_rgb_vis, N_rgb_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+            # cross_flow_hat = self.flow_decoder(intra_rgb_full, cross_flow_vis, N_flow_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+
+            # intra_rgb_hat = self.rgb_decoder(intra_rgb_full, cross_rgb_vis,  N_rgb_mask if not all_token else 0) # [2*B, N_mask, 3 * 16 * 16]
+            # intra_flow_hat = self.flow_decoder(intra_flow_full, cross_flow_vis, N_flow_mask if not all_token else 0) # [2*B, N_mask, 2 * 16 * 16]
+
+            # rgb_hat = torch.cat([intra_rgb_hat, cross_rgb_hat], dim=0)
+            # # rgb_hat = intra_rgb_hat
+            # flow_hat = torch.cat([intra_flow_hat, cross_flow_hat], dim=0)
 
             # version 3: attention on corresponding cross-modality tokens
             # cross_rgb_vis += self.rgb_type_embed.expand(B, -1, -1).type_as(x1).to(x1.device)
