@@ -471,7 +471,7 @@ class Epickitchens(torch.utils.data.Dataset):
         return frames, flows, label, index, metadata
 
     def __len__(self):
-        return len(self._video_records[:2800])
+        return len(self._video_records)
 
     # def spatial_sampling(
     #         self,
