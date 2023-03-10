@@ -994,6 +994,8 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
+                    mask_generator = None,
+                    num_tokens = None,
                     lamb = [1,1,1,1],
                     ):
     model.train()
@@ -1016,15 +1018,31 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
                 if wd_schedule_values is not None and param_group["weight_decay"] > 0:
                     param_group["weight_decay"] = wd_schedule_values[it]
 
-        videos, bool_masked_pos, flows = batch[0], batch[1], batch[2]
+        videos, flows = batch[0], batch[1]
+        mask_batch = videos.shape[0]
 
         if len(videos.shape) == 6: # repeated sampling is used
+            repeat = videos.shape[1]
+            mask_batch *= repeat
+
             videos = videos.reshape(-1, *videos.shape[2:])
-            bool_masked_pos = bool_masked_pos.reshape(-1, *bool_masked_pos.shape[2:])
+            bool_masked_pos = bool_masked_pos.reshape(-1, *bool_masked_pos.shape[2:])            
             flows = flows.reshape(-1, *flows.shape[2:])
 
+        mask_lst = mask_generator(mask_batch)
+        if len(mask_lst) == 1:
+            mask = mask_lst[0]
+            mask = np.stack(mask, axis=0) # mask: np.ndarray
+            rgb_mask = mask[:, :num_tokens]
+            flow_mask = mask[:, num_tokens:]
+        else:
+            rgb_mask, flow_mask = mask_lst
+            rgb_mask = np.stack(rgb_mask, axis=0)
+            flow_mask = np.stack(flow_mask, axis=0)
+
         videos = videos.to(device, non_blocking=True)
-        bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
+        rgb_mask = torch.from_numpy(rgb_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
+        flow_mask = torch.from_numpy(flow_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
 
         # use given target or simply reconstruct input video
 
@@ -1042,11 +1060,11 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
 
                 videos_patch = rearrange(videos_norm, 'b n p c -> b n (p c)')
                 B, _, C = videos_patch.shape
-                rgb_target = videos_patch[bool_masked_pos].reshape(B, -1, C)
+                rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
             else:
                 videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=patch_size, p2=patch_size)
                 B, _, C = videos_patch.shape
-                rgb_target = videos_patch[bool_masked_pos].reshape(B, -1, C)
+                rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
 
         # target will be processed in dataset code
         # reconstruct entire given flow images
@@ -1059,22 +1077,24 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
 
         flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
 
-        tublet_size = 2
-        bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
-        bool_masked_pos_label = bool_masked_pos_label.repeat(1, N//(T//tublet_size), 1, 1)
-        bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
-
-        flow_target = flow_target[bool_masked_pos_label]
-        flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
-
-        flow_target = flow_target.to(device, non_blocking=True)
+        # tublet_size = 2
+        # bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
+        # bool_masked_pos_label = bool_masked_pos_label.repeat(1, N//(T//tublet_size), 1, 1)
+        # bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
 
         with torch.cuda.amp.autocast():
             p = random.random()
             if p > 0.5:
                 flows = None
-            outputs = model(videos, flows, bool_masked_pos)
- 
+                flow_target = flow_target[rgb_mask]
+            else:
+                flow_target = flow_target[flow_mask]
+
+            flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
+            flow_target = flow_target.to(device, non_blocking=True)
+
+            outputs = model(videos, flows, rgb_mask, flow_mask)
+
             loss_dct = loss_func(outputs, rgb_target, flow_target)
             loss = loss_dct["sum"]
 
@@ -1126,9 +1146,9 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
             log_writer.update(rgb_recons=loss_dct["rgb_recons"], head="rgb_recons")
 
             if flows is not None:
-                log_writer.update(flow_recons=loss_dct["flow_recons"], head="flow_recons")
+                log_writer.update(flow_recons_loss=loss_dct["flow_recons"], head="flow_recons")
             else:
-                log_writer.update(flow_recons=loss_dct["rgb2flow_recons"], head="flow_recons")
+                log_writer.update(rgb2flow_loss=loss_dct["flow_recons"], head="flow_recons")
 
             log_writer.update(recons_loss=loss_dct["rgb_recons"] + loss_dct["flow_recons"], head="recons_loss")
 

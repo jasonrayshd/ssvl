@@ -301,14 +301,32 @@ def main(args):
                 input_size_lst = [ input_size ]
 
             print(mask_type_lst, mask_ratio_lst, input_size_lst)
-
             mask_generator = MaskGenerator(mask_type_lst, input_size_lst, mask_ratio_lst)
 
         elif args.modality == "rgb" or args.modality == "flow":
-
             mask_generator = MaskGenerator([args.mask_type], [input_size], [args.mask_ratio])
         else:
             raise ValueError(f"Unsupported input modality:{args.modality}")
+
+    elif args.pretrain == "multicae":
+        # similar to multimodal but only supports rgbflow modality as input
+        patch_size = model.encoder.rgb_patch_embed.patch_size
+        input_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+        num_tokens = (args.num_frames // 2) * (args.input_size // patch_size[0]) * (args.input_size // patch_size[1])
+
+        mask_type_lst = args.mask_type.split("_")
+        mask_ratio_lst = str(args.mask_ratio).split("_")
+
+        if len(mask_type_lst) == 2: # independent mask for each modality
+            input_size_lst = [input_size]*2 # [input size for rgb, input size for flow]
+        else: # mask among all rgb and flow tokens
+            # double temporal dimension
+            assert mask_type_lst[0]  == "multimodal"
+            input_size_lst = [ input_size ]
+
+        print(mask_type_lst, mask_ratio_lst, input_size_lst)
+
+        mask_generator = MaskGenerator(mask_type_lst, input_size_lst, mask_ratio_lst)
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
@@ -342,7 +360,7 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
-        prefetch_factor = 1,
+        prefetch_factor = 2,
         # multiprocessing_context="spawn" if args.flow_mode == "online" else None,
         worker_init_fn=utils.seed_worker
     )
@@ -479,19 +497,21 @@ def main(args):
                 lamb = args.lamb,
 
             )
-        # elif args.pretrain == "multicae":
-        #     train_stats = train_multicae_one_epoch(
-        #         model, data_loader_train,
-        #         optimizer, device, epoch, loss_scaler,
-        #         args.clip_grad, log_writer=log_writer,
-        #         start_steps=epoch * num_training_steps_per_epoch,
-        #         lr_schedule_values=lr_schedule_values,
-        #         wd_schedule_values=wd_schedule_values,
-        #         patch_size=patch_size[0],
-        #         normlize_target=args.normlize_target,
+        elif args.pretrain == "multicae":
+            train_stats = train_multicae_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
 
-        #         lamb = args.lamb,
-        #     )
+                patch_size=patch_size[0],
+                num_tokens = num_tokens,
+                normlize_target=args.normlize_target,
+                mask_generator = mask_generator,
+                lamb = args.lamb,
+            )
         else:
             raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 

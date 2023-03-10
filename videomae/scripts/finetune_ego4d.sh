@@ -6,6 +6,6 @@ OMP_NUM_THREADS=100 python -m torch.distributed.launch \
     --dist_eval \
     --config $3 \
     --overwrite command-line \
-    --project hands \
+    --project temp \
     --name temp \
-    --debug
+    # --debug

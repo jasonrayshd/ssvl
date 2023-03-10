@@ -76,11 +76,11 @@ class FocalLoss(nn.Module):
 
 class ActionAnticipationLoss(nn.Module):
 
-    def __init__(self, celoss="focal", head_type="varant"):
+    def __init__(self, celoss="focal", gamma=2, head_type="varant"):
         super().__init__()
         self.head_type=head_type
         if celoss == "focal":
-            self.celoss = FocalLoss(gamma=2)
+            self.celoss = FocalLoss(gamma=gamma)
         elif celoss == "soft":
             self.celoss = SoftTargetCrossEntropy()
         else:

@@ -539,7 +539,8 @@ def main(args, ds_init):
         train_fn = osccpnr_train_one_epoch
 
     elif "lta" in args.cfg.task: # [lta_verb, lta_noun]
-        criterion = ActionAnticipationLoss(celoss="focal" if mixup_fn is None else "soft", head_type=args.head_type) # lta_verb or lta_noun
+        gamma = getattr(args, "gamma", 2) # gamma == 2 by default
+        criterion = ActionAnticipationLoss(celoss="focal" if mixup_fn is None else "soft", gamma=gamma, head_type=args.head_type) # lta_verb or lta_noun
         train_fn = partial(lta_train_one_epoch, head_type=args.head_type)
     elif args.cfg.task == "hands":
         criterion = HandsPredictionLoss(loss_type="l1")

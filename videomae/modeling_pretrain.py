@@ -1476,7 +1476,7 @@ class PretrainMultiCAEEncoder(nn.Module):
         self.num_classes = num_classes
         self.head = nn.Linear(self.embed_dim, num_classes)
 
-    def forward_features(self, rgb, flow, mask):
+    def forward_features(self, rgb, flow, rgb_mask, flow_mask):
         """
             rgb:  torch.Tensor,  B, 3, T, H, W
             flow: torch.Tensor,  B, 2, T//2, H, W
@@ -1484,13 +1484,13 @@ class PretrainMultiCAEEncoder(nn.Module):
         x_rgb = self.rgb_patch_embed(rgb)
         B, _, C = x_rgb.size()
         x_rgb += self.pos_embed.expand(B, -1, -1).type_as(x_rgb).to(x_rgb.device).clone().detach()
-        x_rgb_vis = x_rgb[~mask].reshape(B, -1, C) # ~mask means visible
+        x_rgb_vis = x_rgb[~rgb_mask].reshape(B, -1, C) # ~mask means visible
         N1 = x_rgb_vis.shape[1]
 
         if flow is not None:
             x_flow = self.flow_patch_embed(flow)
             x_flow += self.pos_embed.expand(B, -1, -1).type_as(x_flow).to(x_flow.device).clone().detach()
-            x_flow_vis = x_flow[~mask].reshape(B, -1, C) # ~mask means visible
+            x_flow_vis = x_flow[~flow_mask].reshape(B, -1, C) # ~mask means visible
             N2 = x_flow_vis.shape[1]
             x_vis = torch.cat([x_rgb_vis, x_flow_vis], dim=1)
 
@@ -1502,8 +1502,8 @@ class PretrainMultiCAEEncoder(nn.Module):
 
         return x_vis
 
-    def forward(self, rgb, flow, mask):
-        token_dict = self.forward_features(rgb, flow, mask)
+    def forward(self, rgb, flow, rgb_mask, flow_mask):
+        token_dict = self.forward_features(rgb, flow, rgb_mask, flow_mask)
 
         return token_dict
 
@@ -1815,32 +1815,38 @@ class PretrainMultiCAETransformer(nn.Module):
     def no_weight_decay(self):
         return {'pos_embed', 'cls_token', 'mask_token'}
 
-    def forward(self, rgb, flow, mask, all_token=False):
+    def forward(self, rgb, flow, rgb_mask, flow_mask, all_token=False):
         # _, _, T, _, _ = x.shape
 
-        x_vis = self.encoder(rgb, flow, mask) 
+        x_vis = self.encoder(rgb, flow, rgb_mask, flow_mask) 
         x_vis = self.encoder_to_decoder(x_vis)
 
         B, _, C = x_vis.shape
 
         expand_pos_embed = self.pos_embed.expand(B, -1, -1).type_as(x_vis).to(x_vis.device).clone().detach()
-        pos_emd_vis = expand_pos_embed[~mask].reshape(B, -1, C)
-        pos_emd_mask = expand_pos_embed[mask].reshape(B, -1, C)
+        rgb_pos_emd_vis = expand_pos_embed[~rgb_mask].reshape(B, -1, C)
+        rgb_pos_emd_mask = expand_pos_embed[rgb_mask].reshape(B, -1, C)
+
         # masked embedding '''
 
-        B, N, C = pos_emd_vis.shape
+        B, N_rgb, C = rgb_pos_emd_vis.shape
+        # _, N_flow, _ = flow_pos_emd_mask.shape
         if flow is None:  # only rgb input
-            x_masked = self.flow_token.expand(B, pos_emd_vis.shape[1], -1)
+            x_masked = self.flow_token.expand(B, rgb_pos_emd_vis.shape[1], -1)
             # B, N_mask, C
-            latent_pred = self.regressor(x_masked, x_vis, pos_emd_vis, pos_emd_vis, mask)
-            x_flow = torch.cat([latent_pred + pos_emd_vis, self.mask_token + pos_emd_mask], dim=1)
+            latent_pred = self.regressor(x_masked, x_vis, rgb_pos_emd_vis, rgb_pos_emd_vis, rgb_mask)
+            x_flow = torch.cat([latent_pred + rgb_pos_emd_vis, self.mask_token + rgb_pos_emd_mask], dim=1)
+            flow_hat = self.flow_decoder(x_flow, rgb_pos_emd_mask.shape[1] if not all_token else 0) 
         else:
-            x_flow = torch.cat([x_vis[:, N:] + pos_emd_vis, self.mask_token + pos_emd_mask], dim=1)   
+            flow_pos_emd_vis = expand_pos_embed[~flow_mask].reshape(B, -1, C)
+            flow_pos_emd_mask = expand_pos_embed[flow_mask].reshape(B, -1, C)
 
-        x_rgb = torch.cat([x_vis[:, :N] + pos_emd_vis, self.mask_token + pos_emd_mask], dim=1)
+            x_flow = torch.cat([x_vis[:, N_rgb:] + flow_pos_emd_vis, self.mask_token + flow_pos_emd_mask], dim=1)   
+            flow_hat = self.flow_decoder(x_flow, flow_pos_emd_mask.shape[1] if not all_token else 0) 
 
-        rgb_hat = self.rgb_decoder(x_rgb, pos_emd_mask.shape[1] if not all_token else 0) 
-        flow_hat = self.flow_decoder(x_flow, pos_emd_mask.shape[1] if not all_token else 0) 
+        x_rgb = torch.cat([x_vis[:, :N_rgb] + rgb_pos_emd_vis, self.mask_token + rgb_pos_emd_mask], dim=1)
+        rgb_hat = self.rgb_decoder(x_rgb, rgb_pos_emd_mask.shape[1] if not all_token else 0) 
+
 
         return rgb_hat, flow_hat
 
