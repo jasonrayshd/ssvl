@@ -34,7 +34,7 @@ from datasets import build_dataset
 from engine_for_finetuning import osccpnr_train_one_epoch, lta_train_one_epoch, hands_train_one_epoch, egoclip_train_one_epoch, validation_one_epoch, final_test, merge
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner, CustomLayerDecayValueAssigner
 
-from loss import ActionAnticipationLoss, HandsPredictionLoss
+from loss import ActionAnticipationLoss, HandsPredictionLoss, PNRLoss
 from config_utils import parse_yml, combine
 from flow_extractor import flowExtractor
 
@@ -344,6 +344,18 @@ def main(args, ds_init):
     else:
         all_frames = args.cfg.NUM_FRAMES
 
+    # set different parameters for specific task
+    if args.cfg.task in ["pnr", "oscc"]:
+        _task_specific_params = {
+            "task": args.cfg.task,
+        }
+    elif "lta" in args.cfg.task:
+        _task_specific_params = {
+            "head_type": args.head_type,
+        }
+    else:
+        _task_specific_params= {}
+
     model = create_model(
         args.model,
         pretrained=False,
@@ -357,6 +369,8 @@ def main(args, ds_init):
         drop_block_rate=None,
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
+
+        **_task_specific_params,
     )
     try:
         patch_size = model.patch_embed.patch_size
@@ -490,9 +504,13 @@ def main(args, ds_init):
         args.weight_decay_end = args.weight_decay
     wd_schedule_values = utils.cosine_scheduler(
         args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
-    print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
-    if args.cfg.task == "oscc" or args.cfg.task == "pnr":
+    if wd_schedule_values is not None:
+        print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
+    else:
+        print("WD is fixed to: %.7f" % args.weight_decay)
+
+    if args.cfg.task == "oscc":
         if mixup_fn is not None:
             # smoothing is handled with mixup label transform
             criterion = SoftTargetCrossEntropy()
@@ -502,11 +520,30 @@ def main(args, ds_init):
             criterion = torch.nn.CrossEntropyLoss()
 
         train_fn = osccpnr_train_one_epoch
+
+    elif args.cfg.task == "pnr":
+        # version 1:
+        # used together with multi-class classficiation dense sampling strategy
+        # criterion = PNRLoss(smoothing=args.smoothing)
+
+        # version 2:
+        # binary classification
+        if mixup_fn is not None:
+            # smoothing is handled with mixup label transform
+            criterion = SoftTargetCrossEntropy()
+        elif args.smoothing > 0.:
+            criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
+        else:
+            criterion = torch.nn.CrossEntropyLoss()
+
+        train_fn = osccpnr_train_one_epoch
+
     elif "lta" in args.cfg.task: # [lta_verb, lta_noun]
-        criterion = ActionAnticipationLoss(celoss="focal" if mixup_fn is None else "soft", head_type=args.head_type) # lta_verb or lta_noun
+        gamma = getattr(args, "gamma", 2) # gamma == 2 by default
+        criterion = ActionAnticipationLoss(celoss="focal" if mixup_fn is None else "soft", gamma=gamma, head_type=args.head_type) # lta_verb or lta_noun
         train_fn = partial(lta_train_one_epoch, head_type=args.head_type)
     elif args.cfg.task == "hands":
-        criterion = torch.nn.SmoothL1Loss(reduction="mean",beta=5.0)
+        criterion = HandsPredictionLoss(loss_type="l1")
         train_fn = hands_train_one_epoch
     elif "egoclip" in args.cfg.task:
         criterion = torch.nn.CrossEntropyLoss()
@@ -547,6 +584,10 @@ def main(args, ds_init):
 
             if "lta" in args.cfg.task:
                 val_criterion = ActionAnticipationLoss(celoss="", head_type=args.head_type) # lta_verb or lta_noun
+            elif "hands" in args.cfg.task:
+                val_criterion = HandsPredictionLoss(loss_type="l1")
+            # elif args.cfg.task == "pnr":
+            #     val_criterion = PNRLoss(smoothing=args.smoothing)
             else:
                 val_criterion = torch.nn.CrossEntropyLoss()
 

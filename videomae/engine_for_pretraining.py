@@ -720,18 +720,42 @@ class MultiModalLoss(nn.Module):
 
         # print(output[0].shape)
         rgb_recons, flow_recons = output
-        # print(rgb_recons.shape)
 
-        unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, torch.cat([rgb_target, rgb_target], dim=0))
-        unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
-        rgb_recons_loss, rgb_flow_recons_loss = unreduced_rgb_recons_loss[:B].mean(), unreduced_rgb_recons_loss[B:].mean()
-        flow_recons_loss, flow_rgb_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
+        rgb_recons_loss = None
+        flow_recons_loss = None
+        rgb_flow_recons_loss = None
+        flow_rgb_recons_loss = None
+
+        # print(rgb_recons.shape)
+        if rgb_recons is None:
+            # only operate on flow modality
+            unreduced_flow_recons_loss = self.recons_loss(flow_recons, flow_target)
+            flow_recons_loss = unreduced_flow_recons_loss.mean()
+            total_loss = flow_recons_loss
+        elif flow_recons is None:
+            # only operate on rgb modality
+            unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, rgb_target)
+            rgb_recons_loss = unreduced_rgb_recons_loss.mean()
+            total_loss = rgb_recons_loss
+        else:
+            unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, torch.cat([rgb_target, rgb_target], dim=0))
+            unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
+            rgb_recons_loss, rgb_flow_recons_loss = unreduced_rgb_recons_loss[:B].mean(), unreduced_rgb_recons_loss[B:].mean()
+            flow_recons_loss, flow_rgb_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
+            total_loss = self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss +  self.lamb[3]*rgb_flow_recons_loss
+
+        # no flow2rgb reconstruction
+        # unreduced_rgb_recons_loss = self.recons_loss(rgb_recons, rgb_target)
+        # unreduced_flow_recons_loss = self.recons_loss(flow_recons, torch.cat([flow_target, flow_target], dim=0))
+        # rgb_recons_loss = unreduced_rgb_recons_loss.mean()
+        # flow_recons_loss, flow_rgb_recons_loss = unreduced_flow_recons_loss[:B].mean(), unreduced_flow_recons_loss[B:].mean()
 
         # rgb_recons_loss = self.recons_loss(rgb_recons, rgb_target).mean()
         # flow_recons_loss = self.recons_loss(flow_recons, flow_target).mean()
 
         loss = {
-            "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss +  self.lamb[3]*rgb_flow_recons_loss,
+            "sum": total_loss,
+            # "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_rgb_recons_loss +  self.lamb[2]*flow_recons_loss,
             # "sum": self.lamb[0]*rgb_recons_loss +  self.lamb[1]*flow_recons_loss,
 
             "rgb_recons": rgb_recons_loss,
@@ -746,11 +770,13 @@ class MultiModalLoss(nn.Module):
 
 
 def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
+                    device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
 
-                    mask_generators = None,
+                    patch_size = 16,
+                    num_tokens = 1568,
+                    mask_generator = None,
                     lamb = [1,1,1,1],
                     ):
     model.train()
@@ -774,24 +800,36 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
                     param_group["weight_decay"] = wd_schedule_values[it]
 
         videos, flows = batch[0], batch[1]
-
         B, *_ = videos.shape
-        rgb_mask, flow_mask = mask_generators[0](batch_size=B), mask_generators[1](batch_size=B) # numpy.ndarray
+        mask_batch = B # batch for generating mask
 
+        # for repeat sampling
         if len(videos.shape) == 6: # repeated sampling is used, (B, Repeat, C, T, H, W)
             _, repeat, *_ = videos.shape
             videos = videos.reshape(-1, *videos.shape[2:])
-            for i in range(repeat):
-                rgb_mask.extend(mask_generators[0](batch_size=B))
-                flow_mask.extend(mask_generators[1](batch_size=B))
-
             flows = flows.reshape(-1, *flows.shape[2:])
+            mask_batch = B * repeat
 
         videos = videos.to(device, non_blocking=True)
         flows = flows.to(device, non_blocking=True)
 
-        rgb_mask = torch.from_numpy(np.stack(rgb_mask, axis=0)).to(device, non_blocking=True).flatten(1).to(torch.bool)
-        flow_mask = torch.from_numpy(np.stack(flow_mask, axis=0)).to(device, non_blocking=True).flatten(1).to(torch.bool)
+        # process mask
+        mask_lst = mask_generator(batch_size=mask_batch)
+        if len(mask_lst) == 1: # multimodal masking, joint mask for all rgb and flow tokens
+            mask = mask_lst[0] # mask: list[np.ndarray]
+            # spererate mask for rgb and flow for model input
+            mask = np.stack(mask, axis=0) # mask: np.ndarray
+            rgb_mask = mask[:, :num_tokens]
+            flow_mask = mask[:, num_tokens:]
+
+        elif len(mask_lst) == 2: # separate mask for rgb and flow tokens
+            rgb_mask, flow_mask = mask_lst # rgb_mask, flow_mask: list[numpy.ndarray]
+            rgb_mask = np.stack(rgb_mask, axis=0)
+            flow_mask = np.stack(flow_mask, axis=0)
+
+        # print(rgb_mask.shape)
+        rgb_mask = torch.from_numpy(rgb_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
+        flow_mask = torch.from_numpy(flow_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
 
         # use given target or simply reconstruct input video
 
@@ -833,12 +871,11 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
 
         flow_target = flow_target[flow_mask]
         flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
-
         flow_target = flow_target.to(device, non_blocking=True)
 
         with torch.cuda.amp.autocast():
             outputs = model(videos, flows, rgb_mask, flow_mask)
- 
+
             loss_dct = loss_func(outputs, rgb_target, flow_target)
             loss = loss_dct["sum"]
 
@@ -859,14 +896,24 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
 
         torch.cuda.synchronize()
 
+        recons_loss = 0
+        cross_recons = 0
+        if loss_dct["rgb_recons"]:
+            recons_loss += loss_dct["rgb_recons"] 
+        if loss_dct["flow_recons"]:
+            recons_loss += loss_dct["flow_recons"]
+        if loss_dct["rgb_flow_recons"] and loss_dct["flow_rgb_recons"]:
+            cross_recons = loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"]
+
         metric_logger.update(loss=loss_value)
         metric_logger.update(rgb_recons_loss=loss_dct["rgb_recons"])
         metric_logger.update(flow_recons_loss=loss_dct["flow_recons"])
-        metric_logger.update(recons_loss=loss_dct["rgb_recons"]+loss_dct["flow_recons"])
+        metric_logger.update(recons_loss=recons_loss)
 
-        metric_logger.update(rgb_flow_recons=loss_dct["rgb_flow_recons"])
-        metric_logger.update(flow_rgb_recons=loss_dct["flow_rgb_recons"])
-        metric_logger.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"])
+        if loss_dct["rgb_flow_recons"] is not None:
+            metric_logger.update(rgb_flow_recons=loss_dct["rgb_flow_recons"])
+            metric_logger.update(flow_rgb_recons=loss_dct["flow_rgb_recons"])
+            metric_logger.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"])
 
         metric_logger.update(loss_scale=loss_scale_value)
 
@@ -890,11 +937,12 @@ def train_multimodal_one_epoch(model: torch.nn.Module, data_loader: Iterable, op
             log_writer.update(loss=loss_value, head="loss")
             log_writer.update(rgb_recons=loss_dct["rgb_recons"], head="rgb_recons")
             log_writer.update(flow_recons=loss_dct["flow_recons"], head="flow_recons")
-            log_writer.update(recons_loss=loss_dct["rgb_recons"] + loss_dct["flow_recons"], head="recons_loss")
+            log_writer.update(recons_loss=recons_loss, head="recons_loss")
 
-            log_writer.update(rgb_flow_recons=loss_dct["rgb_flow_recons"], head="rgb_flow_recons")
-            log_writer.update(flow_rgb_recons=loss_dct["flow_rgb_recons"], head="flow_rgb_recons")
-            log_writer.update(cross_recons=loss_dct["rgb_flow_recons"] + loss_dct["flow_rgb_recons"], head="cross_recons")
+            if loss_dct["rgb_flow_recons"] is not None:
+                log_writer.update(rgb_flow_recons=loss_dct["rgb_flow_recons"], head="rgb_flow_recons")
+                log_writer.update(flow_rgb_recons=loss_dct["flow_rgb_recons"], head="flow_rgb_recons")
+                log_writer.update(cross_recons=loss_dct["rgb_flow_recons"]+loss_dct["flow_rgb_recons"], head="cross_recons")
 
             log_writer.update(loss_scale=loss_scale_value, head="opt")
             log_writer.update(lr=max_lr, head="opt")
@@ -946,6 +994,8 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0, patch_size: int = 16, 
                     normlize_target: bool = True, log_writer=None, lr_scheduler=None, start_steps=None,
                     lr_schedule_values=None, wd_schedule_values=None,
+                    mask_generator = None,
+                    num_tokens = None,
                     lamb = [1,1,1,1],
                     ):
     model.train()
@@ -968,15 +1018,31 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
                 if wd_schedule_values is not None and param_group["weight_decay"] > 0:
                     param_group["weight_decay"] = wd_schedule_values[it]
 
-        videos, bool_masked_pos, flows = batch[0], batch[1], batch[2]
+        videos, flows = batch[0], batch[1]
+        mask_batch = videos.shape[0]
 
         if len(videos.shape) == 6: # repeated sampling is used
+            repeat = videos.shape[1]
+            mask_batch *= repeat
+
             videos = videos.reshape(-1, *videos.shape[2:])
-            bool_masked_pos = bool_masked_pos.reshape(-1, *bool_masked_pos.shape[2:])
+            bool_masked_pos = bool_masked_pos.reshape(-1, *bool_masked_pos.shape[2:])            
             flows = flows.reshape(-1, *flows.shape[2:])
 
+        mask_lst = mask_generator(mask_batch)
+        if len(mask_lst) == 1:
+            mask = mask_lst[0]
+            mask = np.stack(mask, axis=0) # mask: np.ndarray
+            rgb_mask = mask[:, :num_tokens]
+            flow_mask = mask[:, num_tokens:]
+        else:
+            rgb_mask, flow_mask = mask_lst
+            rgb_mask = np.stack(rgb_mask, axis=0)
+            flow_mask = np.stack(flow_mask, axis=0)
+
         videos = videos.to(device, non_blocking=True)
-        bool_masked_pos = bool_masked_pos.to(device, non_blocking=True).flatten(1).to(torch.bool)
+        rgb_mask = torch.from_numpy(rgb_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
+        flow_mask = torch.from_numpy(flow_mask).to(device, non_blocking=True).flatten(1).to(torch.bool)
 
         # use given target or simply reconstruct input video
 
@@ -994,11 +1060,11 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
 
                 videos_patch = rearrange(videos_norm, 'b n p c -> b n (p c)')
                 B, _, C = videos_patch.shape
-                rgb_target = videos_patch[bool_masked_pos].reshape(B, -1, C)
+                rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
             else:
                 videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', p0=2, p1=patch_size, p2=patch_size)
                 B, _, C = videos_patch.shape
-                rgb_target = videos_patch[bool_masked_pos].reshape(B, -1, C)
+                rgb_target = videos_patch[rgb_mask].reshape(B, -1, C)
 
         # target will be processed in dataset code
         # reconstruct entire given flow images
@@ -1011,22 +1077,24 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
 
         flow_target = rearrange(flows, 'b c t (h p1) (w p2) -> b (t h w) (p1 p2 c)', p1=patch_size, p2=patch_size)
 
-        tublet_size = 2
-        bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
-        bool_masked_pos_label = bool_masked_pos_label.repeat(1, N//(T//tublet_size), 1, 1)
-        bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
-
-        flow_target = flow_target[bool_masked_pos_label]
-        flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
-
-        flow_target = flow_target.to(device, non_blocking=True)
+        # tublet_size = 2
+        # bool_masked_pos_label = rearrange(bool_masked_pos, "b (t h w) -> b t h w", t=T//tublet_size, h=H//patch_size,w=W//patch_size)
+        # bool_masked_pos_label = bool_masked_pos_label.repeat(1, N//(T//tublet_size), 1, 1)
+        # bool_masked_pos_label = bool_masked_pos_label.reshape(B, -1)
 
         with torch.cuda.amp.autocast():
             p = random.random()
             if p > 0.5:
                 flows = None
-            outputs = model(videos, flows, bool_masked_pos)
- 
+                flow_target = flow_target[rgb_mask]
+            else:
+                flow_target = flow_target[flow_mask]
+
+            flow_target = rearrange(flow_target, '(b n) d -> b n d', b=B)
+            flow_target = flow_target.to(device, non_blocking=True)
+
+            outputs = model(videos, flows, rgb_mask, flow_mask)
+
             loss_dct = loss_func(outputs, rgb_target, flow_target)
             loss = loss_dct["sum"]
 
@@ -1078,9 +1146,9 @@ def train_multicae_one_epoch(model: torch.nn.Module, data_loader: Iterable, opti
             log_writer.update(rgb_recons=loss_dct["rgb_recons"], head="rgb_recons")
 
             if flows is not None:
-                log_writer.update(flow_recons=loss_dct["flow_recons"], head="flow_recons")
+                log_writer.update(flow_recons_loss=loss_dct["flow_recons"], head="flow_recons")
             else:
-                log_writer.update(flow_recons=loss_dct["rgb2flow_recons"], head="flow_recons")
+                log_writer.update(rgb2flow_loss=loss_dct["flow_recons"], head="flow_recons")
 
             log_writer.update(recons_loss=loss_dct["rgb_recons"] + loss_dct["flow_recons"], head="recons_loss")
 

@@ -421,12 +421,15 @@ def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epoch
             warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
 
     iters = np.arange(epochs * niter_per_ep - warmup_iters)
-    schedule = np.array(
-        [final_value + 0.5 * (base_value - final_value) * (1 + math.cos(math.pi * i / (len(iters)))) for i in iters])
+    if base_value != final_value:
+        schedule = np.array(
+            [final_value + 0.5 * (base_value - final_value) * (1 + math.cos(math.pi * i / (len(iters)))) for i in iters])
+    else:
+        schedule = np.array([])
 
     schedule = np.concatenate((warmup_schedule, schedule))
-
-    assert len(schedule) == epochs * niter_per_ep
+    if len(schedule) == 0: return None
+    # assert len(schedule) == epochs * niter_per_ep
     return schedule
 
 
@@ -625,15 +628,15 @@ def filter_checkpoint_fho(checkpoint_model):
                 new_dict[key[12:]] = checkpoint_model[key]
             elif "flow_patch_embed" not in key:
                 # other blocks except flow_path_embed
-                if "intra_rgb" in key:
-                    # multimodal
-                    raw_key = key
-                    key = key.split(".")[1:] # remove "encoder."
-                    key[2] = key[2].split("_")[0] # might be norm1 or norm2
-                    key = ".".join(key)
-                    new_dict[key] = checkpoint_model[raw_key]
-                else:
-                    new_dict[key[8:]] = checkpoint_model[key]
+                # if "intra_rgb" in key:
+                #     # multimodal
+                #     raw_key = key
+                #     key = key.split(".")[1:] # remove "encoder."
+                #     key[2] = key[2].split("_")[0] # might be norm1 or norm2
+                #     key = ".".join(key)
+                #     new_dict[key] = checkpoint_model[raw_key]
+                # else:
+                new_dict[key[8:]] = checkpoint_model[key]
             # elif "regressor" in key:
             #     new_dict[key[8:]] = checkpoint_model[key]
             elif "encoder.norm" in key:

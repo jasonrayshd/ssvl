@@ -1,28 +1,11 @@
+import os
 from torchvision import transforms
 from transforms import *
-from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 
+import utils
+from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 from ego4d import Ego4dFhoOscc, Ego4dFhoLTA, Ego4dFhoHands, Egoclip
 from epickitchens import Epickitchens
-
-
-def create_mask_generator(args):
-
-    if args.mask_type == 'tube':
-        generate_fn = TubeMaskingGenerator
-    elif args.mask_type == "agnostic":
-        generate_fn = AgnosticMaskingGenerator
-    else:
-        raise ValueError(f"Unknown mask type {args.mask_type}")
-
-    rgb_masked_position_generator = generate_fn(
-        args.window_size, args.mask_ratio
-    )
-    flow_masked_position_generator = generate_fn(
-        args.window_size, args.mask_ratio
-    )
-
-    return rgb_masked_position_generator, flow_masked_position_generator
 
 
 class DataAugmentationForVideoMAE(object):
@@ -61,7 +44,10 @@ def build_pretraining_dataset(args, **kwargs):
     mode = "train"
 
     if args.cfg.task == "egoclip":
-        dataset = Egoclip(mode, args.cfg, pretrain=True, pretrain_transform=transform)
+        rank = utils.get_rank()
+        local_rank = os.environ['LOCAL_RANK']
+        dataset = Egoclip(mode, args.cfg, pretrain=True, pretrain_transform=transform,
+                        output_path=os.path.join(args.output_dir, args.name), rank=f"{rank}_{local_rank}" )
 
     elif args.cfg.task == "epic-kitchens":
         dataset = Epickitchens(args.cfg, mode, pretrain_transform=transform)
@@ -79,7 +65,7 @@ def build_dataset(mode, args, flow_extractor=None):
 
     if args.cfg.task == "oscc" or args.cfg.task == "pnr":
         dataset = Ego4dFhoOscc(mode, args.cfg, pretrain=False, flow_extractor=flow_extractor)
-        num_classes = 2 if args.cfg.task == "oscc" else 32
+        num_classes = 2
 
     elif "lta" in args.cfg.task: # [lta_verb, lta_noun]
         dataset = Ego4dFhoLTA(mode, args.cfg, pretrain=False, flow_extractor=flow_extractor)

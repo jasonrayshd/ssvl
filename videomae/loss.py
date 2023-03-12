@@ -76,11 +76,11 @@ class FocalLoss(nn.Module):
 
 class ActionAnticipationLoss(nn.Module):
 
-    def __init__(self, celoss="focal", head_type="varant"):
+    def __init__(self, celoss="focal", gamma=2, head_type="varant"):
         super().__init__()
         self.head_type=head_type
         if celoss == "focal":
-            self.celoss = FocalLoss(gamma=2)
+            self.celoss = FocalLoss(gamma=gamma)
         elif celoss == "soft":
             self.celoss = SoftTargetCrossEntropy()
         else:
@@ -114,22 +114,69 @@ class ActionAnticipationLoss(nn.Module):
 
 class HandsPredictionLoss(nn.Module):
     # smoother l1 loss
-    def __init__(self, beta=5):
+    def __init__(self, loss_type="l1", beta=5):
     
         super().__init__()
-        self.l1_loss = nn.L1Loss(reduction="none")
-        self.beta = beta
+        if loss_type == "l1":
+            self.l1_loss = torch.nn.SmoothL1Loss(reduction="sum",beta=5.0)
+        else:
+            raise NotImpelementedError(f"loss type: {loss_type} is not supported!")
 
     def forward(self, output, target_lst):
         target, mask = target_lst
-        B, *_ = target.shape
-        dist = self.l1_loss(output, target)
 
-        idx = ( dist < self.beta ).bool()
-
-        loss1 = 0.5*mask*torch.pow(output-target, 2) / self.beta
-        loss2 = mask*(dist - 0.5*self.beta)
-
-        loss = ( loss1[idx].sum() + loss2[~idx].sum() ) / B
+        effective_num = mask.sum()
+        loss = self.l1_loss(mask*output, target)
+        loss /= effective_num
 
         return loss
+    
+
+class PNRLoss(nn.Module):
+
+    def __init__(self, smoothing=0.1):
+
+        super().__init__()
+
+        self.bound = 2 # only using smoothing within certrain range around key frame
+
+        self.smoothing = smoothing
+        self.confidence = 1 - self.smoothing
+
+    def forward(self, output, target):
+
+        """
+            output: (B, T+1)
+            target: (B)
+        """
+        B, d = output.shape
+        T = d - 1
+
+        logprobs = F.log_softmax(output, dim=-1) # (B, T+1)
+        nll_loss = -logprobs.gather(dim=-1, index=target.unsqueeze(1))
+        nll_loss =  nll_loss.squeeze(1) # (B)
+ 
+        sign = ( target < T ).long().cuda() # (B, 1) indicate whether state change occurs
+        loc = torch.arange(-self.bound, self.bound+1, 1).unsqueeze(0).repeat(B, 1).cuda() + target.unsqueeze(1)
+        mask = torch.where((loc>=0)*(loc<T), 1, 0)
+
+        loc = torch.clamp(loc, min=0, max=T-1) # (B, self.bound*2+1)
+
+        smooth_loss = -logprobs.gather(dim=-1, index=loc) # (B, self.bound*2+1)
+        smooth_loss = smooth_loss * mask
+
+        loss =  self.confidence * nll_loss  + sign*(self.smoothing * smooth_loss.mean(-1)) + (1-sign)*(self.smoothing * nll_loss)
+
+        return loss.mean()
+
+
+if __name__ == "__main__":
+
+    loss_fn = PNRLoss()
+    B = 4
+    T = 16
+
+    target = (torch.randint(0, T+1, size=(B, )))
+    output = torch.randn(B,17)
+    print(target)
+    loss_fn(output, target)

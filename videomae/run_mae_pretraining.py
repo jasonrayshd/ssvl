@@ -1,6 +1,6 @@
 from builtins import ValueError
 import argparse
-from cgi import parse_multipart
+
 import datetime
 import numpy as np
 import time
@@ -8,27 +8,30 @@ import torch
 import torch.backends.cudnn as cudnn
 import json
 import os
-
+from tqdm import tqdm
 import copy
 
 from pathlib import Path
 from flow_extractor import flowExtractor
 from timm.models import create_model
 from optim_factory import create_optimizer
-from datasets import build_pretraining_dataset, create_mask_generator
+from datasets import build_pretraining_dataset
+from masking_generator import MaskGenerator
 
-from engine_for_pretraining import train_one_epoch, train_tsvit_one_epoch, train_multimodal_one_epoch, train_multicae_one_epoch
+from engine_for_pretraining import ( 
+        train_one_epoch, 
+        train_tsvit_one_epoch, 
+        train_multimodal_one_epoch, 
+        train_multicae_one_epoch
+    )
+
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import modeling_pretrain
 import wandb
 
 import logging
-import socket
-from epickitchens_utils import CacheManager
-from multiprocessing.managers import SyncManager
 import multiprocessing as mp
-
 from config_utils import parse_yml, combine
 
 def get_args():
@@ -178,6 +181,7 @@ def get_model(args):
     elif args.pretrain == "multimodal":
         model = create_model(
             args.model,
+            modality = args.modality,
             pretrained=False,
             drop_path_rate=args.drop_path,
             drop_block_rate=None,
@@ -216,11 +220,14 @@ def load_weight_for_rgb_encoder(raw_checkpoints, pretrain="ts"):
                     _tmp = k.split(".")
                     _tmp[1] = "rgb_patch_embed"
                     k = ".".join(_tmp)
+                    rgb_encoder_checkpoints["flow_patch_embed"] = v
+                elif "encoder_to_decoder" in k:
+                    continue
 
                 rgb_encoder_checkpoints[k] = v
 
-            elif k == "mask_token":
-                rgb_encoder_checkpoints["rgb_mask_token"] = v
+            # elif k == "mask_token":
+            #     rgb_encoder_checkpoints["rgb_mask_token"] = v
 
     return rgb_encoder_checkpoints
 
@@ -228,11 +235,11 @@ def load_weight_for_rgb_encoder(raw_checkpoints, pretrain="ts"):
 def main(args):
     utils.init_distributed_mode(args)
 
-    logging.basicConfig(
-        filename=os.path.join(opts.output_dir, opts.name, f"console_{utils.get_rank()}_{os.environ['LOCAL_RANK']}.log"),
-        filemode="w",
-        level=logging.DEBUG,
-    )
+    # logging.basicConfig(
+    #     filename=os.path.join(args.output_dir, args.name, f"console_{utils.get_rank()}_{os.environ['LOCAL_RANK']}.log"),
+    #     filemode="w",
+    #     level=logging.DEBUG,
+    # )
 
     device = torch.device(args.device)
 
@@ -240,7 +247,7 @@ def main(args):
     seed = args.seed + utils.get_rank()
 
     if utils.get_rank() == 0 and not args.debug:
-        wandb.init(project=args.project, id=args.wandb_id, resume="must" if args.wandb_id else None, config=vars(opts))
+        wandb.init(project=args.project, id=args.wandb_id, resume="must" if args.wandb_id else None, config=vars(args))
 
     print(args)
 
@@ -265,35 +272,67 @@ def main(args):
         if flag:
             print("Successfully load pretrained weight for RGB cross-modality Encoder")
 
-    if args.pretrain == "ts":
-        assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
-        patch_size = model.rgb_encoder.patch_embed.patch_size
-    elif args.pretrain == "mae":
-        patch_size = model.encoder.patch_embed.patch_size
-    elif args.pretrain == "multimodal" or args.pretrain == "multicae":
+    # if args.pretrain == "ts":
+    #     assert model.rgb_encoder.patch_embed.patch_size == model.flow_encoder.patch_embed.patch_size
+    #     patch_size = model.rgb_encoder.patch_embed.patch_size
+    #     print("Patch size = %s" % str(patch_size))
+    #     # window size for masking
+    #     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+    #     args.patch_size = patch_size
+    # elif args.pretrain == "mae":
+    #     patch_size = model.encoder.patch_embed.patch_size
+    #     print("Patch size = %s" % str(patch_size))
+    #     # window size for masking
+    #     args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+    #     args.patch_size = patch_size
+    if args.pretrain == "multimodal":
         patch_size = model.encoder.rgb_patch_embed.patch_size
+        input_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+        num_tokens =(args.num_frames // 2) * (args.input_size // patch_size[0]) * (args.input_size // patch_size[1])
+        if args.modality == "rgbflow":
+            mask_type_lst = args.mask_type.split("_")
+            mask_ratio_lst = str(args.mask_ratio).split("_")
+
+            if len(mask_type_lst) == 2: # independent mask for each modality
+                input_size_lst = [input_size]*2 # [input size for rgb, input size for flow]
+            else: # mask among all rgb and flow tokens
+                # double temporal dimension
+                assert mask_type_lst[0]  == "multimodal"
+                input_size_lst = [ input_size ]
+
+            print(mask_type_lst, mask_ratio_lst, input_size_lst)
+            mask_generator = MaskGenerator(mask_type_lst, input_size_lst, mask_ratio_lst)
+
+        elif args.modality == "rgb" or args.modality == "flow":
+            mask_generator = MaskGenerator([args.mask_type], [input_size], [args.mask_ratio])
+        else:
+            raise ValueError(f"Unsupported input modality:{args.modality}")
+
+    elif args.pretrain == "multicae":
+        # similar to multimodal but only supports rgbflow modality as input
+        patch_size = model.encoder.rgb_patch_embed.patch_size
+        input_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+        num_tokens = (args.num_frames // 2) * (args.input_size // patch_size[0]) * (args.input_size // patch_size[1])
+
+        mask_type_lst = args.mask_type.split("_")
+        mask_ratio_lst = str(args.mask_ratio).split("_")
+
+        if len(mask_type_lst) == 2: # independent mask for each modality
+            input_size_lst = [input_size]*2 # [input size for rgb, input size for flow]
+        else: # mask among all rgb and flow tokens
+            # double temporal dimension
+            assert mask_type_lst[0]  == "multimodal"
+            input_size_lst = [ input_size ]
+
+        print(mask_type_lst, mask_ratio_lst, input_size_lst)
+
+        mask_generator = MaskGenerator(mask_type_lst, input_size_lst, mask_ratio_lst)
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
-    print("Patch size = %s" % str(patch_size))
-
-    # window size for masking
-    args.window_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
-    args.patch_size = patch_size
-
-    # if args.flow_mode == "online":
-    #     mp.set_start_method('spawn')
-    #     SyncManager.register("flowExtractor", flowExtractor)
-    #     m = SyncManager()
-    #     m.start()
-    #     flow_extractor = m.flowExtractor(device=f"cuda:{args.gpu}")
-    #     print(f"Flow extractor manager started by {os.getpid()}.")
-    # else:
-    #     flow_extractor = None
 
     dataset_train = build_pretraining_dataset(args)
-    mask_generators = create_mask_generator(args)
-
+    
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
     sampler_rank = global_rank
@@ -321,6 +360,7 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
+        prefetch_factor = 2,
         # multiprocessing_context="spawn" if args.flow_mode == "online" else None,
         worker_init_fn=utils.seed_worker
     )
@@ -347,35 +387,35 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
-    if args.pretrain == "ts" and args.flow_encoder_lr is not None:
-        ignore_param = {
-            # *["flow_encoder_to_decoder."+name for name, param in model.module.flow_encoder_to_decoder.named_parameters()],
-            *["flow_encoder."+name for name, param in model.module.flow_encoder.named_parameters() ]
-        }
-        print(ignore_param)
+    # if args.pretrain == "ts" and args.flow_encoder_lr is not None:
+    #     ignore_param = {
+    #         # *["flow_encoder_to_decoder."+name for name, param in model.module.flow_encoder_to_decoder.named_parameters()],
+    #         *["flow_encoder."+name for name, param in model.module.flow_encoder.named_parameters() ]
+    #     }
+    #     print(ignore_param)
 
-        optimizer = create_optimizer(
-            args, model_without_ddp, 
-            ignore_param = ignore_param
-        )
+    #     optimizer = create_optimizer(
+    #         args, model_without_ddp, 
+    #         ignore_param = ignore_param
+    #     )
 
-        flow_optimizer = create_optimizer(
-            args, 
-            # torch.nn.Sequential(model.module.flow_encoder_to_decoder, model.module.flow_encoder),
-            torch.nn.Sequential( model.module.flow_encoder),
-            lr = args.flow_encoder_lr,
-        )
-        flow_encoder_lr_schedule_values = utils.cosine_scheduler(
-            args.flow_encoder_lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
-            start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
-        )
+    #     flow_optimizer = create_optimizer(
+    #         args, 
+    #         # torch.nn.Sequential(model.module.flow_encoder_to_decoder, model.module.flow_encoder),
+    #         torch.nn.Sequential( model.module.flow_encoder),
+    #         lr = args.flow_encoder_lr,
+    #     )
+    #     flow_encoder_lr_schedule_values = utils.cosine_scheduler(
+    #         args.flow_encoder_lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
+    #         start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+    #     )
 
-    else:
-        optimizer = create_optimizer(
-            args, model_without_ddp)
+    # else:
+    optimizer = create_optimizer(
+        args, model_without_ddp)
 
-        flow_optimizer = None
-        flow_encoder_lr_schedule_values = None
+    # flow_optimizer = None
+    # flow_encoder_lr_schedule_values = None
 
     loss_scaler = NativeScaler()
 
@@ -386,12 +426,12 @@ def main(args):
         start_warmup_value=args.warmup_lr,  warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
         # strategy="fixed_in_epoch",
     )
-
     if args.weight_decay_end is None:
         args.weight_decay_end = args.weight_decay
     wd_schedule_values = utils.cosine_scheduler(
         args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
-    print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
+    if wd_schedule_values is not None:
+        print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
     utils.auto_load_model(
         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
@@ -406,41 +446,42 @@ def main(args):
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch)
 
-        if args.pretrain == "mae":
-            train_stats = train_one_epoch(
-                model, data_loader_train,
-                optimizer, device, epoch, loss_scaler,
-                args.clip_grad, log_writer=log_writer,
-                start_steps=epoch * num_training_steps_per_epoch,
-                lr_schedule_values=lr_schedule_values,
-                wd_schedule_values=wd_schedule_values,
-                patch_size=patch_size[0],
-                normlize_target=args.normlize_target,
-                # use mixed precision or not
-                train_wo_amp = args.train_wo_amp, 
-                # whether predict given flow images or recons input based on flow images
-                # predict_preprocessed_flow = (args.flow_mode != ""),
-            )
-        elif args.pretrain == "ts":
-            train_stats = train_tsvit_one_epoch(
-                model, data_loader_train,
-                optimizer, device, epoch, loss_scaler,
-                args.clip_grad, log_writer=log_writer,
-                start_steps=epoch * num_training_steps_per_epoch,
-                lr_schedule_values=lr_schedule_values,
-                flow_encoder_lr_schedule_values = flow_encoder_lr_schedule_values,
-                wd_schedule_values=wd_schedule_values,
-                patch_size=patch_size[0],
-                normlize_target=args.normlize_target,
-                flow_optimizer = flow_optimizer,
+        # if args.pretrain == "mae":
+        #     train_stats = train_one_epoch(
+        #         model, data_loader_train,
+        #         optimizer, device, epoch, loss_scaler,
+        #         args.clip_grad, log_writer=log_writer,
+        #         start_steps=epoch * num_training_steps_per_epoch,
+        #         lr_schedule_values=lr_schedule_values,
+        #         wd_schedule_values=wd_schedule_values,
+        #         patch_size=patch_size[0],
+        #         normlize_target=args.normlize_target,
+        #         # use mixed precision or not
+        #         train_wo_amp = args.train_wo_amp, 
+        #         # whether predict given flow images or recons input based on flow images
+        #         # predict_preprocessed_flow = (args.flow_mode != ""),
+        #     )
+        # elif args.pretrain == "ts":
+        #     train_stats = train_tsvit_one_epoch(
+        #         model, data_loader_train,
+        #         optimizer, device, epoch, loss_scaler,
+        #         args.clip_grad, log_writer=log_writer,
+        #         start_steps=epoch * num_training_steps_per_epoch,
+        #         lr_schedule_values=lr_schedule_values,
+        #         flow_encoder_lr_schedule_values = flow_encoder_lr_schedule_values,
+        #         wd_schedule_values=wd_schedule_values,
+        #         patch_size=patch_size[0],
+        #         normlize_target=args.normlize_target,
+        #         flow_optimizer = flow_optimizer,
 
-                weighted_flow2rgb_recons = args.weighted_flow2rgb_recons,
-                ctr = args.ctr,
-                tau = float(args.tau),
-                lamb = args.lamb,
-            ) 
+        #         weighted_flow2rgb_recons = args.weighted_flow2rgb_recons,
+        #         ctr = args.ctr,
+        #         tau = float(args.tau),
+        #         lamb = args.lamb,
+        #     ) 
 
-        elif args.pretrain == "multimodal":
+        if args.pretrain == "multimodal":
+
             train_stats = train_multimodal_one_epoch(
                 model, data_loader_train,
                 optimizer, device, epoch, loss_scaler,
@@ -448,11 +489,13 @@ def main(args):
                 start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values,
                 wd_schedule_values=wd_schedule_values,
-                patch_size=patch_size[0],
-                normlize_target=args.normlize_target,
 
-                mask_generators = mask_generators,
+                normlize_target=args.normlize_target,
+                patch_size=patch_size[0],
+                num_tokens = num_tokens,
+                mask_generator = mask_generator,
                 lamb = args.lamb,
+
             )
         elif args.pretrain == "multicae":
             train_stats = train_multicae_one_epoch(
@@ -462,9 +505,11 @@ def main(args):
                 start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values,
                 wd_schedule_values=wd_schedule_values,
-                patch_size=patch_size[0],
-                normlize_target=args.normlize_target,
 
+                patch_size=patch_size[0],
+                num_tokens = num_tokens,
+                normlize_target=args.normlize_target,
+                mask_generator = mask_generator,
                 lamb = args.lamb,
             )
         else:
