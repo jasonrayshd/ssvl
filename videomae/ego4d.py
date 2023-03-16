@@ -1036,7 +1036,7 @@ class Ego4dFhoOscc(Ego4dBase):
             flows = self.prepare_flow(clip, info, frame_idx)
             clip = self.normalize(clip)
 
-            return clip, flows, [labels, clip["clip_idx"]]
+            return clip, flows, labels
 
         elif self.mode =="test":
             # support multiple spatial crops

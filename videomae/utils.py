@@ -624,9 +624,9 @@ def filter_checkpoint_fho(checkpoint_model):
         if key.startswith('backbone.'):
             new_dict[key[9:]] = checkpoint_model[key]
         elif key.startswith('encoder.'):
-            if "rgb_patch_embed" in key:
-                new_dict[key[12:]] = checkpoint_model[key]
-            elif "flow_patch_embed" not in key:
+            # if "rgb_patch_embed" in key:
+            #     new_dict[key[12:]] = checkpoint_model[key]
+            # if "flow_patch_embed" not in key:
                 # other blocks except flow_path_embed
                 # if "intra_rgb" in key:
                 #     # multimodal
@@ -636,11 +636,9 @@ def filter_checkpoint_fho(checkpoint_model):
                 #     key = ".".join(key)
                 #     new_dict[key] = checkpoint_model[raw_key]
                 # else:
-                new_dict[key[8:]] = checkpoint_model[key]
-            # elif "regressor" in key:
-            #     new_dict[key[8:]] = checkpoint_model[key]
-            elif "encoder.norm" in key:
-                continue
+            new_dict[key[8:]] = checkpoint_model[key]
+            # elif "encoder.norm" in key:
+            #     continue
         else:
             new_dict[key] = checkpoint_model[key]
 

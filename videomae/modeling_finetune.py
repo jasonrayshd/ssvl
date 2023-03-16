@@ -485,6 +485,186 @@ class OSCCModel(nn.Module):
         return pred
 
 
+class FintuneBottleneck(nn.Module):
+
+    def __init__(self, 
+                 
+                rgb_in_chans=3, 
+                flow_in_chans=2,
+
+                rgb_num_frames=16,
+                flow_num_frames=8,
+
+                rgb_tubelet_size=2,
+                flow_tubelet_size=1,
+
+                modality="rgb", # [rgb, flow, rgbflow]
+                num_bottleneck = 8,
+
+                img_size=224, 
+                patch_size=16, 
+
+                num_classes=1000, 
+                embed_dim=768, 
+                depth=12,
+                num_heads=12, 
+                mlp_ratio=4., 
+                qkv_bias=False, 
+                qk_scale=None, 
+                drop_rate=0., 
+                attn_drop_rate=0.,
+                drop_path_rate=0., 
+                norm_layer=nn.LayerNorm, 
+                init_values=0.,
+                use_learnable_pos_emb=False, 
+                init_scale=0.,
+                all_frames=16,
+                tubelet_size=2,
+                use_mean_pooling=True,
+                # keep_dim = False,
+                
+                task = "oscc",
+                ):
+
+        super().__init__()
+        self.num_classes = num_classes
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.tubelet_size = tubelet_size
+
+        self.task = task
+        self.num_frames = all_frames
+
+        self.modality = modality
+
+        self.patch_size = (patch_size, patch_size)
+        self.rgb_patch_embed = PatchEmbed(
+                        img_size=img_size, patch_size=patch_size, in_chans=rgb_in_chans,
+                        embed_dim=embed_dim, num_frames=rgb_num_frames, tubelet_size=rgb_tubelet_size)
+        
+        num_patches = self.rgb_patch_embed.num_patches
+        self.rgb_pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim)) if use_learnable_pos_emb else get_sinusoid_encoding_table(num_patches, embed_dim)
+
+        if "flow" in modality:
+            self.flow_patch_embed = PatchEmbed(
+                            img_size=img_size, patch_size=patch_size, in_chans=flow_in_chans,
+                            embed_dim=embed_dim, num_frames=flow_num_frames, tubelet_size=flow_tubelet_size)
+
+            num_patches = self.flow_patch_embed.num_patches
+            self.flow_pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim)) if use_learnable_pos_emb else get_sinusoid_encoding_table(num_patches, embed_dim)
+
+        self.num_bottleneck = num_bottleneck
+        self.bottleneck = nn.Parameter(torch.zeros(1, num_bottleneck, embed_dim))
+        trunc_normal_(self.bottleneck, std=.02)
+
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+
+        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
+        self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
+        # self.temporal_norm = norm_layer(embed_dim)
+
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+
+        self.apply(self._init_weights)
+
+        if self.task == "oscc":
+            self.cls_head = nn.Linear(embed_dim, 2) 
+        elif self.task == "pnr":
+            # self.loc_head = nn.Linear(embed_dim, 2*embed_dim)
+            self.cls_head = nn.Linear(embed_dim, self.num_frames+1)
+        else:
+            raise NotImplementedError(f"unknown task:{self.task}")
+
+        trunc_normal_(self.cls_head.weight, std=.02)
+        self.cls_head.weight.data.mul_(init_scale)
+        self.cls_head.bias.data.mul_(init_scale)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'rgb_pos_embed', "flow_pos_embed", "bottleneck", 'cls_token'}
+
+    # def get_classifier(self):
+    #     return self.head
+
+    # def reset_classifier(self, num_classes, global_pool=''):
+    #     self.num_classes = num_classes
+    #     self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+    
+    def forward_features(self, x, flow=None):
+        # input shape: B, C, T, H, W
+        x = self.rgb_patch_embed(x) # patch embedding
+        B, _, _ = x.size()
+        x = x + self.rgb_pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
+        x = self.pos_drop(x) # dropout
+        expand_bottleneck = self.bottleneck.expand(B, -1, -1).type_as(x).to(x.device)
+        x = torch.cat((x, expand_bottleneck), dim=1)
+
+        if "flow" in self.modality:
+            flow = self.flow_patch_embed(flow)
+            flow = flow + self.flow_pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
+            flow = self.pos_drop(flow)
+            x = torch.cat((x, flow), dim=1)
+
+        # encoder
+        for blk in self.blocks:
+            x = blk(x) 
+
+        return x
+
+
+    def forward(self, x, flow=None):
+        # NOTE                            Jiachen 2022.05.25
+        # from ego4d state change classification and localization
+        # the raw tensor frames from __getitem__() shape like: C, T, H, W
+        # Thus, if no transformations are used to augment x, the shape of x will be:
+        # bs, C, T, H, W
+        B, C, T, H, W = x.shape
+
+        x = self.forward_features(x, flow)
+        # x shape: bs, T//tublet_size*patch num * patch num, embed_dim
+        # if self.task == "oscc":
+        if self.fc_norm is not None:
+            pred = self.cls_head( self.fc_norm(x.mean(1)) )
+        else:
+            pred = self.cls_head( self.norm(x)[:, 0] )
+
+        # elif self.task == "pnr":
+
+        #     num_patches = (H//self.patch_embed.patch_size[0]) * (W//self.patch_embed.patch_size[1])
+        #     tubelet_size = self.patch_embed.tubelet_size
+        #     x = self.loc_head(x) # shape(b, m, 2*d)
+
+        #     x = einops.rearrange(x, "b (T n) (t d) -> b (T t) n d", T=T//tubelet_size, t=tubelet_size, n=num_patches)
+
+        #     x = x.mean(dim=2).squeeze(dim=2) # spatial pooling, shape (b,T,d)
+        #     x = self.fc_norm(x)
+        #     loc = self.cls_head(x) # shape (b, T, 1)
+        #     loc = loc.squeeze()
+        #     # loc = loc.permute(0, 2, 1) # for computing Cross-entropy loss
+
+        return pred
+
+
 class FintuneVisionTransformerEncoder(nn.Module):
     """ Vision Transformer with support for patch or hybrid CNN input stage
     """
@@ -2273,6 +2453,30 @@ def oscc_vit_base_patch16_224(pretrained=False, **kwargs):
 
     model.default_cfg = _cfg()
     return model
+
+@register_model
+def oscc_bottleneck_base_patch16_224(pretrained=False, **kwargs):
+
+    model = FintuneBottleneck(
+
+            rgb_in_chans=3, 
+            flow_in_chans=2,
+
+            rgb_num_frames=16,
+            flow_num_frames=8,
+
+            rgb_tubelet_size=2,
+            flow_tubelet_size=1,
+
+            modality="rgb", # [rgb, flow, rgbflow]
+            num_bottleneck = 8,
+
+            patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+    model.default_cfg = _cfg()
+    return model
+
 
 @register_model
 def oscc_vit_large_patch16_224(pretrained=False, **kwargs):
