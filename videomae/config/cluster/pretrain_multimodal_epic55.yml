@@ -1,20 +1,23 @@
 # configuration for pretraining
 # configurations needed in pretraining
 
-batch_size: 6
+batch_size: 4
 epochs: 300
 save_ckpt_freq: 10
 
 # Model parameters
 model: "pretrain_videomae_multimodal_base_patch16_224"
-decoder_depth: 6
-mask_type: "agnostic"         # choices=['tube']
-mask_ratio: 0.9
+decoder_depth: 3
+mask_type: "multimodal"
+mask_ratio: 0.95
+
+modality: "rgbflow"
+
 input_size: 224           # videos input size for backbone
 drop_path: 0.0            # help='Drop path rate (default: 0.1)    
 normlize_target: False     #help='normalized the target patch pixels
 
-# Optimizer parameters
+# Optimizer parametersd
 opt: "adamw"               # help='Optimizer, default: "adamw"
 opt_eps: 1.0e-8             # help='Optimizer Epsilon (default: 1e-8)
 opt_betas: null           # type=float, nargs='+  metavar='BETA help='Optimizer Betas (default: None, use opt default)
@@ -38,19 +41,19 @@ warmup_steps: -1          # metavar='N help='epochs to warmup LR, if scheduler s
 # train_interpolation: 'bicubic'              # help='Training interpolation (random, bilinear, bicubic default: "bicubic")
 
 # Dataset parameters
-data_path: '/path/to/list_kinetics-400'     # help='dataset path
-imagenet_default_mean_and_std: true         # action='store_true
-num_frames: 16
-sampling_rate: 4
-output_dir: "/data/shared/output/"                              # help='path where to save, empty for no saving
-log_dir: "/data/shared/output/"                              # help='path where to tensorboard log
+# data_path: '/path/to/list_kinetics-400'     # help='dataset path
+# imagenet_default_mean_and_std: true         # action='store_true
+# num_frames: 16
+# sampling_rate: 4
+output_dir: "/mnt/shuang/Output/output_ego4d"                              # help='path where to save, empty for no saving
+log_dir: "/mnt/shuang/Output/output_ego4d"                              # help='path where to tensorboard log
 # device: 'cuda'                              # help='device to use for training / testing
 # seed: 0
 resume: ""                                  # help='resume from checkpoint
 auto_resume: False                           # 
 
 start_epoch: 0                              # help='start epoch
-num_workers: 30
+num_workers: 20
 pin_mem: true
 # flow images
 pretrain: "multimodal"
@@ -58,14 +61,14 @@ pretrain: "multimodal"
 
 lamb: [0.8, 0.2, 0.2, 0.8]
 
-# ckpt: ""
+# ckpt: "/mnt/shuang/Output/output_ego4d/ckpt/pretrain_vitb_1600_kinetics400.pth"
 
 # configurations for epic-kitchens dataset
 cfg:
   task: "epic-kitchens"
   EPICKITCHENS:
-    VISUAL_DATA_DIR: "/data/shared4/epic-kitchens55/frames_rgb_flow"
-    ANNOTATIONS_DIR: "/data/shared4/epic-kitchens55/annotations"
+    VISUAL_DATA_DIR: "/mnt/shuang/Data/epic-kitchen/3h91syskeag572hl6tvuovwv4d/frames_rgb_flow"
+    ANNOTATIONS_DIR: "/mnt/shuang/Data/epic-kitchen/3h91syskeag572hl6tvuovwv4d/annotations"
     TRAIN_LIST: "EPIC_train_action_labels.pkl"
     VAL_LIST: ""
     TEST_LIST: ""
@@ -77,7 +80,7 @@ cfg:
     SAMPLING_RATE: 2
     NUM_FRAMES: 16
     REPEATED_SAMPLING: 0
-    READ_FROM_TAR: false
+    READ_FROM_ZIP: true
     # TRAIN_JITTER_SCALES: [256, 320]
     # TRAIN_CROP_SIZE: 224
     # TEST_CROP_SIZE: 224

@@ -22,7 +22,8 @@ from engine_for_pretraining import (
         train_one_epoch, 
         train_tsvit_one_epoch, 
         train_multimodal_one_epoch, 
-        train_multicae_one_epoch
+        train_multicae_one_epoch,
+        train_bottleneck_one_epoch
     )
 
 from utils import NativeScalerWithGradNormCount as NativeScaler
@@ -187,7 +188,14 @@ def get_model(args):
             drop_block_rate=None,
             decoder_depth=args.decoder_depth
         )
-    
+    elif args.pretrain == "bottleneck":
+        model = create_model(
+            args.model,
+            pretrained=False,
+            drop_path_rate=args.drop_path,
+            drop_block_rate=None,
+            decoder_depth=args.decoder_depth
+        )
     elif args.pretrain == "multicae":
          model = create_model(
             args.model,
@@ -327,6 +335,25 @@ def main(args):
         print(mask_type_lst, mask_ratio_lst, input_size_lst)
 
         mask_generator = MaskGenerator(mask_type_lst, input_size_lst, mask_ratio_lst)
+
+    elif args.pretrain == "bottleneck":
+        patch_size = model.encoder.rgb_patch_embed.patch_size
+        input_size = (args.num_frames // 2, args.input_size // patch_size[0], args.input_size // patch_size[1])
+        num_tokens =(args.num_frames // 2) * (args.input_size // patch_size[0]) * (args.input_size // patch_size[1])
+
+        mask_type_lst = args.mask_type.split("_")
+        mask_ratio_lst = str(args.mask_ratio).split("_")
+
+        if len(mask_type_lst) == 2: # independent mask for each modality
+            input_size_lst = [input_size]*2 # [input size for rgb, input size for flow]
+        else: # mask among all rgb and flow tokens
+            # double temporal dimension
+            assert mask_type_lst[0]  == "multimodal"
+            input_size_lst = [ input_size ]
+
+        print(mask_type_lst, mask_ratio_lst, input_size_lst)
+        mask_generator = MaskGenerator(mask_type_lst, input_size_lst, mask_ratio_lst)
+
     else:
         raise ValueError(f"Unsupported pretraining scheme:{args.pretrain}")
 
@@ -483,6 +510,23 @@ def main(args):
         if args.pretrain == "multimodal":
 
             train_stats = train_multimodal_one_epoch(
+                model, data_loader_train,
+                optimizer, device, epoch, loss_scaler,
+                args.clip_grad, log_writer=log_writer,
+                start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values,
+                wd_schedule_values=wd_schedule_values,
+
+                normlize_target=args.normlize_target,
+                patch_size=patch_size[0],
+                num_tokens = num_tokens,
+                mask_generator = mask_generator,
+                lamb = args.lamb,
+
+            )
+        elif args.pretrain == "bottleneck":
+
+            train_stats = train_bottleneck_one_epoch(
                 model, data_loader_train,
                 optimizer, device, epoch, loss_scaler,
                 args.clip_grad, log_writer=log_writer,
