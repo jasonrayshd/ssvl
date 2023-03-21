@@ -356,6 +356,12 @@ def main(args, ds_init):
     else:
         _task_specific_params= {}
 
+    _model_params = {}
+    if "bottleneck" in args.model:
+        num_bottleneck = getattr(args, "num_bottleneck", 8)
+        _model_params["num_bottleneck"] = num_bottleneck
+        print("Using 8 bottlenecks for finetuning")
+
     model = create_model(
         args.model,
         pretrained=False,
@@ -370,6 +376,7 @@ def main(args, ds_init):
         use_mean_pooling=args.use_mean_pooling,
         init_scale=args.init_scale,
 
+        **_model_params,
         **_task_specific_params,
     )
     try:

@@ -8,6 +8,7 @@ model: 'oscc_bottleneck_base_patch16_224'
 tubelet_size: 2
 input_size: 224
 
+
 drop: 0.0
 attn_drop_rate: 0.0
 drop_path: 0.1

@@ -500,6 +500,7 @@ class FintuneBottleneck(nn.Module):
 
                 modality="rgb", # [rgb, flow, rgbflow]
                 num_bottleneck = 8,
+                use_bottleneck = True,
 
                 img_size=224, 
                 patch_size=16, 
@@ -552,9 +553,11 @@ class FintuneBottleneck(nn.Module):
             num_patches = self.flow_patch_embed.num_patches
             self.flow_pos_embed = nn.Parameter(torch.zeros(num_patches, embed_dim)) if use_learnable_pos_emb else get_sinusoid_encoding_table(num_patches, embed_dim)
 
-        self.num_bottleneck = num_bottleneck
-        self.bottleneck = nn.Parameter(torch.zeros(1, num_bottleneck, embed_dim))
-        trunc_normal_(self.bottleneck, std=.02)
+        if num_bottleneck:
+            self.num_bottleneck = num_bottleneck
+            self.bottleneck = nn.Parameter(torch.zeros(1, num_bottleneck, embed_dim))
+            trunc_normal_(self.bottleneck, std=.02)
+        self.use_bottleneck = (num_bottleneck != 0)
 
         self.pos_drop = nn.Dropout(p=drop_rate)
 
@@ -616,8 +619,10 @@ class FintuneBottleneck(nn.Module):
         B, _, _ = x.size()
         x = x + self.rgb_pos_embed.expand(B, -1, -1).type_as(x).to(x.device).clone().detach()
         x = self.pos_drop(x) # dropout
-        expand_bottleneck = self.bottleneck.expand(B, -1, -1).type_as(x).to(x.device)
-        x = torch.cat((x, expand_bottleneck), dim=1)
+
+        if self.use_bottleneck:
+            expand_bottleneck = self.bottleneck.expand(B, -1, -1).type_as(x).to(x.device)
+            x = torch.cat((x, expand_bottleneck), dim=1)
 
         if "flow" in self.modality:
             flow = self.flow_patch_embed(flow)
@@ -2469,7 +2474,7 @@ def oscc_bottleneck_base_patch16_224(pretrained=False, **kwargs):
             flow_tubelet_size=1,
 
             modality="rgb", # [rgb, flow, rgbflow]
-            num_bottleneck = 8,
+            # num_bottleneck = 8,
 
             patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
             norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
